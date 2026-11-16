@@ -256,6 +256,7 @@ func createTasksHandler(deps Dependencies) *tasks.Handler {
 		Logger:   deps.Logger,
 		Config:   deps.Config,
 		Director: deps.Director,
+		Vault:    deps.Vault,
 	})
 }
 

@@ -410,7 +410,7 @@ func TestGetTaskDetailsSuccess(t *testing.T) {
 		StartedAt:   time.Unix(1700001000, 0),
 		Result:      "ok",
 		User:        "admin",
-		Deployment:  "example",
+		Deployment:  managedDeployment,
 	}
 	fakeDir.taskEvents[42] = []bosh.TaskEvent{{Stage: "Running", Task: "update", State: "started"}}
 
@@ -419,7 +419,7 @@ func TestGetTaskDetailsSuccess(t *testing.T) {
 		t.Fatalf("failed to create logger: %v", err)
 	}
 
-	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir, Vault: managingTaskVault()})
 
 	req := httptest.NewRequest(http.MethodGet, "/b/tasks/42", nil)
 	recorder := httptest.NewRecorder()
@@ -440,7 +440,7 @@ func TestGetTaskDetailsSuccess(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if payload.Task.ID != 42 || payload.Task.User != "admin" || payload.Task.Deployment != "example" {
+	if payload.Task.ID != 42 || payload.Task.User != "admin" || payload.Task.Deployment != managedDeployment {
 		t.Fatalf("unexpected task payload: %+v", payload.Task)
 	}
 
@@ -513,6 +513,7 @@ func TestGetTaskOutputResultEvents(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
+	fakeDir.taskDetails[8] = bosh.Task{ID: 8, Deployment: managedDeployment}
 	fakeDir.taskOutputs[outputKey{id: 8, typ: "result"}] = "{\"time\":1700002000,\"stage\":\"Running\",\"task\":\"step\",\"state\":\"started\",\"total\":2,\"index\":1,\"progress\":50}"
 
 	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
@@ -520,7 +521,7 @@ func TestGetTaskOutputResultEvents(t *testing.T) {
 		t.Fatalf("failed to create logger: %v", err)
 	}
 
-	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir, Vault: managingTaskVault()})
 
 	req := httptest.NewRequest(http.MethodGet, "/b/tasks/8/output?type=result", nil)
 	recorder := httptest.NewRecorder()
@@ -547,6 +548,7 @@ func TestGetTaskOutputRaw(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
+	fakeDir.taskDetails[7] = bosh.Task{ID: 7, Deployment: managedDeployment}
 	fakeDir.taskOutputs[outputKey{id: 7, typ: "debug"}] = "line one\nline two"
 
 	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
@@ -554,7 +556,7 @@ func TestGetTaskOutputRaw(t *testing.T) {
 		t.Fatalf("failed to create logger: %v", err)
 	}
 
-	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir, Vault: managingTaskVault()})
 
 	req := httptest.NewRequest(http.MethodGet, "/b/tasks/7/output?type=debug", nil)
 	recorder := httptest.NewRecorder()
@@ -589,6 +591,7 @@ func TestGetTaskOutputNotFound(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
+	fakeDir.taskDetails[6] = bosh.Task{ID: 6, Deployment: managedDeployment}
 	fakeDir.taskOutputErr[outputKey{id: 6, typ: "task"}] = errFakeNotFound
 
 	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
@@ -596,7 +599,7 @@ func TestGetTaskOutputNotFound(t *testing.T) {
 		t.Fatalf("failed to create logger: %v", err)
 	}
 
-	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir, Vault: managingTaskVault()})
 
 	req := httptest.NewRequest(http.MethodGet, "/b/tasks/6/output", nil)
 	recorder := httptest.NewRecorder()
@@ -612,13 +615,14 @@ func TestCancelTaskSuccess(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
+	fakeDir.taskDetails[12] = bosh.Task{ID: 12, Deployment: managedDeployment}
 
 	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
 	if err != nil {
 		t.Fatalf("failed to create logger: %v", err)
 	}
 
-	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir, Vault: managingTaskVault()})
 
 	req := httptest.NewRequest(http.MethodPost, "/b/tasks/12/cancel", strings.NewReader(`{"force":true}`))
 	recorder := httptest.NewRecorder()
@@ -653,6 +657,7 @@ func TestCancelTaskConflict(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
+	fakeDir.taskDetails[15] = bosh.Task{ID: 15, Deployment: managedDeployment}
 	fakeDir.cancelTaskErr[15] = bosh.ErrTaskCannotBeCancelled
 
 	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
@@ -660,7 +665,7 @@ func TestCancelTaskConflict(t *testing.T) {
 		t.Fatalf("failed to create logger: %v", err)
 	}
 
-	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir, Vault: managingTaskVault()})
 
 	req := httptest.NewRequest(http.MethodPost, "/b/tasks/15/cancel", nil)
 	recorder := httptest.NewRecorder()
@@ -676,6 +681,7 @@ func TestCancelTaskFailure(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
+	fakeDir.taskDetails[16] = bosh.Task{ID: 16, Deployment: managedDeployment}
 	fakeDir.cancelTaskErr[16] = errTestBoom
 
 	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
@@ -683,7 +689,7 @@ func TestCancelTaskFailure(t *testing.T) {
 		t.Fatalf("failed to create logger: %v", err)
 	}
 
-	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir, Vault: managingTaskVault()})
 
 	req := httptest.NewRequest(http.MethodPost, "/b/tasks/16/cancel", nil)
 	recorder := httptest.NewRecorder()

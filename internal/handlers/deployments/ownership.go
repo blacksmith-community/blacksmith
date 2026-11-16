@@ -7,8 +7,8 @@ import (
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ownership"
 	"blacksmith/internal/ownname"
-	vaultPkg "blacksmith/pkg/vault"
 )
 
 // The operation segments of the deployment routes.
@@ -118,31 +118,13 @@ func (h *Handler) refuseUnmanaged(ctx context.Context, writer http.ResponseWrite
 	return true
 }
 
-// isManagedDeployment reports whether an entry of the broker's index
-// records deploymentName as its deployment. An entry whose data is nil, and
-// a tombstone marked deleted, is an instance that is gone, and it owns
-// nothing.
+// isManagedDeployment reports whether the broker's index records
+// deploymentName as the deployment of a live service instance.
 func (h *Handler) isManagedDeployment(ctx context.Context, deploymentName string) (bool, error) {
-	var index map[string]*vaultPkg.Instance
-
-	exists, err := h.vault.Get(ctx, "db", &index)
+	managed, err := ownership.ManagedDeployment(ctx, h.vault, deploymentName)
 	if err != nil {
-		return false, fmt.Errorf("reading the service index: %w", err)
+		return false, fmt.Errorf("checking deployment %q: %w", deploymentName, err)
 	}
 
-	if !exists {
-		return false, nil
-	}
-
-	for instanceID, instance := range index {
-		if instanceID == "" || instance == nil || instance.IsTombstone() {
-			continue
-		}
-
-		if instance.DeploymentNameFor(instanceID) == deploymentName {
-			return true, nil
-		}
-	}
-
-	return false, nil
+	return managed, nil
 }

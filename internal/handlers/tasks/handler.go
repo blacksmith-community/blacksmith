@@ -12,6 +12,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ownname"
 	"blacksmith/pkg/http/response"
 )
 
@@ -26,6 +27,8 @@ type Handler struct {
 	logger   interfaces.Logger
 	config   interfaces.Config
 	director interfaces.Director
+	vault    interfaces.Vault
+	ownFile  string
 }
 
 // Dependencies contains all dependencies needed by the Tasks handler.
@@ -33,6 +36,12 @@ type Dependencies struct {
 	Logger   interfaces.Logger
 	Config   interfaces.Config
 	Director interfaces.Director
+	// Vault holds the service index that says which deployments are the
+	// broker's. Without it, the routes of a single task answer 503.
+	Vault interfaces.Vault
+	// OwnNameFile is the file that names the broker's own deployment. It
+	// defaults to the instance file BOSH writes.
+	OwnNameFile string
 }
 
 // Task represents a BOSH task.
@@ -52,10 +61,17 @@ type Task struct {
 
 // NewHandler creates a new Tasks handler.
 func NewHandler(deps Dependencies) *Handler {
+	ownFile := deps.OwnNameFile
+	if ownFile == "" {
+		ownFile = ownname.InstanceFile
+	}
+
 	return &Handler{
 		logger:   deps.Logger,
 		config:   deps.Config,
 		director: deps.Director,
+		vault:    deps.Vault,
+		ownFile:  ownFile,
 	}
 }
 
@@ -414,11 +430,8 @@ func (h *Handler) GetTaskDetails(writer http.ResponseWriter, req *http.Request, 
 	logger := h.logger.Named("task-details")
 	logger.Debug("Getting details for task %d", taskID)
 
-	directorTask, err := h.director.GetTask(ctx, taskID)
-	if err != nil {
-		logger.Error("Failed to fetch task %d: %v", taskID, err)
-		response.WriteError(writer, http.StatusNotFound, fmt.Sprintf("task %d not found", taskID))
-
+	directorTask, permitted := h.permitTask(ctx, writer, logger, taskID, false)
+	if !permitted {
 		return
 	}
 
@@ -452,6 +465,11 @@ func (h *Handler) GetTaskOutput(writer http.ResponseWriter, req *http.Request, t
 		outputType = "task"
 	}
 
+	_, permitted := h.permitTask(ctx, writer, logger, taskID, false)
+	if !permitted {
+		return
+	}
+
 	logger.Debug("Fetching task output", "task_id", taskID, "type", outputType)
 
 	output, err := h.director.GetTaskOutput(ctx, taskID, outputType)
@@ -481,6 +499,11 @@ func (h *Handler) CancelTask(writer http.ResponseWriter, req *http.Request, task
 	ctx := req.Context()
 
 	logger := h.logger.Named("task-cancel")
+
+	_, permitted := h.permitTask(ctx, writer, logger, taskID, true)
+	if !permitted {
+		return
+	}
 
 	// Parse optional request body
 	var cancelRequest struct {
