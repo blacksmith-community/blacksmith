@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/vault/api"
 )
 
+const healthClientTimeout = 60 * time.Second
+
 // WaitForVaultReady waits for vault to become available and responsive.
 func (vault *Vault) WaitForVaultReady() error {
 	vaultLogger := logger.Get().Named("vault readiness")
@@ -23,7 +25,7 @@ func (vault *Vault) WaitForVaultReady() error {
 		vaultLogger.Debugf("checking Vault availability (attempt %d/%d)", attempt, maxRetries)
 
 		// Try to create a vault client for this check
-		client, err := vaultPkg.NewClient(vault.URL, "", vault.Insecure) // No token needed for health check
+		client, err := vaultPkg.NewClientWithRoots(vault.URL, "", vault.Insecure, healthClientTimeout, vault.roots) // No token needed for health check
 		if err != nil {
 			vaultLogger.Debugf("failed to create vault client (attempt %d/%d): %s", attempt, maxRetries, err)
 		} else {

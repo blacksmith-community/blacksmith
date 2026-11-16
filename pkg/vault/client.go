@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
@@ -38,6 +39,12 @@ func NewClient(url, token string, insecure bool) (*Client, error) {
 
 // NewClientWithTimeout creates a new vault client with a custom timeout duration.
 func NewClientWithTimeout(url, token string, insecure bool, timeout time.Duration) (*Client, error) {
+	return NewClientWithRoots(url, token, insecure, timeout, nil)
+}
+
+// NewClientWithRoots creates a new vault client that trusts the given CA
+// pool for the server's certificate. A nil pool means the system roots.
+func NewClientWithRoots(url, token string, insecure bool, timeout time.Duration, roots *x509.CertPool) (*Client, error) {
 	loggerInstance := logger.Get().Named("vault client init")
 	loggerInstance.Debug("creating new vault client for %s", url)
 
@@ -52,6 +59,7 @@ func NewClientWithTimeout(url, token string, insecure bool, timeout time.Duratio
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: insecure,         // #nosec G402 - This is configurable by user for development/testing
 		MinVersion:         tls.VersionTLS12, // Enforce TLS 1.2 minimum
+		RootCAs:            roots,
 	}
 
 	httpClient := &http.Client{

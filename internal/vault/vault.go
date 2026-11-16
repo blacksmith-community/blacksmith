@@ -3,7 +3,9 @@ package vault
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -37,6 +39,9 @@ type Vault struct {
 	verifyMountFn func(store string, createIfMissing bool) error
 	// HTTP timeout for vault client (0 uses default)
 	httpTimeout time.Duration
+	// roots holds the CA that signs the Vault server's certificate, or nil
+	// to use the system roots.
+	roots *x509.CertPool
 
 	// indexMu is held by every read-modify-write of the "db" index from its
 	// read to its write, so that callers sharing this Vault do not overwrite
@@ -68,6 +73,46 @@ func NewWithTimeout(url, token string, insecure bool, timeout time.Duration) *Va
 		Insecure:    insecure,
 		httpTimeout: timeout,
 	}
+}
+
+// ErrInvalidCACert reports a vault.cacert value that holds no usable CA.
+var ErrInvalidCACert = errors.New("vault cacert has no usable CA certificate")
+
+// SetCACert makes the client trust the CA in value, which is either the path
+// of a PEM file or PEM text, for the Vault server's certificate. It adds to
+// the system roots. A value that cannot be read, or that holds no
+// certificate, is an error, and the error never includes the value.
+func (vault *Vault) SetCACert(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+
+	pemBytes := []byte(value)
+
+	if !strings.Contains(value, "-----BEGIN") {
+		data, err := os.ReadFile(value) //nolint:gosec // the operator names this file in the broker's own config
+		if err != nil {
+			return fmt.Errorf("cannot read vault cacert file %q: %w", value, err)
+		}
+
+		pemBytes = data
+	}
+
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return ErrInvalidCACert
+	}
+
+	vault.clientMu.Lock()
+	vault.roots = pool
+	vault.client = nil // rebuilt with the new roots on next use
+	vault.clientMu.Unlock()
+
+	return nil
 }
 
 // SetToken updates the in-memory token and refreshes it on the underlying client if present.
@@ -463,12 +508,14 @@ func (vault *Vault) ensureClient() error {
 	var client *vaultPkg.Client
 	var err error
 
-	if vault.httpTimeout > 0 {
-		client, err = vaultPkg.NewClientWithTimeout(vault.URL, vault.Token, vault.Insecure, vault.httpTimeout)
-	} else {
-		client, err = vaultPkg.NewClient(vault.URL, vault.Token, vault.Insecure)
+	timeout := vault.httpTimeout
+	if timeout <= 0 {
+		const defaultTimeout = 60 * time.Second
+
+		timeout = defaultTimeout
 	}
 
+	client, err = vaultPkg.NewClientWithRoots(vault.URL, vault.Token, vault.Insecure, timeout, vault.roots)
 	if err != nil {
 		return fmt.Errorf("failed to create vault client: %w", err)
 	}

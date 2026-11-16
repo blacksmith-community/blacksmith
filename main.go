@@ -332,6 +332,13 @@ func initializeVault(cfg *config.Config, logger loggerPkg.Logger) *internalVault
 
 func createVaultClient(cfg *config.Config) *internalVault.Vault {
 	vault := internalVault.New(cfg.Vault.Address, "", cfg.Vault.Insecure)
+
+	err := vault.SetCACert(cfg.Vault.CACert)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault.cacert is not usable: %s\n", err)
+		os.Exit(exitCodeError)
+	}
+
 	vault.SetCredentialsPath(cfg.Vault.CredPath)
 
 	if cfg.Vault.Token != "" {
