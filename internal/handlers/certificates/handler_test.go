@@ -880,6 +880,26 @@ func TestBlacksmithCertificatesIncludesConfiguredCAs(t *testing.T) {
 	}
 }
 
+// The Vault client trims the vault.cacert path before it reads the file, so
+// the route reads the same file when the value has stray whitespace around
+// the path, and it reports the trimmed path.
+func TestBlacksmithCertificatesTrimsAVaultCAPath(t *testing.T) {
+	t.Parallel()
+
+	filePath := filepath.Join(t.TempDir(), "padded-ca.pem")
+
+	err := os.WriteFile(filePath, []byte(selfSignedCAPEM(t, "Padded Vault CA")), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := blacksmithCertificate(t, &testConfig{vaultCACert: "  " + filePath + "\n"}, "Vault CA Certificate")
+
+	if item.Path != filePath || item.Details.Subject.CommonName != "Padded Vault CA" {
+		t.Errorf("Path = %q and common name = %q, want %q and %q", item.Path, item.Details.Subject.CommonName, filePath, "Padded Vault CA")
+	}
+}
+
 // The Vault client trusts every certificate in a configured bundle, so the
 // route lists every one of them, the first under the plain name and the
 // rest under a numbered name.

@@ -340,6 +340,10 @@ func (h *Handler) loadVaultCACertificate(ctx context.Context, cfg interface {
 	pemText, path := vaultCACert, "config:vault.cacert"
 
 	if !strings.Contains(vaultCACert, "-----BEGIN") {
+		// The Vault client trims the path before it reads the file, so
+		// this reads the same file.
+		vaultCACert = strings.TrimSpace(vaultCACert)
+
 		// #nosec G304 - the operator names this file in the broker's own config
 		content, err := os.ReadFile(vaultCACert)
 		if err != nil {
