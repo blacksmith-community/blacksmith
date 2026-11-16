@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"blacksmith/internal/compression"
 )
@@ -351,5 +352,40 @@ func TestWebSocketBypassesCompression(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != `{"ok":true}` {
 		t.Fatalf("unexpected body: %s", string(body))
+	}
+}
+
+// A handler behind the compression middleware can still move the
+// connection's write deadline, because the middleware's writer lets
+// http.ResponseController reach the connection beneath it.
+func TestHandlerBehindCompressionCanMoveTheWriteDeadline(t *testing.T) {
+	t.Parallel()
+
+	deadlineErr := make(chan error, 1)
+
+	inner := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		deadlineErr <- http.NewResponseController(writer).SetWriteDeadline(time.Now().Add(time.Minute))
+	})
+
+	server := httptest.NewServer(compression.NewMiddleware(inner, compression.Config{Enabled: true}))
+	t.Cleanup(server.Close)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("requesting the server: %v", err)
+	}
+
+	_ = resp.Body.Close()
+
+	got := <-deadlineErr
+	if got != nil {
+		t.Errorf("SetWriteDeadline = %v, want nil", got)
 	}
 }

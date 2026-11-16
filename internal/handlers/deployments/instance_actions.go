@@ -130,14 +130,21 @@ func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Requ
 	h.answerInstanceAction(req.Context(), writer, logger, actor, instanceActionProblem{InstanceID: instanceID, Deployment: deployment, Operation: action}, task, err)
 }
 
+// serverWriteTimeout is the HTTP server's write timeout, which is the
+// default when the broker sets none, as main.go also does.
+func (h *Handler) serverWriteTimeout() time.Duration {
+	if h.config != nil && h.config.GetBrokerConfig().WriteTimeout > 0 {
+		return time.Duration(h.config.GetBrokerConfig().WriteTimeout) * time.Second
+	}
+
+	return defaultActionWriteTimeout
+}
+
 // instanceActionContext bounds the director calls of an instance action to
 // the server's write timeout less actionDeadlineMargin, or to half the write
 // timeout when that is longer, as the logs request does.
 func (h *Handler) instanceActionContext(parent context.Context) (context.Context, context.CancelFunc) {
-	writeTimeout := defaultActionWriteTimeout
-	if h.config != nil && h.config.GetBrokerConfig().WriteTimeout > 0 {
-		writeTimeout = time.Duration(h.config.GetBrokerConfig().WriteTimeout) * time.Second
-	}
+	writeTimeout := h.serverWriteTimeout()
 
 	limit := max(writeTimeout-actionDeadlineMargin, writeTimeout/shortActionTimeoutDivisor)
 	cause := fmt.Errorf("%w, because the write timeout of %d seconds is near", errInstanceActionOutOfTime, int(writeTimeout/time.Second))

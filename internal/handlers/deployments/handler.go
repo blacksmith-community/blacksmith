@@ -469,9 +469,16 @@ func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deplo
 	}
 	defer release()
 
+	ctx, cancel := h.errandContext(ctx, writer, logger)
+	defer cancel()
+
 	result, err := h.director.RunErrand(ctx, deploymentName, errandName, opts)
 	if err != nil {
 		logger.Error("Failed to run errand %s for deployment %s: %v", errandName, deploymentName, err)
+
+		if writeErrandOutOfTime(ctx, writer, deploymentName, errandName) {
+			return
+		}
 
 		status := http.StatusInternalServerError
 		if errors.Is(err, bosh.ErrInvalidErrandInstance) {

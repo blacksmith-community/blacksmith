@@ -168,6 +168,12 @@ type responseRecorder struct {
 	statusCode            int    // Store status code until we decide on compression
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer, so a
+// handler can move the connection's deadlines through this wrapper.
+func (rr *responseRecorder) Unwrap() http.ResponseWriter {
+	return rr.ResponseWriter
+}
+
 // Header returns the header map.
 func (rr *responseRecorder) Header() http.Header {
 	return rr.ResponseWriter.Header()
