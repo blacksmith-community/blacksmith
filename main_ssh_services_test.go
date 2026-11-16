@@ -10,6 +10,7 @@ import (
 	"blacksmith/internal/services/rabbitmq"
 	internalVault "blacksmith/internal/vault"
 	loggerPkg "blacksmith/pkg/logger"
+	"blacksmith/pkg/testutil"
 )
 
 // With ssh.enabled false the broker builds nothing that opens an SSH
@@ -22,8 +23,10 @@ func TestSSHServicesAreNotBuiltWhenSSHIsOff(t *testing.T) {
 	cfg := &config.Config{SSH: config.SSHConfig{Enabled: &off}}
 	vault := internalVault.New("https://127.0.0.1:1", "", true)
 
+	// A director is present, so only the switch keeps the SSH service from
+	// being built.
 	sshService, rabbitSSH, metadata, executor, audit, pluginsMetadata, pluginsExecutor, pluginsAudit, webSocket :=
-		initializeServices(cfg, &broker.Broker{}, vault, &loggerPkg.NoOpLogger{})
+		initializeServices(cfg, &broker.Broker{BOSH: testutil.NewMockBOSHDirector()}, vault, &loggerPkg.NoOpLogger{})
 
 	if sshService != nil || rabbitSSH != nil || executor != nil || pluginsExecutor != nil || webSocket != nil {
 		t.Errorf("SSH services were built with SSH off: ssh=%v rabbitmq-ssh=%v executor=%v plugins-executor=%v websocket=%v",
@@ -32,6 +35,25 @@ func TestSSHServicesAreNotBuiltWhenSSHIsOff(t *testing.T) {
 
 	if metadata == nil || audit == nil || pluginsMetadata == nil || pluginsAudit == nil {
 		t.Error("a RabbitMQ service that does not use SSH was not built")
+	}
+}
+
+// The same broker with ssh.enabled true does build the SSH service, so the
+// test above proves the switch and not a missing director.
+func TestSSHServicesAreBuiltWhenSSHIsOn(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	vault := internalVault.New("https://127.0.0.1:1", "", true)
+
+	built := func() bool {
+		sshService, _, _, _, _, _, _, _, _ := initializeServices(cfg, &broker.Broker{BOSH: testutil.NewMockBOSHDirector()}, vault, &loggerPkg.NoOpLogger{})
+
+		return sshService != nil
+	}
+
+	if !built() {
+		t.Error("the SSH service was not built with SSH on and a director present")
 	}
 }
 
