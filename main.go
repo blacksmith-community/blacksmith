@@ -771,22 +771,27 @@ func initializeServices(cfg *config.Config, brokerInstance *broker.Broker, vault
 	// Set default values if not configured
 	setSSHServiceDefaults(&sshConfig)
 
-	logger.Info("Creating SSH service with timeout=%v, maxConcurrent=%d", sshConfig.Timeout, sshConfig.MaxConcurrent)
-
 	var sshService *ssh.ServiceImpl
-	if brokerInstance.BOSH != nil {
-		sshService = ssh.NewSSHService(brokerInstance.BOSH, sshConfig, logger.Named("ssh"))
-	} else {
-		logger.Warn("BOSH director unavailable - SSH service will have degraded functionality")
 
-		sshService = nil
+	switch {
+	case !cfg.IsSSHEnabled():
+		logger.Info("SSH is disabled in configuration (ssh.enabled is false) - no SSH service is built")
+	case brokerInstance.BOSH == nil:
+		logger.Warn("BOSH director unavailable - no SSH service is built")
+	default:
+		logger.Info("Creating SSH service with timeout=%v, maxConcurrent=%d", sshConfig.Timeout, sshConfig.MaxConcurrent)
+
+		sshService = ssh.NewSSHService(brokerInstance.BOSH, sshConfig, logger.Named("ssh"))
 	}
 
 	// Create RabbitMQ services
 	rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService := createRabbitMQServices(sshService, vault, logger)
 
 	// Create WebSocket handler
-	webSocketHandler := createWebSocketHandler(cfg, sshService, logger)
+	var webSocketHandler *websocket.SSHHandler
+	if sshService != nil {
+		webSocketHandler = createWebSocketHandler(cfg, sshService, logger)
+	}
 
 	return sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler
 }
@@ -831,18 +836,28 @@ func setSSHServiceDefaults(sshConfig *ssh.Config) {
 }
 
 // createRabbitMQServices creates all RabbitMQ-related services.
-func createRabbitMQServices(sshService ssh.SSHService, vault *internalVault.Vault, logger loggerPkg.Logger) (*rabbitmq.SSHService, *rabbitmq.MetadataService, *rabbitmq.ExecutorService, *rabbitmq.AuditService, *rabbitmq.PluginsMetadataService, *rabbitmq.PluginsExecutorService, *rabbitmq.PluginsAuditService) {
-	logger.Info("Creating RabbitMQ SSH service")
+func createRabbitMQServices(sshService *ssh.ServiceImpl, vault *internalVault.Vault, logger loggerPkg.Logger) (*rabbitmq.SSHService, *rabbitmq.MetadataService, *rabbitmq.ExecutorService, *rabbitmq.AuditService, *rabbitmq.PluginsMetadataService, *rabbitmq.PluginsExecutorService, *rabbitmq.PluginsAuditService) {
+	// The SSH-backed services need an SSH service. Without one they stay
+	// nil, so the handlers answer 503 and nothing calls through a nil.
+	var rabbitmqSSHService *rabbitmq.SSHService
 
-	rabbitmqSSHService := rabbitmq.NewRabbitMQSSHService(sshService, logger.Named("rabbitmq-ssh"))
+	if sshService != nil {
+		logger.Info("Creating RabbitMQ SSH service")
+
+		rabbitmqSSHService = rabbitmq.NewRabbitMQSSHService(sshService, logger.Named("rabbitmq-ssh"))
+	}
 
 	logger.Info("Creating RabbitMQ metadata service")
 
 	rabbitmqMetadataService := rabbitmq.NewMetadataService(logger.Named("rabbitmq-metadata"))
 
-	logger.Info("Creating RabbitMQ executor service")
+	var rabbitmqExecutorService *rabbitmq.ExecutorService
 
-	rabbitmqExecutorService := rabbitmq.NewExecutorService(rabbitmqSSHService, rabbitmqMetadataService, logger.Named("rabbitmq-executor"))
+	if rabbitmqSSHService != nil {
+		logger.Info("Creating RabbitMQ executor service")
+
+		rabbitmqExecutorService = rabbitmq.NewExecutorService(rabbitmqSSHService, rabbitmqMetadataService, logger.Named("rabbitmq-executor"))
+	}
 
 	logger.Info("Creating RabbitMQ audit service")
 
@@ -859,9 +874,13 @@ func createRabbitMQServices(sshService ssh.SSHService, vault *internalVault.Vaul
 
 	rabbitmqPluginsMetadataService := rabbitmq.NewPluginsMetadataService(logger.Named("rabbitmq-plugins-metadata"))
 
-	logger.Info("Creating RabbitMQ plugins executor service")
+	var rabbitmqPluginsExecutorService *rabbitmq.PluginsExecutorService
 
-	rabbitmqPluginsExecutorService := rabbitmq.NewPluginsExecutorService(rabbitmqSSHService, rabbitmqPluginsMetadataService, logger.Named("rabbitmq-plugins-executor"))
+	if rabbitmqSSHService != nil {
+		logger.Info("Creating RabbitMQ plugins executor service")
+
+		rabbitmqPluginsExecutorService = rabbitmq.NewPluginsExecutorService(rabbitmqSSHService, rabbitmqPluginsMetadataService, logger.Named("rabbitmq-plugins-executor"))
+	}
 
 	logger.Info("Creating RabbitMQ plugins audit service")
 
@@ -1417,15 +1436,15 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		ServicesManager:                services.NewManagerWithCFConfig(logger.Named("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
 		CFManager:                      cfManager,
 		VMMonitor:                      apiVMMonitor(vmMonitor),
-		SSHService:                     sshService,
-		RabbitMQSSHService:             rabbitmqSSHService,
+		SSHService:                     orNil[interfaces.SSHService](sshService),
+		RabbitMQSSHService:             orNil[interfaces.RabbitMQSSHService](rabbitmqSSHService),
 		RabbitMQMetadataService:        rabbitmqMetadataService,
-		RabbitMQExecutorService:        rabbitmqExecutorService,
+		RabbitMQExecutorService:        orNil[interfaces.RabbitMQExecutorService](rabbitmqExecutorService),
 		RabbitMQAuditService:           rabbitmqAuditService,
 		RabbitMQPluginsMetadataService: rabbitmqPluginsMetadataService,
-		RabbitMQPluginsExecutorService: rabbitmqPluginsExecutorService,
+		RabbitMQPluginsExecutorService: orNil[interfaces.RabbitMQPluginsExecutorService](rabbitmqPluginsExecutorService),
 		RabbitMQPluginsAuditService:    rabbitmqPluginsAuditService,
-		WebSocketHandler:               webSocketHandler,
+		WebSocketHandler:               orNil[interfaces.WebSocketHandler](webSocketHandler),
 		SecurityMiddleware:             services.NewSecurityMiddleware(logger.Named("security").Debug),
 		Reconciler:                     apiReconciler(reconciler),
 		Certificates:                   certificates,
@@ -1742,6 +1761,21 @@ func apiReconciler(reconciler *recovery.ReconcilerAdapter) blacksmith.Reconciler
 	}
 
 	return reconciler
+}
+
+// orNil converts a pointer to the interface the API takes. A nil pointer
+// becomes a nil interface, because a nil pointer wrapped in an interface
+// passes a handler's nil check and then panics on the first call.
+func orNil[I any, T any](ptr *T) I {
+	var none I
+
+	if ptr == nil {
+		return none
+	}
+
+	value, _ := any(ptr).(I)
+
+	return value
 }
 
 // apiVMMonitor gives the API its VM monitor. A nil monitor becomes a nil
