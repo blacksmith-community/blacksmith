@@ -206,7 +206,7 @@ func SetVaultCACert(value string) (func(), error) {
 		return func() {}, nil
 	}
 
-	path := value
+	path := strings.TrimSpace(value)
 	cleanup := func() { clearVaultCACert("") }
 
 	if strings.Contains(value, "-----BEGIN") {

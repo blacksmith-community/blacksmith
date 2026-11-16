@@ -117,3 +117,21 @@ func TestInitEnvironmentLeavesAnOperatorCAAlone(t *testing.T) { //nolint:paralle
 		t.Errorf("VAULT_CACERT = %q, want the operator's value", got)
 	}
 }
+
+// A path with a trailing newline, as a YAML block scalar leaves it, reaches
+// the init scripts without the whitespace.
+func TestInitEnvironmentTrimsWhitespaceAroundTheVaultCAPath(t *testing.T) { //nolint:paralleltest // sets package state
+	t.Setenv("VAULT_CACERT", "")
+
+	cleanup, err := manifest.SetVaultCACert("  /etc/blacksmith/vault-ca.pem\n")
+	if err != nil {
+		t.Fatalf("SetVaultCACert: %v", err)
+	}
+
+	t.Cleanup(cleanup)
+
+	got, _ := initEnvValue()
+	if got != "/etc/blacksmith/vault-ca.pem" {
+		t.Errorf("VAULT_CACERT = %q, want the path without whitespace", got)
+	}
+}

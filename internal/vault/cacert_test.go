@@ -219,3 +219,23 @@ func TestWaitForVaultReadyTrustsTheConfiguredCACert(t *testing.T) {
 		t.Errorf("WaitForVaultReady: %v", err)
 	}
 }
+
+// A path that a YAML block scalar leaves with a trailing newline, or that
+// carries stray spaces, still names the file.
+func TestSetCACertTrimsWhitespaceAroundAPath(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "ca.pem")
+
+	err := os.WriteFile(path, newTLSVault(t).caPEM, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, value := range []string{path + "\n", "  " + path, "\t" + path + " \n"} {
+		err := vault.New("https://127.0.0.1:1", "", false).SetCACert(value)
+		if err != nil {
+			t.Errorf("SetCACert(%q) = %v, want the path to be found", value, err)
+		}
+	}
+}

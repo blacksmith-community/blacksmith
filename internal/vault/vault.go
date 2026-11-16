@@ -89,7 +89,7 @@ func (vault *Vault) SetCACert(value string) error {
 	pemBytes := []byte(value)
 
 	if !strings.Contains(value, "-----BEGIN") {
-		data, err := os.ReadFile(value) //nolint:gosec // the operator names this file in the broker's own config
+		data, err := os.ReadFile(strings.TrimSpace(value)) //nolint:gosec // the operator names this file in the broker's own config
 		if err != nil {
 			return unreadableCACertError(err)
 		}
