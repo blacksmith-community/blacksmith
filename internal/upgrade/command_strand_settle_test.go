@@ -215,7 +215,13 @@ func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
 				t.Fatalf("resume: %v", err)
 			}
 
-			paused := fix.waitFor("the task to pause again", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused })
+			// The task is already paused when the resume returns, so the
+			// status alone matches the state from before the resume. The
+			// pause the resume ends in is the one that says it waits for
+			// another resume.
+			paused := fix.waitFor("the task to pause again", func(task UpgradeTask) bool {
+				return task.Status == TaskStatusPaused && strings.Contains(task.Instances[0].Error, "still waiting for a resume")
+			})
 			waitUntil(t, "the processor to let go of the task", func() bool { return !fix.owns() })
 
 			if !strings.Contains(paused.Instances[0].Error, "still waiting for a resume") {
