@@ -244,19 +244,183 @@ func TestEncodedManagedNameIsTheManagedName(t *testing.T) {
 	}
 }
 
-// Reading an unmanaged deployment stays open, because the UI shows the
-// broker's own deployment.
-func TestReadingAnUnmanagedDeploymentStaysOpen(t *testing.T) {
+// ownEnvironmentConfig is a broker config whose environment is prod, so
+// the broker's own deployment is prod-blacksmith.
+type ownEnvironmentConfig struct{ writeTimeoutConfig }
+
+func (ownEnvironmentConfig) GetEnvironment() string { return "prod" }
+
+const ownDeployment = "prod-blacksmith"
+
+func ownershipHandlerWithConfig(vault *testutil.InstanceVault) (*deployments.Handler, *recordingDirector) {
+	guard := mutation.NewGuard(time.Now)
+	director := newRecordingDirector(guard, false)
+
+	return deployments.NewHandler(deployments.Dependencies{
+		Logger:   logger.NewNoOpLogger(),
+		Config:   ownEnvironmentConfig{},
+		Director: director,
+		Vault:    vault,
+		Guard:    guard,
+	}), director
+}
+
+// A manifest can hold credentials, so a read of a deployment the broker
+// doesn't manage is refused as a change is, with 403 and the code
+// deployment_not_managed.
+func TestReadingAnUnmanagedDeploymentIsRefused(t *testing.T) {
 	t.Parallel()
 
-	handler, _ := ownershipHandler(managedVault())
+	for _, path := range []string{
+		"/b/deployments/cf",
+		"/b/deployments/cf/manifest",
+		"/b/deployments/cf/errands",
+		"/b/deployments/cf/vms",
+	} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/cf/errands", nil)
+			handler, _ := ownershipHandlerWithConfig(managedVault())
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403: %s", recorder.Code, recorder.Body.String())
+			}
+
+			if code := decodeCode(t, recorder); code != apierr.CodeDeploymentNotManaged {
+				t.Errorf("code = %q, want %q", code, apierr.CodeDeploymentNotManaged)
+			}
+		})
+	}
+}
+
+// A read of a managed deployment runs.
+func TestReadingAManagedDeploymentRuns(t *testing.T) {
+	t.Parallel()
+
+	handler, _ := ownershipHandlerWithConfig(managedVault())
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/"+guardedDeployment+"/errands", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
 
 	if recorder.Code == http.StatusForbidden || recorder.Code == http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want the read to run: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// The broker's own deployment is the environment name plus -blacksmith.
+// It can be read, because the UI shows it, and it can't be changed,
+// because it isn't a deployment of a service instance.
+func TestBrokersOwnDeploymentIsReadableButNotChangeable(t *testing.T) {
+	t.Parallel()
+
+	handler, director := ownershipHandlerWithConfig(managedVault())
+
+	read := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/"+ownDeployment+"/errands", nil)
+	readRecorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(readRecorder, read)
+
+	if readRecorder.Code == http.StatusForbidden || readRecorder.Code == http.StatusServiceUnavailable {
+		t.Errorf("read status = %d, want the read to run: %s", readRecorder.Code, readRecorder.Body.String())
+	}
+
+	for _, action := range deploymentActions() {
+		own := action
+		own.path = strings.Replace(action.path, guardedDeployment, ownDeployment, 1)
+
+		recorder := serveAction(t, handler, own)
+
+		if recorder.Code != http.StatusForbidden {
+			t.Errorf("%s status = %d, want 403: %s", action.name, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	calls, _ := director.recorded()
+	if len(calls) != 0 {
+		t.Errorf("director calls = %v, want none", calls)
+	}
+}
+
+// Only the exact own name is readable. Another environment's name, and a
+// literal blacksmith deployment, are other deployments.
+func TestOnlyTheBrokersOwnNameIsReadable(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"blacksmith", "dev-blacksmith", ownDeployment + "-2", "x" + ownDeployment} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, _ := ownershipHandlerWithConfig(managedVault())
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/"+name, nil)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403: %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+// With no environment configured the broker knows no own name, so no
+// deployment is readable on that basis.
+func TestNoOwnDeploymentWithoutAnEnvironment(t *testing.T) {
+	t.Parallel()
+
+	handler, _ := ownershipHandler(managedVault())
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/-blacksmith", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// A read answers 503 when the index can't be read, as an action does,
+// except for the broker's own deployment, which needs no index.
+func TestReadingIsRefusedWhenTheIndexIsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	guard := mutation.NewGuard(time.Now)
+	handler := deployments.NewHandler(deployments.Dependencies{
+		Logger:   logger.NewNoOpLogger(),
+		Config:   ownEnvironmentConfig{},
+		Director: newRecordingDirector(guard, false),
+		Vault:    &unreadableIndexVault{InstanceVault: *managedVault()},
+		Guard:    guard,
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/cf/manifest", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if code := decodeCode(t, recorder); code != apierr.CodeVaultUnavailable {
+		t.Errorf("code = %q, want %q", code, apierr.CodeVaultUnavailable)
+	}
+
+	own := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/"+ownDeployment+"/errands", nil)
+	ownRecorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(ownRecorder, own)
+
+	if ownRecorder.Code == http.StatusForbidden || ownRecorder.Code == http.StatusServiceUnavailable {
+		t.Errorf("own deployment status = %d, want the read to run", ownRecorder.Code)
 	}
 }

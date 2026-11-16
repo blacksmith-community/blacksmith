@@ -38,7 +38,7 @@ func TestInstancesHandlerNamesAnIndexlessInstanceByID(t *testing.T) {
 			{ID: "uuid-1", Group: "node", Index: "-1", State: "started"},
 		},
 	}
-	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director, Vault: managingVault("valkey-1")})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/valkey-1/instances", nil)
 	recorder := httptest.NewRecorder()

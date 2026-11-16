@@ -139,8 +139,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if changesDeployment(req.Method, pathParts) &&
-		!h.refuseUnmanaged(req.Context(), writer, h.logger.Named("deployment-ownership"), deploymentName) {
+	if !h.permitDeployment(req.Context(), writer, h.logger.Named("deployment-ownership"), req.Method, pathParts, deploymentName) {
 		return
 	}
 

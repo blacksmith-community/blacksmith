@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
@@ -20,11 +21,41 @@ const (
 	routeErrands  = "errands"
 )
 
+// ownDeployment returns the name of the broker's own deployment, which is
+// the configured environment plus -blacksmith, and false when the broker
+// has no environment to name it from.
+func (h *Handler) ownDeployment() (string, bool) {
+	if h.config == nil {
+		return "", false
+	}
+
+	environment := strings.TrimSpace(h.config.GetEnvironment())
+	if environment == "" {
+		return "", false
+	}
+
+	return environment + "-blacksmith", true
+}
+
+// permitDeployment reports false, after it answers, when the request is
+// not allowed on the deployment. A change needs a deployment of one of the
+// broker's service instances. A read needs the same, except that the
+// broker's own deployment, matched exactly, can be read and never
+// changed, because the UI shows it.
+func (h *Handler) permitDeployment(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, method string, pathParts []string, deploymentName string) bool {
+	changes := changesDeployment(method, pathParts)
+
+	if own, ok := h.ownDeployment(); ok && !changes && deploymentName == own {
+		return true
+	}
+
+	return h.refuseUnmanaged(ctx, writer, logger, deploymentName, changes)
+}
+
 // changesDeployment reports whether the request changes the deployment,
 // by restarting, recreating, stopping, starting, deleting, or updating
 // it, or by running an errand on it. A read, and any request no route
-// answers, changes nothing, so the ownership check leaves it to the
-// route.
+// answers, changes nothing.
 func changesDeployment(method string, pathParts []string) bool {
 	if len(pathParts) == 1 {
 		return method == http.MethodDelete
@@ -43,13 +74,14 @@ func changesDeployment(method string, pathParts []string) bool {
 }
 
 // refuseUnmanaged reports false, after it answers, when the broker owns no
-// service instance whose deployment is deploymentName. The broker's index
+// service instance whose deployment is deploymentName. The changes flag
+// only words the refusal. The broker's index
 // is the only authority. A name that merely looks like a service
 // instance's deployment is another deployment, and it belongs to someone
 // else. A vault that is missing or an index that can't be read answers 503
 // with the code vault_unavailable, because then nobody knows whether the
 // broker owns the deployment, and the action must not run.
-func (h *Handler) refuseUnmanaged(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName string) bool {
+func (h *Handler) refuseUnmanaged(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName string, changes bool) bool {
 	if h.vault == nil {
 		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeVaultUnavailable, errVaultNotConfigured.Error()), http.StatusServiceUnavailable)
 
@@ -66,9 +98,14 @@ func (h *Handler) refuseUnmanaged(ctx context.Context, writer http.ResponseWrite
 	}
 
 	if !managed {
-		logger.Warning("Refusing to change deployment %q, which is not the deployment of a service instance this broker owns", deploymentName)
+		verb := "show"
+		if changes {
+			verb = "change"
+		}
+
+		logger.Warning("Refusing to %s deployment %q, which is not the deployment of a service instance this broker owns", verb, deploymentName)
 		apierr.Write(writer, apierr.New(http.StatusForbidden, apierr.CodeDeploymentNotManaged,
-			"deployment "+deploymentName+" is not a deployment of one of this broker's service instances, so the broker will not change it"), http.StatusForbidden)
+			"deployment "+deploymentName+" is not a deployment of one of this broker's service instances, so the broker will not "+verb+" it"), http.StatusForbidden)
 
 		return false
 	}

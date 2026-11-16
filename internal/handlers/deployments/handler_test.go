@@ -572,7 +572,7 @@ func placeholderMarkers() []string {
 func getManifestThroughHandler(t *testing.T, director *manifestDirector, route string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director, Vault: managingVault(manifestDeployment)})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/"+manifestDeployment+"/"+route, nil)
 	recorder := httptest.NewRecorder()
