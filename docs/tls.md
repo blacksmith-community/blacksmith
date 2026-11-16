@@ -78,7 +78,6 @@ broker:
 | `key` | string | - | Path to PEM-encoded private key file |
 | `protocols` | string | `"TLSv1.2 TLSv1.3"` | Space-separated list of TLS protocols |
 | `ciphers` | string | See [Security Settings](#security-settings) | Colon-separated list of cipher suites, which applies to TLS 1.2 only |
-| `reuse_after` | integer | none | Deprecated. The broker accepts the key, logs one warning at startup when it is set, and ignores it. It will be removed. |
 
 The broker reads the certificate and key once at startup. After we replace either file, we have to restart the broker before the HTTPS listener serves the new certificate.
 
@@ -177,7 +176,7 @@ ciphers: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
 
 ### Session Reuse
 
-The `reuse_after` key is deprecated. The broker never read it, because Go's TLS server handles session resumption on its own. When we set the key, the broker logs one warning at startup that says the key has no effect and will be removed. We delete the key from our config, and a config that leaves it unset stays silent.
+The `reuse_after` key is deprecated. The broker never read it, because Go's TLS server handles session resumption on its own. When the key is present, even set to 0, the broker logs one warning at startup that says the key has no effect and will be removed. We delete the key from our config, and a config that leaves it unset stays silent.
 
 ## Certificate Inventory and Rotation
 

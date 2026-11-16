@@ -149,13 +149,13 @@ When not explicitly configured, the monitor uses these defaults:
   5 minutes (300 seconds), from `timeout`, which bounds each check's VM listing
 
 - **Concurrency**
-  3 concurrent health checks, from `max_concurrent`. A value below 1 falls back to 3, and the monitor logs a warning that names the bad value, the key, and the default.
+  3 concurrent health checks, from `max_concurrent`. An absent key and an explicit 0 both mean 3. A negative value fails the config load with an error that names the key and the value. A higher value means more checks against the BOSH director at the same moment, and the broker sets no upper limit, so we raise it only as far as the director can carry.
 
 The monitor does not retry a failed check within the same cycle. A failed check counts a failure, and the monitor checks the instance again at the failed interval.
 
 ### Deprecated Setting
 
-`vm_monitoring.max_retries` is deprecated. The monitor never read it. The broker still accepts the key, logs one warning at startup when it is set, and ignores it. It will be removed, and a config that leaves it unset stays silent.
+`vm_monitoring.max_retries` is deprecated. The monitor never read it. The broker still accepts the key, logs one warning at startup when the key is present, even set to 0, and ignores it. It will be removed, and a config that leaves it out stays silent.
 
 ### Example Configurations
 
@@ -210,30 +210,15 @@ vm_monitoring:
 
 The core monitoring operates on a continuous loop:
 
+```mermaid
+flowchart TD
+    tick["1-minute ticker"] --> due["Find the services due for a check"]
+    due --> checks["Run the health checks, at most max_concurrent at once"]
+    checks --> schedule["Update each schedule from its result"]
+    schedule --> tick
 ```
-┌─────────────────┐
-│ 1-minute ticker │
-└─────┬───────────┘
-      │
-      ▼
-┌─────────────────────┐
-│ Check services due  │
-│ for monitoring      │
-└─────┬───────────────┘
-      │
-      ▼
-┌─────────────────────┐
-│ Concurrent health   │
-│ checks              │
-│ (max_concurrent)    │
-└─────┬───────────────┘
-      │
-      ▼
-┌─────────────────────┐
-│ Update schedules    │
-│ based on results    │
-└─────────────────────┘
-```
+
+When the broker shuts down, a cycle stops dispatching, whether or not a slot is free. The checks already running finish, and the instances the cycle did not reach stay due, so the next cycle checks them.
 
 ### Health Check Process
 
@@ -450,12 +435,25 @@ else:
 
 ### Concurrency Management
 
-- **Maximum Concurrent Checks**: `vm_monitoring.max_concurrent`, which defaults to 3
-- **One Check per Instance**: The monitor loop's tick and the refresh that `Start` triggers can run overlapping cycles. A cycle marks the ID of each instance it takes as being checked and skips an instance that another cycle is still checking, so no two cycles check the same instance at once. The mark belongs to the instance ID, not to the watched record, so it still holds when a rescan drops an instance that's being checked and `AddService` watches it again. Each check releases its mark when it ends, even when it panics, returns early, or runs with a cancelled context.
-- **Locked State**: `GetStatus` reads each instance's state from request goroutines while a cycle runs. A check updates that state under the monitor's lock, and it never holds the lock while it calls the director or Vault.
-- **Semaphore-Based Limiting**: Prevents BOSH Director overload
-- **Goroutine Management**: Each health check runs in separate goroutine
-- **Wait Group Coordination**: Ensures all checks complete before scheduling cycle ends
+- **Maximum Concurrent Checks**
+
+  The most checks that run at once come from `vm_monitoring.max_concurrent`, which defaults to 3.
+
+- **One Check per Instance**
+
+  The monitor loop's tick and the refresh that `Start` triggers can run overlapping cycles. A cycle marks the ID of each instance it takes as being checked and skips an instance that another cycle is still checking, so no two cycles check the same instance at once. The mark belongs to the instance ID, not to the watched record, so it still holds when a rescan drops an instance that's being checked and `AddService` watches it again. Each check releases its mark when it ends, even when it panics, returns early, or runs with a cancelled context.
+
+- **Locked State**
+
+  `GetStatus` reads each instance's state from request goroutines while a cycle runs. A check updates that state under the monitor's lock, and it never holds the lock while it calls the director or Vault.
+
+- **Semaphore Limiting**
+
+  A semaphore keeps the director from taking more than the limit at once. The monitor starts one goroutine for each due instance and holds it back until a slot frees, so it isn't a fixed pool of workers.
+
+- **Wait Group Coordination**
+
+  The cycle waits for every check it started before it ends.
 
 ## Troubleshooting and Operations
 
@@ -569,7 +567,7 @@ Each entry of `services` has these fields.
 
 The `summary` object holds `total`, `due_for_check`, `healthy`, `failing`, and `provisioning`. Every instance counts in exactly one of `healthy`, `failing`, and `provisioning`, and an instance that is still provisioning counts as `provisioning` whatever its health says.
 
-When the broker runs without a VM monitor, the route answers `{"error": "VM monitor not configured", "running": false}` and nothing else.
+When the broker runs without a VM monitor, which happens when it has no BOSH director, the route answers `{"error": "VM monitor not configured", "running": false}` and nothing else.
 
 ## Performance Considerations
 
