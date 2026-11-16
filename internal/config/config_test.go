@@ -723,3 +723,19 @@ func TestBrokerErrandTimeoutRejectsBadValues(t *testing.T) {
 		})
 	}
 }
+
+// A bosh.ssh block that sets only a connect timeout or only websocket
+// fields still moves to the top-level ssh block.
+func TestLegacySSHBlockWithOnlyConnectOrWebSocketFieldsMigrates(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.ReadConfig(writeBOSHConfig(t, "  ssh:\n    connect_timeout: 17\n    websocket:\n      ping_interval: 9\n"))
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	if cfg.SSH.ConnectTimeout != 17 || cfg.SSH.WebSocket.PingInterval != 9 {
+		t.Errorf("ssh connect_timeout %d and websocket ping_interval %d, want 17 and 9",
+			cfg.SSH.ConnectTimeout, cfg.SSH.WebSocket.PingInterval)
+	}
+}

@@ -797,7 +797,7 @@ func migrateSSHConfiguration(config *Config) {
 	// fills only the fields the top-level block leaves unset, so a value the
 	// top-level block sets, a false included, is never overwritten.
 	legacy := config.BOSH.SSH
-	if legacy.Enabled == nil && legacy.UITerminalEnabled == nil && legacy.Timeout == 0 && legacy.MaxConcurrent == 0 {
+	if legacy == (SSHConfig{}) {
 		return
 	}
 
