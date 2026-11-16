@@ -232,7 +232,7 @@ The runtime settings are saved in Vault and can be changed without a redeploy. T
 
 A patch is a temporary repair, because BOSH can restore the old certificate until the instance converges. The converge policy of a patch task says what happens next. With `pending`, the task leaves the redeploy to a later task or deploy. With `immediate`, the task redeploys as soon as the VMs are patched.
 
-When a switch is off, the broker refuses the task with an error that names the switch to turn on.
+When a switch is off, the broker refuses the task with an error that names the switch to turn on. Patch mode also runs over SSH, so when `ssh.enabled` is `false` the broker refuses a patch task with a 403 and the code `ssh_disabled`.
 
 ### Expiry Monitoring
 

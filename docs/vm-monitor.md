@@ -449,7 +449,7 @@ else:
 
 - **Semaphore Limiting**
 
-  A semaphore keeps the director from taking more than the limit at once. The monitor starts one goroutine for each due instance and holds it back until a slot frees, so it isn't a fixed pool of workers.
+  A semaphore keeps the director from taking more than the limit at once. The monitor waits for a free slot and then starts a goroutine for the check, so no goroutine sits waiting and it isn't a fixed pool of workers.
 
 - **Wait Group Coordination**
 
