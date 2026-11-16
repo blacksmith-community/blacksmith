@@ -165,6 +165,7 @@ func buildInitEnvironment(instanceID, planID string) []string {
 	env := appendSafeBinaryToPath(os.Environ())
 	env = appendVaultToken(env)
 	env = appendVaultCACert(env)
+	env = appendVaultSkipVerify(env)
 	env = appendBlacksmithVariables(env, instanceID, planID)
 
 	log := logger.Get().Named("manifest")
@@ -191,8 +192,19 @@ func appendSafeBinaryToPath(env []string) []string {
 //
 //nolint:gochecknoglobals // one CA file for the whole process
 var vaultCA struct {
-	mu   sync.RWMutex
-	path string
+	mu         sync.RWMutex
+	path       string
+	skipVerify bool
+}
+
+// SetVaultSkipVerify records whether the broker skips verification of the
+// Vault server's certificate. The render and the init scripts get the
+// setting from here, so nothing is exported to the broker's own environment
+// and an inherited VAULT_SKIP_VERIFY never reaches either.
+func SetVaultSkipVerify(skip bool) {
+	vaultCA.mu.Lock()
+	vaultCA.skipVerify = skip
+	vaultCA.mu.Unlock()
 }
 
 // SetVaultCACert records the CA that the forge init scripts trust when they
@@ -265,6 +277,28 @@ func appendVaultCACert(env []string) []string {
 	}
 
 	return append(kept, "VAULT_CACERT="+path)
+}
+
+// appendVaultSkipVerify replaces any inherited VAULT_SKIP_VERIFY with the
+// broker's own setting, and sets none when the broker verifies.
+func appendVaultSkipVerify(env []string) []string {
+	vaultCA.mu.RLock()
+	skip := vaultCA.skipVerify
+	vaultCA.mu.RUnlock()
+
+	kept := env[:0:0]
+
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "VAULT_SKIP_VERIFY=") {
+			kept = append(kept, entry)
+		}
+	}
+
+	if skip {
+		kept = append(kept, "VAULT_SKIP_VERIFY=true")
+	}
+
+	return kept
 }
 
 func appendVaultToken(env []string) []string {
@@ -469,12 +503,14 @@ func renderEngineOptions() []graft.EngineOption {
 
 	config := graft.VaultConfig{Address: address, Token: os.Getenv("VAULT_TOKEN")}
 
-	config.SkipVerify, _ = strconv.ParseBool(os.Getenv("VAULT_SKIP_VERIFY"))
+	vaultCA.mu.RLock()
+	skip, path := vaultCA.skipVerify, vaultCA.path
+	vaultCA.mu.RUnlock()
 
-	if !config.SkipVerify {
-		vaultCA.mu.RLock()
-		config.CACert = vaultCA.path
-		vaultCA.mu.RUnlock()
+	config.SkipVerify = skip
+
+	if !skip {
+		config.CACert = path
 	}
 
 	return []graft.EngineOption{graft.WithCacheDisabled(), graft.WithVault(config), graft.WithBackendRegistry(true)}

@@ -71,3 +71,40 @@ func renderAgainstPrivateCAVault(t *testing.T, mount, response string) {
 		t.Errorf("the render does not hold the value Vault returned")
 	}
 }
+
+// With skip-verify on, the render reads a Vault whose certificate no
+// configured CA signs, and a CA that is set does not get in the way.
+//
+//nolint:paralleltest // GenManifest holds a process-wide lock, and the test sets process environment
+func TestGenManifestSkipsVerificationWhenTheSettingIsOn(t *testing.T) {
+	vaultServer := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+
+		if strings.HasPrefix(req.URL.Path, "/v1/sys/internal/ui/mounts") {
+			_, _ = writer.Write([]byte(`{"data":{"path":"secret/","type":"kv","options":{"version":"1"}}}`))
+
+			return
+		}
+
+		_, _ = writer.Write([]byte(`{"data":{"value":"vm-from-vault"}}`))
+	}))
+	t.Cleanup(vaultServer.Close)
+
+	t.Setenv("CREDENTIALS", "")
+	t.Setenv("VAULT_ADDR", vaultServer.URL)
+	t.Setenv("VAULT_TOKEN", "render-test-token")
+	t.Setenv("VAULT_SKIP_VERIFY", "")
+	t.Setenv("VAULT_CACERT", "")
+
+	SetVaultSkipVerify(true)
+	t.Cleanup(func() { SetVaultSkipVerify(false) })
+
+	rendered, err := GenManifest(refusedPlan(`(( vault "secret/render/probe:value" ))`), "skip-verify-instance")
+	if err != nil {
+		t.Fatalf("the render failed with skip-verify on: %v", err)
+	}
+
+	if !strings.Contains(rendered, "vm-from-vault") {
+		t.Errorf("the render does not hold the value Vault returned")
+	}
+}

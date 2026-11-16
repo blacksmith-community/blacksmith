@@ -680,15 +680,6 @@ func setEnvironmentVariables(config *Config) error {
 		}
 	}
 
-	// graft's vault operator and the forge init scripts read this from the
-	// environment, and neither takes it from the broker's own client.
-	if config.Vault.Insecure {
-		err = os.Setenv("VAULT_SKIP_VERIFY", "true")
-		if err != nil {
-			return fmt.Errorf("failed to set VAULT_SKIP_VERIFY environment variable: %w", err)
-		}
-	}
-
 	return nil
 }
 

@@ -354,6 +354,8 @@ func createVaultClient(cfg *config.Config) *internalVault.Vault {
 		os.Exit(exitCodeError)
 	}
 
+	manifest.SetVaultSkipVerify(cfg.Vault.Insecure)
+
 	vault.SetCredentialsPath(cfg.Vault.CredPath)
 
 	if cfg.Vault.Token != "" {

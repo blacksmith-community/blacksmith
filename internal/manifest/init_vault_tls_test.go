@@ -12,7 +12,13 @@ import (
 // initEnvValue returns the value of VAULT_CACERT in the init script
 // environment, and whether it is set.
 func initEnvValue() (string, bool) {
-	prefix := "VAULT_CACERT="
+	return initEnvKey("VAULT_CACERT")
+}
+
+// initEnvKey returns the value of key in the init script environment, and
+// whether it is set.
+func initEnvKey(key string) (string, bool) {
+	prefix := key + "="
 	value, found := "", false
 
 	for _, entry := range manifest.BuildInitEnvironment("inst", "plan") {
@@ -134,4 +140,25 @@ func TestInitEnvironmentTrimsWhitespaceAroundTheVaultCAPath(t *testing.T) { //no
 	if got != "/etc/blacksmith/vault-ca.pem" {
 		t.Errorf("VAULT_CACERT = %q, want the path without whitespace", got)
 	}
+}
+
+// The init scripts get VAULT_SKIP_VERIFY from the broker's setting and never
+// from the environment the broker inherited.
+func TestInitEnvironmentSetsVaultSkipVerifyFromTheBrokersSetting(t *testing.T) { //nolint:paralleltest // sets package state
+	t.Setenv("VAULT_SKIP_VERIFY", "inherited")
+
+	for _, skip := range []bool{false, true} {
+		manifest.SetVaultSkipVerify(skip)
+
+		got, found := initEnvKey("VAULT_SKIP_VERIFY")
+
+		switch {
+		case skip && (!found || got != "true"):
+			t.Errorf("skip on: VAULT_SKIP_VERIFY = %q (set %t), want true", got, found)
+		case !skip && found:
+			t.Errorf("skip off: VAULT_SKIP_VERIFY = %q reached the init scripts, want it absent", got)
+		}
+	}
+
+	manifest.SetVaultSkipVerify(false)
 }

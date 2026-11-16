@@ -739,3 +739,15 @@ func TestLegacySSHBlockWithOnlyConnectOrWebSocketFieldsMigrates(t *testing.T) {
 			cfg.SSH.ConnectTimeout, cfg.SSH.WebSocket.PingInterval)
 	}
 }
+
+// Loading a configuration never exports VAULT_SKIP_VERIFY, because the
+// broker hands the setting to each consumer itself.
+func TestReadConfigLeavesVaultSkipVerifyUnexported(t *testing.T) { //nolint:paralleltest // sets process environment
+	t.Setenv("VAULT_SKIP_VERIFY", "operator")
+
+	readRawWithWarnings(t, "vault:\n  address: https://vault.example.com:8200\n  skip_ssl_validation: true\nbosh:\n  address: https://10.0.0.6:25555\n  username: admin\n  password: bosh-secret\n")
+
+	if got := os.Getenv("VAULT_SKIP_VERIFY"); got != "operator" {
+		t.Errorf("VAULT_SKIP_VERIFY = %q, want the operator's value untouched", got)
+	}
+}
