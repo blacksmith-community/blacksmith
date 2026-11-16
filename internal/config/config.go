@@ -220,9 +220,9 @@ type VMMonitoringConfig struct {
 	Enabled        *bool `yaml:"enabled"`         // Pointer to distinguish between false and unset
 	NormalInterval int   `yaml:"normal_interval"` // Seconds between checks for healthy deployments
 	FailedInterval int   `yaml:"failed_interval"` // Seconds between checks for unhealthy deployments
-	MaxRetries     int   `yaml:"max_retries"`
-	Timeout        int   `yaml:"timeout"`        // The deadline for each check's VM listing (seconds); 0 means 300
-	MaxConcurrent  int   `yaml:"max_concurrent"` // How many instances one check cycle checks at once; 0 means 3
+	MaxRetries     int   `yaml:"max_retries"`     // Deprecated: the broker does not read it
+	Timeout        int   `yaml:"timeout"`         // The deadline for each check's VM listing (seconds); 0 means 300
+	MaxConcurrent  int   `yaml:"max_concurrent"`  // How many instances one check cycle checks at once; 0 means 3
 }
 
 type TLSConfig struct {
@@ -232,7 +232,7 @@ type TLSConfig struct {
 	Key         string `yaml:"key"`
 	Protocols   string `yaml:"protocols"`
 	Ciphers     string `yaml:"ciphers"`
-	ReuseAfter  int    `yaml:"reuse_after"`
+	ReuseAfter  int    `yaml:"reuse_after"` // Deprecated: the broker does not read it
 }
 
 type BrokerConfig struct {
@@ -375,6 +375,7 @@ func ReadConfig(path string) (Config, error) {
 		return config, err
 	}
 
+	warnDeprecatedKeys(&config)
 	setBrokerDefaults(&config)
 	setTLSDefaults(&config)
 	setCompressionDefaults(&config)
@@ -431,6 +432,22 @@ func loadConfigFromFile(path string) (Config, error) {
 	return config, nil
 }
 
+// warnDeprecatedKeys logs one warning for each deprecated key the config
+// sets. The keys still load, so an existing config keeps working, but the
+// broker reads neither of them. No default fills them in, so a key that is
+// unset stays silent.
+func warnDeprecatedKeys(config *Config) {
+	log := logger.Get().Named("config")
+
+	if config.Broker.TLS.ReuseAfter != 0 {
+		log.Warn("broker.tls.reuse_after is deprecated, has no effect, and will be removed")
+	}
+
+	if config.VMMonitoring.MaxRetries != 0 {
+		log.Warn("vm_monitoring.max_retries is deprecated, has no effect, and will be removed")
+	}
+}
+
 // setBrokerDefaults sets default values for broker configuration.
 func setBrokerDefaults(config *Config) {
 	if config.Broker.Username == "" {
@@ -462,10 +479,6 @@ func setTLSDefaults(config *Config) {
 
 	if config.Broker.TLS.Ciphers == "" {
 		config.Broker.TLS.Ciphers = "ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:HIGH:!MD5:!aNULL:!EDH"
-	}
-
-	if config.Broker.TLS.ReuseAfter == 0 {
-		config.Broker.TLS.ReuseAfter = 2
 	}
 }
 
@@ -644,10 +657,6 @@ func setVMMonitoringDefaults(config *Config) error {
 
 	if config.VMMonitoring.FailedInterval == 0 {
 		config.VMMonitoring.FailedInterval = 300 // 5 minutes
-	}
-
-	if config.VMMonitoring.MaxRetries == 0 {
-		config.VMMonitoring.MaxRetries = 3
 	}
 
 	if config.VMMonitoring.Timeout == 0 {

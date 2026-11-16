@@ -13,7 +13,7 @@ broker:
     key: ""
     protocols: TLSv1.2 TLSv1.3
     ciphers: ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:HIGH:!MD5:!aNULL:!EDH
-    reuse_after: 2
+    reuse_after: 0
   cf:
     enabled: false
     broker_url: ""
@@ -132,7 +132,7 @@ vm_monitoring:
   enabled: true
   normal_interval: 3600
   failed_interval: 300
-  max_retries: 3
+  max_retries: 0
   timeout: 300
   max_concurrent: 3
 debug: false

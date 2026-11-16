@@ -177,7 +177,7 @@ vm_monitoring:
     enabled: true
     normal_interval: 3600
     failed_interval: 300
-    max_retries: 3
+    max_retries: 0
     timeout: 300
     max_concurrent: 3
 debug: false

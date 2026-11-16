@@ -11,7 +11,7 @@ $.Broker.TLS.Certificate	string	""
 $.Broker.TLS.Key	string	""
 $.Broker.TLS.Protocols	string	"TLSv1.2 TLSv1.3"
 $.Broker.TLS.Ciphers	string	"ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:HIGH:!MD5:!aNULL:!EDH"
-$.Broker.TLS.ReuseAfter	int	2
+$.Broker.TLS.ReuseAfter	int	0
 $.Broker.CF.Enabled	bool	false
 $.Broker.CF.BrokerURL	string	""
 $.Broker.CF.BrokerUser	string	""
@@ -134,7 +134,7 @@ $.Reconciler.Backup.BackupOnDelete	bool	true
 $.VMMonitoring.Enabled	bool	true
 $.VMMonitoring.NormalInterval	int	3600
 $.VMMonitoring.FailedInterval	int	300
-$.VMMonitoring.MaxRetries	int	3
+$.VMMonitoring.MaxRetries	int	0
 $.VMMonitoring.Timeout	int	300
 $.VMMonitoring.MaxConcurrent	int	3
 $.Debug	bool	false

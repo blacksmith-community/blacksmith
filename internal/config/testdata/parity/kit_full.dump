@@ -153,7 +153,7 @@ $.Reconciler.Backup.BackupOnDelete	bool	true
 $.VMMonitoring.Enabled	bool	true
 $.VMMonitoring.NormalInterval	int	3600
 $.VMMonitoring.FailedInterval	int	300
-$.VMMonitoring.MaxRetries	int	3
+$.VMMonitoring.MaxRetries	int	0
 $.VMMonitoring.Timeout	int	300
 $.VMMonitoring.MaxConcurrent	int	3
 $.Debug	bool	false
