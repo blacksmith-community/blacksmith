@@ -57,21 +57,37 @@ The status answer has no reconciler section. The orphan state has its own route,
 
 #### Additional Endpoints
 
-- `/v2/catalog` serves the service catalog from the Open Service Broker API.
+- `GET /v2/catalog` serves the service catalog from the Open Service Broker API, and it takes no body.
 
 - `GET /b/orphans` lists the entries marked orphaned, with the time left before each removal, and the unclaimed BOSH deployments.
 
 - `POST /b/cleanup` is reserved for a manual cleanup job, and it answers 501 Not Implemented today. Any other method gets 405. The reconciler removes orphaned entries on its own.
 
-- `GET` and `POST /b/blacksmith/settings` read and change the broker settings, including the reconciler interval.
+- `GET /b/blacksmith/settings` reads the broker settings, and `POST /b/blacksmith/settings` changes them. The `POST` takes a JSON body with the optional fields `vault_max_versions`, an integer, and `reconciler_interval`, a duration string such as `5m`. A field the body leaves out keeps its current value.
 
 - `GET /b/blacksmith/changes` lists the audited changes to settings, endpoints, and instances.
 
 - `GET /b/tasks` lists BOSH tasks. It takes `limit` and `offset` for paging, and `counts=1` adds the number of tasks in each state.
 
-- `/b/deployments/{name}/...` serves deployment details, which include events and VMs.
+- `/b/deployments/{name}/...` serves deployment details and operations, and each route accepts one method.
+
+  `GET /b/deployments/{name}` reads a deployment, `DELETE` removes it, and neither takes a body. `GET` also serves `/manifest`, `/manifest-details`, `/vms`, `/instances`, `/events`, and `/errands`.
+
+  `POST /b/deployments/{name}/manifest` replaces the manifest. Its body is the manifest as a JSON object, and the broker refuses a body that is empty, `null`, or `{}` with a 400 answer.
+
+  `POST /b/deployments/{name}/errands/{errand}` runs an errand. It takes no body, and the query parameters `keep_alive`, `when_changed`, and `instances` shape the run.
+
+  `POST` is the method for `/recreate`, `/restart`, `/stop`, and `/start`. These routes take no body either, and they read optional query parameters such as `skip_drain`, `canaries`, and `max_in_flight`. Any other method gets 405.
 
 - `/b/upgrade/...` runs the batch operations described under [Batch Operations](#8-batch-operations).
+
+  `POST /b/upgrade/tasks` creates a job. Its JSON body names the `instance_ids` and, for an upgrade, the `target_stemcell` and any `target_releases`. The optional fields are `kind`, `name`, `upgrade_preview_id`, and `pause_on_failure`.
+
+  `POST /b/upgrade/preview` previews an upgrade with the same body. `POST /b/upgrade/commands/preview` previews a Run command job, and its body holds `instance_ids`, `command`, `run_as`, `timeout_seconds`, `parallel`, and `max_in_flight`.
+
+  `GET /b/upgrade/tasks` lists the jobs, and `GET /b/upgrade/tasks/{id}` and `GET /b/upgrade/tasks/{id}/output` read one job. `POST /b/upgrade/tasks/{id}/pause`, `/resume`, and `/cancel` change a job's state, and none of them takes a body.
+
+  `GET /b/upgrade/settings` reads the batch settings, and `PUT /b/upgrade/settings` changes them with a JSON body that holds `max_batch_jobs`, an integer.
 
 [broker.md](broker.md) lists every route with its method.
 
