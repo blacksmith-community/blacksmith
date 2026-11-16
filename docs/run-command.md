@@ -362,6 +362,7 @@ All routes sit under `/b/upgrade` and take the broker's basic auth. A command ke
 
 | Route | Purpose |
 |-------|---------|
+| `GET /b/upgrade/commands/availability` | Takes no input and runs nothing. Answers 200 with `enabled`, `allow_root`, and `max_in_flight_limit`, so the console learns the switches and the largest parallel cap without sending a preview. The answer follows live configuration, so it carries `Cache-Control: no-store`. |
 | `POST /b/upgrade/commands/preview` | Takes `instance_ids`, `command`, `run_as`, `timeout_seconds`, `parallel`, and `max_in_flight`, and an optional `client_request_id` of at most 128 bytes. That ID binds the preview for a discard only, so only a discard that names the same request can revoke it, and the create does not check it. Answers with a `preview_id` that expires. |
 | `POST /b/upgrade/tasks` | With `kind` set to `command`, takes `preview_id`, `client_request_id`, `command`, `run_as`, `timeout_seconds`, `parallel`, `max_in_flight`, `name`, and `reason`. A body that also sends `pause_on_failure` answers 400 `invalid_request`, because a command task always pauses after a failure. |
 | `POST /b/upgrade/commands/discard` | Takes `client_request_id` and `preview_id`, applies the commands switch, and needs no command key. Answers 200 with `{"discarded": true}` after it revokes the preview, or with `{"discarded": false, "task_id": "..."}` when a task already exists for the request. A preview bound to a different `client_request_id` is left in place, and the discard answers 409 `preview_bound`. |

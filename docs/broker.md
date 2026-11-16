@@ -17,41 +17,47 @@ Blacksmith serves as an intermediary between Cloud Foundry and BOSH, enabling:
 
 ### Core Components
 
-#### Broker Core (`broker.go`)
+#### Broker Core (`internal/broker`)
 - **Broker**: Main service broker implementing Cloud Foundry Service Broker API
 - **Plan Management**: Service plan validation and limit enforcement
 - **Async Operations**: Background provisioning and deprovisioning
+- **CredHub Cleanup**: Removal of a deprovisioned instance's director credentials
 
-#### API Layer (`api.go`, `internal_api.go`)
-- **API**: Main HTTP handler with authentication
-- **InternalApi**: Extended management interface with web UI
-- **WebSocket Support**: Real-time SSH session management
+#### API Layer (`internal/api`, `internal/handlers`)
+- **Router**: Registers every `/b/` route and sends the rest to the service handlers
+- **Handlers**: One package per area, such as instances, deployments, tasks, certificates, upgrade, and CF registration
+- **WebSocket Support**: Real-time SSH and RabbitMQ sessions
 
 #### Storage and State Management
-- **Vault Integration** (`vault.go`): Credential and metadata storage
-- **Plan Storage** (`plan_store.go`): Plan file management and versioning
+- **Vault Integration** (`internal/vault`): Credential and metadata storage
+- **Plan Storage** (`internal/planstore`): Plan file management and versioning
 - **Index Management**: Service instance tracking and status
+- **Audit Records** (`internal/audit`): Changes to settings, endpoints, and instances
 
-#### BOSH Integration (`bosh/`)
+#### BOSH Integration (`internal/bosh`)
 - **Pooled Director**: Connection pooling for BOSH API calls
 - **Director Adapter**: BOSH operations wrapper
+- **SSH** (`internal/bosh/ssh`): Throwaway users and commands on service VMs
 - **Deployment Management**: Manifest generation and deployment lifecycle
 
-#### Reconciliation System (`pkg/reconciler/`)
+#### Reconciliation System (`pkg/reconciler`, `internal/recovery`)
 - **Reconciler Manager**: Automated state synchronization
 - **Scanner**: Discovery of BOSH deployments and CF service instances
-- **Synchronizer**: Data consistency maintenance
+- **Synchronizer**: Data consistency maintenance and orphan marking
 - **Updater**: Safe deployment updates with backup support
 
-#### Monitoring (`vm_monitor.go`)
+#### Monitoring (`internal/vmmonitor`)
 - **VM Monitor**: Health checking of service instances
 - **Service Monitor**: Individual service health tracking
 - **Status Aggregation**: Overall health reporting
 
+#### Batch Operations (`internal/upgrade`)
+- **Upgrade, Certificate, and Command Jobs**: Tasks that work through many instances
+- **Certificate Inventory** (`internal/certinventory`): Scans instances for certificates
+
 #### Service-Specific Components
-- **RabbitMQ Services** (`services/rabbitmq/`): RabbitMQ-specific operations
-- **SSH Services** (`bosh/ssh/`): Secure shell access to instances
-- **WebSocket Handler** (`websocket/`): Real-time SSH over WebSocket
+- **RabbitMQ and Redis Handlers** (`internal/handlers/services`): Service-specific operations
+- **WebSocket Handlers** (`internal/handlers/ssh/websocket`, `internal/handlers/services/rabbitmq/websocket`): Real-time sessions over WebSocket
 
 ### Data Flow
 
@@ -86,14 +92,13 @@ broker:
     key: "/path/to/key.pem"          # TLS private key file
     protocols: "TLS1.2,TLS1.3"       # Supported TLS versions
     ciphers: "ECDHE-RSA-AES256-GCM-SHA384:..." # Cipher suites
-    reuse_after: 3600                # Session reuse timeout
 
   # HTTP Compression
   compression:
     enabled: true                     # Enable gzip compression
     level: 6                         # Compression level (1-9)
     min_size: 1000                   # Minimum response size to compress
-    mime_types:                      # MIME types to compress
+    content_types:                   # MIME types to compress
       - "application/json"
       - "text/html"
       - "text/css"
@@ -101,15 +106,17 @@ broker:
 
   # Cloud Foundry Integration
   cf:
+    enabled: true                               # Allow CF registration
     broker_url: "https://blacksmith.cf.domain"  # Broker URL for CF registration
     broker_user: "admin"                        # CF service broker user
     broker_pass: "secret"                       # CF service broker password
-    apis:                                       # CF API endpoints for management
-      - name: "production"
-        url: "https://api.cf.domain"
+    apis:                                       # CF API endpoints for management, keyed by name
+      production:
+        name: "production"
+        endpoint: "https://api.cf.domain"
         username: "cf-admin"
         password: "cf-secret"
-        skip_ssl_verification: false
+        skip_ssl_validation: false
 
 # Vault Configuration
 vault:
@@ -132,31 +139,6 @@ bosh:
   max_connections: 10                   # Connection pool size
   connection_timeout: 300               # Connection timeout (seconds)
 
-  # SSH Configuration
-  ssh:
-    timeout: 600                       # SSH session timeout (seconds)
-    connect_timeout: 30                # SSH connection timeout (seconds)
-    session_init_timeout: 60           # Session initialization timeout
-    output_read_timeout: 2             # Output read timeout (seconds)
-    max_concurrent: 10                 # Maximum concurrent SSH sessions
-    max_output_size: 1048576          # Maximum output size (bytes)
-    keep_alive: 10                    # SSH keep-alive interval (seconds)
-    retry_attempts: 3                 # Connection retry attempts
-    retry_delay: 5                    # Retry delay (seconds)
-
-    # WebSocket Configuration
-    websocket:
-      enabled: true                   # Enable WebSocket SSH
-      read_buffer_size: 4096         # WebSocket read buffer size
-      write_buffer_size: 4096        # WebSocket write buffer size
-      handshake_timeout: 10          # WebSocket handshake timeout (seconds)
-      max_message_size: 32768        # Maximum message size (bytes)
-      ping_interval: 30              # WebSocket ping interval (seconds)
-      pong_timeout: 10               # WebSocket pong timeout (seconds)
-      max_sessions: 50               # Maximum concurrent WebSocket sessions
-      session_timeout: 1800          # WebSocket session timeout (seconds)
-      enable_compression: true       # Enable WebSocket compression
-
   # BOSH Releases and Stemcells
   releases:
   - name: redis-forge
@@ -169,6 +151,31 @@ bosh:
       version: "1.25"
       url: "https://bosh.io/d/stemcells/bosh-warden-boshlite-ubuntu-noble-go_agent"
       sha1: "a743eafa91a69306da0b7d420ceb3621a277e9c5"
+
+# SSH Configuration (this was bosh.ssh in older versions)
+ssh:
+  timeout: 600                         # SSH session timeout (seconds)
+  connect_timeout: 30                  # SSH connection timeout (seconds)
+  session_init_timeout: 60             # Session initialization timeout
+  output_read_timeout: 2               # Output read timeout (seconds)
+  max_concurrent: 10                   # Maximum concurrent SSH sessions
+  max_output_size: 1048576             # Maximum output size (bytes)
+  keep_alive: 10                       # SSH keep-alive interval (seconds)
+  retry_attempts: 3                    # Connection retry attempts
+  retry_delay: 5                       # Retry delay (seconds)
+
+  # WebSocket Configuration
+  websocket:
+    enabled: true                      # Enable WebSocket SSH
+    read_buffer_size: 4096             # WebSocket read buffer size
+    write_buffer_size: 4096            # WebSocket write buffer size
+    handshake_timeout: 10              # WebSocket handshake timeout (seconds)
+    max_message_size: 32768            # Maximum message size (bytes)
+    ping_interval: 5                   # WebSocket ping interval (seconds)
+    pong_timeout: 10                   # WebSocket pong timeout (seconds)
+    max_sessions: 50                   # Maximum concurrent WebSocket sessions
+    session_timeout: 1800              # WebSocket session timeout (seconds)
+    enable_compression: false          # Enable WebSocket compression
 
 # Shield Backup Configuration
 shield:
@@ -194,18 +201,15 @@ services:
 reconciler:
   enabled: true                       # Enable deployment reconciliation
   interval: "5m"                      # Reconciliation interval
-  max_concurrency: 5                  # Maximum concurrent reconciliations
+  max_concurrency: 4                  # Maximum concurrent reconciliations
   batch_size: 10                      # Batch size for processing
   retry_attempts: 3                   # Number of retry attempts
-  retry_delay: "30s"                  # Delay between retries
-  cache_ttl: "1h"                     # Cache TTL for deployment data
   debug: false                        # Enable debug logging
 
   # Backup Configuration
   backup:
     enabled: true                     # Enable pre-update backups
     retention_days: 7                 # Backup retention period
-    storage_path: "backups/"          # Vault storage path for backups
 
 # VM Monitoring Configuration
 vm_monitoring:
@@ -213,7 +217,7 @@ vm_monitoring:
   normal_interval: 3600               # Seconds between checks of a healthy deployment
   failed_interval: 300                # Seconds between checks of an unhealthy deployment
   timeout: 300                        # Deadline for each check's VM listing (seconds)
-  max_concurrent: 5                   # Maximum concurrent health checks
+  max_concurrent: 3                   # VM monitor workers
 
 # General Settings
 debug: false                          # Enable debug logging
@@ -223,24 +227,30 @@ shareable: false                      # Allow shared service instances
 
 # Forge Configuration
 forges:
-  default: "/opt/blacksmith/services"  # Default service definitions path
+  auto-scan: true                     # Look for forges on the broker VM
+  scan-paths:
+    - "/var/vcap/jobs"
+  scan-patterns:
+    - "*-forge"
 ```
+
+[config.md](config.md) is the full reference for every key. The sample leaves out `credhub`, `certificates`, and `commands`, which are optional and have their own sections there.
 
 ## Workflow and Operations
 
 ### Service Provisioning Workflow
 
-1. **Request Reception** (`main.go:142-710`)
+1. **Request Reception**
    - Client sends provisioning request to `/v2/service_instances/{instance_id}`
    - Broker validates async operation support
    - Request immediately recorded in Vault with status `request_received`
 
-2. **Plan Validation** (`broker.go:212-438`)
+2. **Plan Validation**
    - Service and plan lookup from catalog
    - Service limit enforcement
    - Status updated to `validated` in Vault index
 
-3. **Async Provisioning** (`async.go:14-186`)
+3. **Async Provisioning**
    - Background goroutine handles actual deployment
    - BOSH director UUID retrieval
    - Service initialization script execution
@@ -249,14 +259,14 @@ forges:
    - BOSH deployment creation
    - Task ID tracking for progress monitoring
 
-4. **Progress Tracking** (`vault.go`)
+4. **Progress Tracking**
    - Real-time status updates in Vault
    - Progress tracking with detailed messages
    - Task ID storage for operation monitoring
 
 ### Service Binding Workflow
 
-1. **Credential Retrieval** (`broker.go:918-1006`)
+1. **Credential Retrieval**
    - Static credentials fetched from deployment
    - Service-specific credential processing
 
@@ -269,7 +279,7 @@ forges:
    - Admin credentials filtered out
    - Service-ready credentials returned to CF
 
-### Reconciliation Process (`pkg/reconciler/`)
+### Reconciliation Process
 
 1. **Discovery Phase**
    - Scan BOSH deployments for Blacksmith services
@@ -279,14 +289,14 @@ forges:
 2. **Synchronization Phase**
    - Compare BOSH and CF service states
    - Update Vault index with current information
-   - Handle orphaned instances and deployments
+   - Mark orphaned instances, and remove them after a grace period
+   - Report unclaimed deployments
 
 3. **Update Phase**
    - Safe deployment updates with backup support
    - Rolling updates with health verification
-   - Automatic rollback on failure
 
-### Monitoring Operations (`vm_monitor.go`)
+### Monitoring Operations
 
 1. **Health Checking**
    - Periodic VM status verification
@@ -296,7 +306,7 @@ forges:
 2. **Status Storage**
    - Health status stored in Vault
    - Historical health data tracking
-   - Alert generation for failures
+   - Deployments the director no longer has are marked `deleted`
 
 ## API Endpoints
 
@@ -310,15 +320,60 @@ forges:
 - `DELETE /v2/service_instances/{instance_id}/service_bindings/{binding_id}` - Delete binding
 
 ### Internal Management API
-- `GET /b/status` - Broker status. Reports the build `version` and `commit`, and whether the BOSH director and Vault answer (`bosh` is `connected` or `unreachable`, and `vault` is `connected`, `sealed`, or `unreachable`, with `healthy` true only when both are connected). The health result is cached for five seconds, and a degraded broker still answers 200.
-- `GET /b/instance` - Service instance listing
-- `GET /b/instance/{instance_id}` - Instance details
-- `GET /b/instance/{instance_id}/manifest` - Deployment manifest
-- `GET /b/instance/{instance_id}/credentials` - Service credentials
-- `GET /b/instance/{instance_id}/backup` - Backup operations
-- `POST /b/instance/{instance_id}/ssh` - SSH session creation
-- `GET /b/vm-status` - VM health monitoring
-- `POST /b/vm-refresh` - Trigger health check
+
+Every route here takes the broker's basic authentication. [service-instance-management-workflow.md](service-instance-management-workflow.md) describes how the status, orphan, and task routes fit the instance lifecycle.
+
+#### Broker Status and Settings
+
+- `GET /b/status` - Broker status. Reports the build `version` and `commit`, and whether the BOSH director and Vault answer (`bosh` is `connected` or `unreachable`, and `vault` is `connected`, `sealed`, or `unreachable`, with `healthy` true only when both are connected). It also carries `environment`, `env`, `timestamp`, the `instances` index, and the `plans`. The health result is cached for five seconds, and a degraded broker still answers 200.
+- `GET /b/internal/health` - Health check for load balancers
+- `GET /b/instance` - Details of the Blacksmith VM the broker runs on
+- `GET /b/config/ssh/ui-terminal-status` - Whether the SSH terminal UI is on
+- `GET /b/blacksmith/config` - The broker's running configuration
+- `GET /b/blacksmith/{logs,vms,events,manifest,credentials}` - The Blacksmith deployment's own logs, VMs, events, manifest, and credentials
+- `GET /b/blacksmith/settings` and `POST /b/blacksmith/settings` - Read and change `vault_max_versions` and `reconciler_interval`
+- `GET /b/blacksmith/changes` - Audited changes, with `scope` set to `settings`, `endpoints`, or `instances`, and `limit` from 1 to 100
+- `GET /b/orphans` - Entries marked orphaned and unclaimed BOSH deployments
+- `POST /b/cleanup` - Reserved for a manual cleanup job, and it answers 501 Not Implemented. The reconciler removes orphans on its own.
+
+#### Service Instances
+
+Each route takes the instance ID in place of `{id}`.
+
+- `GET /b/{id}/vms`, `/logs`, `/events`, `/manifest`, `/credentials`, `/details`, and `/config` - What the instance has on BOSH and in Vault.
+- `GET /b/{id}/task/log` and `/task/debug` - The log of the instance's latest BOSH task
+- `POST /b/{id}/restart` and `POST /b/{id}/recreate` - Restart or recreate every VM of the instance
+- `PUT /b/{id}/resurrection` and `DELETE /b/{id}/resurrection` - Toggle BOSH resurrection for the instance, and delete its resurrection config
+- `POST /b/{id}/ssh/execute` - Run one command over SSH
+- `POST /b/{id}/rabbitmq/ssh/{command}` - Run a RabbitMQ command over SSH
+- `GET`, `POST`, and `DELETE /b/{id}/certificates/trusted`, and `POST /b/{id}/certificates/trusted/file` - Read the instance's trusted certificates
+- `/b/{id}/rabbitmq/{test,publish,consume,queues,queue-ops,management}` and `/b/{id}/redis/{test,info,set,get,delete,command,keys,flush}` - Test and inspect a RabbitMQ or Redis instance
+
+#### BOSH
+
+- `GET /b/bosh/pool-stats` - Connection pool usage
+- `GET /b/bosh/stemcells` and `GET /b/bosh/releases` - What the director holds
+- `GET /b/bosh/deployment-releases` - Releases in use by each deployment
+- `GET /b/bosh/vm-monitor` - The VM monitor's summary
+- `GET /b/tasks` - BOSH tasks. It takes `state`, `limit` (default 50), and `offset` for paging, and `counts=1` adds the number of tasks in each state.
+- `GET /b/tasks/{id}`, `GET /b/tasks/{id}/output`, and `POST /b/tasks/{id}/cancel` - One task, its output, and its cancel
+- `GET /b/configs`, `GET /b/configs/{id}`, `GET /b/configs/{type}/{name}/versions`, and `GET /b/configs/{type}/{name}/diff` - The director's configs
+- `GET /b/service-filter-options` - The values the console offers in its service filters
+
+#### Deployments
+
+- `GET /b/deployments/{name}` and `DELETE /b/deployments/{name}` - Read or delete a deployment
+- `GET /b/deployments/{name}/{manifest,manifest-details,vms,instances,events}` - Read a deployment's manifest, VMs, instances, or events
+- `POST /b/deployments/{name}/manifest` - Update the manifest
+- `POST /b/deployments/{name}/{restart,recreate,stop,start}` - Change what the deployment's VMs are doing
+- `GET /b/deployments/{name}/errands` and `POST /b/deployments/{name}/errands/{errand}` - List or run errands
+
+#### Certificates
+
+- `GET /b/certificates/inventory`, `POST /b/certificates/scan`, and `POST /b/certificates/rotation/preview` - The inventory, a fresh scan, and a rotation preview
+- `GET /b/certificates/instances/{id}` and `GET /b/certificates/items/{id}` - One instance's certificates, or one certificate
+- `GET /b/certificates/settings` and `PUT /b/certificates/settings` - Read and change the certificate settings
+- `/b/internal/certificates/{trusted,trusted/file,blacksmith,endpoint,parse,services/...}` - The certificates the broker itself uses
 
 ### Batch Operations API
 
@@ -378,10 +433,25 @@ A test that ran answers 200, whether or not a check failed. The answer lists eve
 }
 ```
 
+### Task Routes for Batch Operations
+
+All of these sit under `/b/upgrade`.
+
+- `POST /b/upgrade/preview` - Preview an upgrade
+- `POST /b/upgrade/commands/preview`, `POST /b/upgrade/commands/discard`, and `GET /b/upgrade/commands/availability` - Preview a command run, discard its preview, and read the command switches
+- `GET /b/upgrade/settings` and `PUT /b/upgrade/settings` - Read and change the batch settings
+- `POST /b/upgrade/tasks` and `GET /b/upgrade/tasks` - Create and list tasks
+- `GET /b/upgrade/tasks/{id}` - Read one task
+- `POST /b/upgrade/tasks/{id}/pause`, `/resume`, and `/cancel` - Steer a task
+- `GET /b/upgrade/tasks/{id}/output` - Read what a command run printed on one node
+- `POST /b/upgrade/tasks/{id}/instances/{instance-id}/{action}` - Decide for one instance, where the action is `reconcile`, `approve`, `preview`, `resolve`, or `candidates`
+
 ### WebSocket APIs
-- `GET /b/instance/{instance_id}/ssh/ws` - SSH WebSocket endpoint
-- `GET /b/instance/{instance_id}/rabbitmq/ws` - RabbitMQ command WebSocket
-- `GET /b/instance/{instance_id}/rabbitmq/plugins/ws` - RabbitMQ plugins WebSocket
+- `GET /b/{id}/ssh/stream` - SSH terminal WebSocket for a service instance. It takes an `index` query parameter that picks the VM.
+- `GET /b/blacksmith/ssh/stream` - SSH terminal WebSocket for the Blacksmith VM
+- `GET /b/ssh/status` - Whether the SSH WebSocket service is available
+- `GET /b/{id}/rabbitmq/rabbitmqctl/*` - RabbitMQ command WebSocket
+- `GET /b/{id}/rabbitmq/plugins/*` - RabbitMQ plugins WebSocket
 
 ## Service Management Features
 
@@ -601,7 +671,7 @@ web-root: "/opt/blacksmith/ui"
 - Instance status tracking via Vault
 - BOSH task monitoring
 - WebSocket connection debugging
-- Reconciler status reporting
+- Reconciler log lines, and `GET /b/orphans`
 
 ### Security Considerations
 
@@ -641,4 +711,4 @@ web-root: "/opt/blacksmith/ui"
 - External state storage (Vault), including the records of SSH users still to be removed
 - One Vault mount per broker, because the SSH cleanup sweep treats every record on its mount as its own
 - Graceful shutdown handling
-- Health check endpoints for load balancer integration
+- `GET /b/internal/health` for load balancer integration

@@ -7,11 +7,13 @@ This document provides documentation for all Blacksmith configuration file optio
 The main configuration file contains the following top-level sections:
 
 ```yaml
-broker:       # HTTP server and authentication settings
-cf:           # Cloud Foundry API integration configuration (optional)
+broker:       # HTTP server, authentication, compression, and Cloud Foundry integration (broker.cf)
 vault:        # Vault integration configuration
 shield:       # SHIELD backup integration (optional)
 bosh:         # BOSH director configuration
+ssh:          # SSH connection and WebSocket settings
+credhub:      # Director CredHub cleanup (optional)
+certificates: # Certificate inventory, rotation, and in-place patching (optional)
 commands:     # Run command batch operation (optional)
 services:     # Service-specific behavior configuration
 vm_monitoring: # VM monitoring and status tracking (optional)
@@ -22,6 +24,8 @@ env:          # Environment identifier
 shareable:    # Enable shareable service instances
 forges:       # Service template discovery configuration
 ```
+
+The Cloud Foundry settings are not a top-level section. They sit under `broker.cf`, as the [Cloud Foundry section](#cloud-foundry-configuration-brokercf) shows.
 
 ## Top-Level Configuration Options
 
@@ -117,9 +121,8 @@ vm_monitoring:
   enabled: true         # Enable VM monitoring
   normal_interval: 3600 # Check healthy deployments every hour
   failed_interval: 300  # Check unhealthy deployments every 5 minutes
-  max_retries: 3        # Maximum retry attempts
   timeout: 300          # Deadline for each check's VM listing (seconds)
-  max_concurrent: 3     # Maximum concurrent VM checks
+  max_concurrent: 3     # Number of VM monitor workers
 ```
 
 ### Optional Fields
@@ -140,9 +143,7 @@ Interval in seconds between VM health checks for deployments with all VMs runnin
 Interval in seconds between VM health checks for deployments with failing or unhealthy VMs. Faster checking enables quicker detection of recovery.
 
 #### `max_retries` (integer)
-**Default:** `3`
-
-Maximum number of retry attempts for failed BOSH API calls before marking a service as having an error state.
+**Deprecated.** The monitor no longer retries a failed BOSH call inside one check. It checks the instance again after `failed_interval` instead. A configuration that sets `max_retries` still loads, the broker logs a warning that names the setting, and the value has no effect. Remove it from the file.
 
 #### `timeout` (integer)
 **Default:** `300` (5 minutes)
@@ -152,7 +153,7 @@ The deadline, in seconds, that each check gives its VM listing. The director lis
 #### `max_concurrent` (integer)
 **Default:** `3`
 
-Maximum number of concurrent VM health checks to prevent overwhelming the BOSH director with simultaneous API calls.
+The number of workers the VM monitor runs. Each worker takes one deployment at a time, so this is also the most VM health checks that run at once, and it keeps the monitor from overwhelming the BOSH director with simultaneous API calls.
 
 ### VM Status Display
 
@@ -169,7 +170,7 @@ Status badges show VM health ratios (e.g., "3/4" indicating 3 healthy VMs out of
 
 - VM status data is cached in Vault to provide fast UI response times
 - Monitoring intervals can be adjusted based on environment needs and BOSH director capacity
-- The background worker uses controlled concurrency to prevent API overload
+- The monitor's workers, counted by `max_concurrent`, limit how many checks run at once, so the director sees a bounded load
 - Failed checks automatically use shorter intervals for faster recovery detection
 
 ## Broker Configuration (`broker`)
@@ -237,26 +238,72 @@ HTTP server idle timeout in seconds. Maximum time to wait for the next request w
 
 TLS/HTTPS configuration for secure connections. For detailed TLS configuration options, see [docs/tls.md](./tls.md).
 
-## Cloud Foundry Configuration (`cf`)
+The `tls.reuse_after` setting is deprecated. A configuration that sets it still loads, the broker logs a warning that names the setting, and the value has no effect.
 
-The `cf` section configures integration with Cloud Foundry API endpoints for the broker view functionality.
+#### `compression` (CompressionConfig)
+
+HTTP response compression, with these fields.
 
 ```yaml
-cf:
-  apis:
-    fivetwenty:                                    # API endpoint identifier
-      name: "ocfp-aws-lab-ocf-us-east-1-cf"       # Display name for the CF instance
-      endpoint: "https://api.system.example.com"  # CF API endpoint URL
-      username: "admin"                            # CF admin username
-      password: "abcdefghijklmnopqrstuvwxyzabcd"  # CF admin password
-    production:                                    # Another API endpoint
-      name: "production-cf"
-      endpoint: "https://api.cf.production.com"
-      username: "cf-admin"
-      password: "secure-password"
+broker:
+  compression:
+    enabled: true
+    types: ["gzip"]
+    level: -1
+    min_size: 1024
+    content_types:
+      - "application/json"
+      - "text/html"
+```
+
+`enabled` turns compression on or off. `types` lists the encodings the broker offers, which are `gzip`, `deflate`, and `brotli`, and it defaults to `gzip`. `level` runs from 1 to 9, or -1 for the library default. `min_size` is the smallest response in bytes that the broker compresses, and it defaults to 1024. `content_types` lists the MIME types to compress, and when it is empty the broker compresses `text/*` types and `application/json`, among others.
+
+## Cloud Foundry Configuration (`broker.cf`)
+
+The Cloud Foundry settings live under the `broker` section as `broker.cf`. They register the broker with Cloud Foundry and name the API endpoints that the broker view uses. A top-level `cf` key is not read, so a `cf:` section at the top of the file has no effect. [docs/examples/cf-endpoints.yml](examples/cf-endpoints.yml) is a complete example.
+
+```yaml
+broker:
+  cf:
+    enabled: true                                  # Allow CF registration
+    broker_url: "https://blacksmith.example.com"   # URL that CF uses to reach this broker
+    broker_user: "blacksmith"                      # Username CF sends to this broker
+    broker_pass: "change-me"                       # Password CF sends to this broker
+    default_name: "blacksmith"                     # Default name for a registration
+    apis:
+      primary:                                     # API endpoint identifier
+        name: "primary-cf"                         # Display name for the CF instance
+        endpoint: "https://api.system.example.com" # CF API endpoint URL
+        username: "admin"                          # CF admin username
+        password: "change-me"                      # CF admin password
+        cacert: |                                  # PEM bundle that signs the API and UAA certificates
+          -----BEGIN CERTIFICATE-----
+          MIIB...
+          -----END CERTIFICATE-----
+        skip_ssl_validation: false                 # Development only
 ```
 
 ### Optional Fields
+
+#### `enabled` (boolean)
+**Default:** `false`
+
+Whether CF registration is enabled.
+
+#### `broker_url` (string)
+**Default:** `""`
+
+The public URL that Cloud Foundry uses to reach this broker.
+
+#### `broker_user` and `broker_pass` (string)
+**Default:** `""`
+
+The credentials that Cloud Foundry sends to this broker when it registers it.
+
+#### `default_name` (string)
+**Default:** `""`
+
+The default broker name for new registrations.
 
 #### `apis` (map of CFAPIConfig)
 **Default:** `{}`
@@ -287,6 +334,16 @@ Password for Cloud Foundry API authentication. Store securely and use strong pas
 
 **Security Note:** Consider using environment variables or secure credential management instead of storing passwords directly in configuration files for production deployments.
 
+##### `cacert` (string)
+**Default:** `""`
+
+A PEM bundle holding the certificates that sign the CF API and its UAA. Set it when the foundation uses a private certificate authority.
+
+##### `skip_ssl_validation` (boolean)
+**Default:** `false`
+
+Turns off TLS verification for this endpoint. Use it for development only, because it exposes the endpoint's credentials to anyone who can intercept the connection.
+
 ## Vault Configuration (`vault`)
 
 The `vault` section configures integration with HashiCorp Vault for secrets management.
@@ -297,6 +354,7 @@ vault:
   token: "vault-token"                       # Optional if using credentials file
   skip_ssl_validation: false                 # Optional
   credentials: "/path/to/vault/creds"        # Optional
+  cacert: "/path/to/vault-ca.pem"            # Optional
   auto_unseal: true                          # Optional (default: true)
   health_check_interval: "15s"               # Optional (default: 15s)
   unseal_cooldown: "30s"                     # Optional (default: 30s)
@@ -331,6 +389,11 @@ Skip SSL certificate validation when connecting to Vault. Should only be used in
 
 Path to file containing Vault credentials. Used when `token` is not provided directly in the configuration.
 
+#### `cacert` (string)
+**Default:** `""`
+
+Path to a PEM file with the certificate authority that signs Vault's certificate. Set it when Vault uses a private authority and `skip_ssl_validation` is off.
+
 #### `auto_unseal` (boolean)
 **Default:** `true`
 
@@ -345,6 +408,10 @@ Interval for the background health watcher to check Vault’s status. If Vault i
 **Default:** `"30s"`
 
 Minimum time between auto‑unseal attempts to avoid repeated hammering when Vault is unavailable or failing to unseal. Applies per‑process and is enforced even if multiple operations notice the sealed state concurrently.
+
+#### `history_retention` (object)
+
+The section takes `enabled`, `retention_days`, and `max_entries`. The configuration loader reads these keys, but the broker does not act on them in this version, so setting them changes nothing.
 
 ### Handling Vault Restarts (Auto‑Unseal)
 
@@ -388,6 +455,7 @@ bosh:
   cloud-config: "/var/vcap/jobs/blacksmith/config/cloud-config.yml"  # Optional
   network: "blacksmith"                                 # Optional
   max_connections: 4                                    # Optional (connection pool size)
+  max_batch_connections: 10                             # Optional (batch operation pool size)
   connection_timeout: 300                               # Optional (timeout in seconds)
   request_timeout: 60                                   # Optional (timeout in seconds)
   task_watch_max: 21600                                 # Optional (limit in seconds)
@@ -464,6 +532,11 @@ Maximum number of concurrent connections to the BOSH director API. This creates 
 
 Connection pooling helps improve stability and performance when Blacksmith needs to make many BOSH API calls, such as during VM monitoring, reconciliation, or when handling multiple service operations simultaneously.
 
+#### `max_batch_connections` (integer)
+**Default:** `10`
+
+Maximum number of concurrent director connections for batch operations, such as upgrades, certificate jobs, and command runs. Batch operations use a pool of their own, so a large batch does not starve the connections that the console and the reconciler use. [Run command](run-command.md#parallel-runs) explains how its parallel option relates to the director's workers.
+
 #### `connection_timeout` (integer)
 **Default:** `300` (5 minutes)
 
@@ -516,17 +589,20 @@ The `ssh` section configures SSH connection behavior for all SSH operations incl
 ```yaml
 # New location (recommended)
 ssh:
-  enabled: true                    # Enable SSH functionality
-  ui_terminal_enabled: true        # Enable SSH terminal UI in web interface (default: true)
+  enabled: true                    # SSH functionality is always on; see below
+  ui_terminal_enabled: true        # SSH terminal UI in the web interface (default: true)
   keep_alive: 10                   # Keep-alive interval in seconds (default: 10)
-    timeout: 600                     # Overall timeout in seconds (default: 600)
-    connect_timeout: 30              # Connection timeout in seconds (default: 30)
-    session_init_timeout: 60         # Session initialization timeout in seconds (default: 60)
-    output_read_timeout: 2           # Output read timeout in seconds (default: 2)
-    max_concurrent: 10               # Maximum concurrent SSH sessions (default: 10)
-    max_output_size: 1048576         # Maximum output size in bytes (default: 1MB)
-    retry_attempts: 3                # Number of retry attempts (default: 3)
-    retry_delay: 5                   # Delay between retries in seconds (default: 5)
+  timeout: 600                     # Overall timeout in seconds (default: 600)
+  connect_timeout: 30              # Connection timeout in seconds (default: 30)
+  session_init_timeout: 60         # Session initialization timeout in seconds (default: 60)
+  output_read_timeout: 2           # Output read timeout in seconds (default: 2)
+  max_concurrent: 10               # Maximum concurrent SSH sessions (default: 10)
+  max_output_size: 1048576         # Maximum output size in bytes (default: 1MB)
+  retry_attempts: 3                # Number of retry attempts (default: 3)
+  retry_delay: 5                   # Delay between retries in seconds (default: 5)
+  websocket:
+    enabled: true
+    max_sessions: 50
 
 # Old location (deprecated but still supported)
 bosh:
@@ -536,10 +612,15 @@ bosh:
 
 **Migration Note:** If you have SSH configuration under `bosh.ssh`, it will be automatically migrated to the top-level `ssh` key. You should update your configuration file to use the new location.
 
+#### `enabled` (boolean)
+**Default:** `true`
+
+The loader reads a `false` here as unset and applies `true`, so the file cannot turn SSH off.
+
 #### `ui_terminal_enabled` (boolean)
 **Default:** `true`
 
-Controls whether the SSH terminal UI functionality is available in the web interface. When set to `false`, SSH terminal buttons will be disabled and API endpoints will return 403 Forbidden. This setting does not affect backend SSH functionality, only the web UI access. Useful for security-conscious deployments that want to disable web-based terminal access while maintaining backend SSH capabilities.
+The loader reads a `false` here as unset and applies `true`, so a file setting does not hide the terminal. The rest of this entry describes what the setting does when it is on. Controls whether the SSH terminal UI functionality is available in the web interface. When set to `false`, SSH terminal buttons will be disabled and API endpoints will return 403 Forbidden. This setting does not affect backend SSH functionality, only the web UI access. Useful for security-conscious deployments that want to disable web-based terminal access while maintaining backend SSH capabilities.
 
 #### `keep_alive` (integer)
 **Default:** `10`
@@ -586,6 +667,23 @@ Number of retry attempts for failed SSH operations.
 
 Delay between retry attempts in seconds.
 
+#### `websocket` (object)
+
+The settings for the SSH terminal that the console opens over a WebSocket. When a setting is left out or set to 0, the broker uses the default shown.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Serve the WebSocket terminal. A `false` turns it off. |
+| `read_buffer_size` | `4096` | Read buffer size in bytes |
+| `write_buffer_size` | `4096` | Write buffer size in bytes |
+| `handshake_timeout` | `10` | Seconds allowed for the upgrade handshake |
+| `max_message_size` | `32768` | Largest message in bytes |
+| `ping_interval` | `5` | Seconds between pings |
+| `pong_timeout` | `10` | Seconds to wait for a pong |
+| `max_sessions` | `50` | Most WebSocket sessions at one time |
+| `session_timeout` | `1800` | Seconds before an idle session ends |
+| `enable_compression` | `false` | Compress WebSocket messages |
+
 #### Host key verification
 
 Host key verification has no settings. When Blacksmith sets up an SSH user on a VM, the BOSH director reports that VM's host key, and Blacksmith connects only if the VM presents that key. A VM that presents another key, or offers no key of the type the director reported, is refused before any login. The error names the deployment, the instance, and the fingerprint of the reported key, together with the fingerprint of the key the VM presented or the key types it offered. Earlier versions read two host key settings in this section. A configuration file that still sets them loads, and Blacksmith ignores them.
@@ -630,6 +728,98 @@ The switch decides only whether a root run can start. Turning it off stops every
 **Default:** `""` (no second credential)
 
 A second credential, shared by everyone who may run commands. When it is set, every command preview, create, and output read must send it in the `X-Blacksmith-Command-Key` request header, and the broker refuses a missing or wrong key with a 401 `command_credential_required` error. The same key also guards the detail of a command task, because that detail carries the command text, and it guards a resume that sends a command. The key travels only in the header and never in a JSON body, the broker compares it in constant time, and the request-header debug log redacts it. Treat the value as a secret, and keep it out of version control as we do the broker password.
+
+## CredHub Configuration (`credhub`)
+
+The `credhub` section lets the broker delete the BOSH-generated variables that a deprovisioned instance leaves in the director's CredHub. It is off unless `cleanup.enabled` is true, and an empty section changes nothing.
+
+```yaml
+credhub:
+  url: "https://credhub.example.com:8844"
+  ca_cert: |
+    -----BEGIN CERTIFICATE-----
+    MIIB...
+    -----END CERTIFICATE-----
+  client_id: "blacksmith"
+  client_secret: "change-me"
+  director_name: "my-director"
+  uaa_url: "https://uaa.example.com:8443"
+  cleanup:
+    enabled: true
+    sweep: "off"
+    protected_deployments: []
+```
+
+### Fields
+
+#### `url` (string)
+**Required when cleanup is enabled**
+
+The CredHub address. It must be an `https` URL.
+
+#### `ca_cert` (string)
+**Required when cleanup is enabled**
+
+PEM text of the certificate authority that signs CredHub's certificate. The broker refuses a value that holds no PEM certificate.
+
+#### `client_id` and `client_secret` (string)
+**Required when cleanup is enabled**
+
+The UAA client that the broker uses to authenticate to CredHub.
+
+#### `director_name` (string)
+**Required when cleanup is enabled**
+
+The director's name, which is the first segment of every CredHub path the director writes. It must not contain `/`, `*`, or `%`.
+
+#### `uaa_url` (string)
+**Default:** `""`
+
+The UAA address, which must be an `https` URL when it is set.
+
+#### `cleanup.enabled` (boolean)
+**Default:** `false`
+
+Turns the cleanup on. When it is on, the broker checks the whole block at startup and reports every problem at once.
+
+#### `cleanup.sweep` (string)
+**Default:** `"off"`
+
+Controls a separate pass over CredHub that finds credentials belonging to no known deployment. `off` skips the pass, `dry-run` reports what it would delete, and `delete` deletes it.
+
+#### `cleanup.protected_deployments` (array of strings)
+**Default:** `[]`
+
+Deployment names whose credentials the cleanup and the sweep never touch.
+
+## Certificates Configuration (`certificates`)
+
+The `certificates` section holds three switches for the certificate features. Each one takes an `enabled` boolean.
+
+```yaml
+certificates:
+  inventory:
+    enabled: true
+  rotation:
+    enabled: false
+  patch_in_place:
+    enabled: false
+```
+
+#### `inventory.enabled` (boolean)
+**Default:** `true`
+
+Runs the certificate inventory, which scans service instances for certificates and reports their expiry.
+
+#### `rotation.enabled` (boolean)
+**Default:** `false`
+
+Allows certificate rotation to change anything. Until it is on, rotation previews work and no job changes a certificate.
+
+#### `patch_in_place.enabled` (boolean)
+**Default:** `false`
+
+Allows patching a certificate on a VM. It needs `rotation.enabled` as well, and the feature stays off when only this switch is on.
 
 ## SHIELD Configuration (`shield`)
 
@@ -809,11 +999,9 @@ The `reconciler` section configures the deployment reconciler that monitors and 
 reconciler:
   enabled: true                    # Enable reconciler
   interval: "5m"                   # Reconciliation interval (Go duration or bare seconds, e.g. 3600)
-  max_concurrency: 5              # Maximum concurrent reconciliations
+  max_concurrency: 4              # Maximum concurrent reconciliations
   batch_size: 10                  # Batch size for processing instances
   retry_attempts: 3               # Retry attempts for failed operations
-  retry_delay: "30s"              # Delay between retry attempts
-  cache_ttl: "5m"                 # Cache TTL for instance data
   debug: false                    # Enable reconciler debug logging
   backup:                         # Backup configuration
     enabled: true                 # Enable backup functionality
@@ -840,7 +1028,7 @@ How often the reconciler runs to check for inconsistencies. It accepts Go durati
 An interval saved through the UI or the settings API overrides this value, and so does the `BLACKSMITH_RECONCILER_INTERVAL` environment variable. A saved interval is stored in Vault, so it persists across restarts and redeploys, and it outranks the environment variable. See [Interval Format and Precedence](reconciler.md#interval-format-and-precedence).
 
 #### `max_concurrency` (integer)
-**Default:** `5`
+**Default:** `4`
 
 Maximum number of service instances that can be reconciled simultaneously.
 
@@ -854,18 +1042,11 @@ Number of instances to process in each reconciliation batch.
 
 Number of retry attempts for failed reconciliation operations.
 
-#### `retry_delay` (string)
-**Default:** `"30s"`
-
-Delay between retry attempts for failed operations.
-
-#### `cache_ttl` (string)
-**Default:** `"5m"`
-
-Time-to-live for cached instance data to improve performance.
+#### `retry_delay` and `cache_ttl` (string)
+The loader reads both keys, but the reconciler does not use either one, so they have no effect and no environment variable. The delay between retries starts at one second and doubles up to 30 seconds, and the environment variables `BLACKSMITH_RECONCILER_RETRY_INITIAL_DELAY` and `BLACKSMITH_RECONCILER_RETRY_MAX_DELAY` change it. The deployment cache lives for a fixed five minutes. See [reconciler.md](reconciler.md#tuning-with-environment-variables).
 
 #### `debug` (boolean)
-**Default:** `false`
+**Default:** the value of the top-level `debug` setting
 
 Enable detailed debug logging for reconciler operations.
 
@@ -942,18 +1123,15 @@ vm_monitoring:
   enabled: true
   normal_interval: 3600
   failed_interval: 300
-  max_retries: 3
   timeout: 300
   max_concurrent: 3
 
 reconciler:
   enabled: true
   interval: "5m"
-  max_concurrency: 5
+  max_concurrency: 4
   batch_size: 10
   retry_attempts: 3
-  retry_delay: "30s"
-  cache_ttl: "5m"
   debug: false
   backup:
     enabled: true
@@ -977,19 +1155,22 @@ broker:
     port: "443"
     certificate: "/etc/ssl/certs/blacksmith.pem"
     key: "/etc/ssl/private/blacksmith.key"
-
-cf:
-  apis:
-    fivetwenty:
-      name: "ocfp-aws-lab-ocf-us-east-1-cf"
-      endpoint: "https://api.system.aws.lab.fivetwenty.io"
-      username: "admin"
-      password: "DiKx7L2hSFMY2LyjbmAtQn90V0RptK"
-    production:
-      name: "production-cf"
-      endpoint: "https://api.cf.production.com"
-      username: "cf-admin"
-      password: "secure-password"
+  cf:
+    enabled: true
+    broker_url: "https://blacksmith.example.com"
+    broker_user: "cf-broker"
+    broker_pass: "secure-password"
+    apis:
+      primary:
+        name: "primary-cf"
+        endpoint: "https://api.system.example.com"
+        username: "admin"
+        password: "change-me"
+      production:
+        name: "production-cf"
+        endpoint: "https://api.cf.production.com"
+        username: "cf-admin"
+        password: "secure-password"
 
 vault:
   address: "https://vault.example.com:8200"
