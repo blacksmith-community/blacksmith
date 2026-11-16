@@ -2,6 +2,7 @@ package certificates
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -263,7 +264,7 @@ func (h *Handler) handleBlacksmithCertificates(writer http.ResponseWriter, req *
 
 	log.Debug("fetching blacksmith configuration certificates")
 
-	certList := h.loadBlacksmithCertificates(req.Context(), log)
+	certList, skipped := h.loadBlacksmithCertificates(req.Context(), log)
 
 	response := certificates.CertificateResponse{
 		Success: true,
@@ -273,6 +274,8 @@ func (h *Handler) handleBlacksmithCertificates(writer http.ResponseWriter, req *
 				Source:    "blacksmith",
 				Timestamp: time.Now(),
 				Count:     len(certList),
+
+				SkippedBlocks: skipped,
 			},
 		},
 	}
@@ -283,7 +286,7 @@ func (h *Handler) handleBlacksmithCertificates(writer http.ResponseWriter, req *
 // loadBlacksmithCertificates loads certificates from the blacksmith configuration.
 func (h *Handler) loadBlacksmithCertificates(ctx context.Context, log interface {
 	Error(msg string, args ...interface{})
-}) []certificates.CertificateListItem {
+}) ([]certificates.CertificateListItem, int) {
 	var certList []certificates.CertificateListItem
 
 	cfg, valid := h.config.(interface {
@@ -293,14 +296,14 @@ func (h *Handler) loadBlacksmithCertificates(ctx context.Context, log interface 
 		GetBOSHCACert() string
 	})
 	if !valid {
-		return certList
+		return certList, 0
 	}
 
 	h.loadBrokerTLSCertificate(ctx, cfg, &certList, log)
-	h.loadVaultCACertificate(ctx, cfg, &certList, log)
+	skipped := h.loadVaultCACertificate(ctx, cfg, &certList, log)
 	h.loadBOSHCACertificate(ctx, cfg, &certList, log)
 
-	return certList
+	return certList, skipped
 }
 
 // loadBrokerTLSCertificate loads the broker TLS certificate if enabled.
@@ -324,15 +327,18 @@ func (h *Handler) loadBrokerTLSCertificate(ctx context.Context, cfg interface {
 	*certList = append(*certList, *cert)
 }
 
-// loadVaultCACertificate loads the Vault CA certificate if configured.
+// loadVaultCACertificate loads the Vault CA certificate if configured, and
+// returns how many blocks of it the Vault client would not trust. The client
+// trusts every certificate of the bundle that parses and skips every other
+// block, so this lists the same ones and keeps going past a bad block.
 func (h *Handler) loadVaultCACertificate(ctx context.Context, cfg interface {
 	GetVaultCACert() string
 }, certList *[]certificates.CertificateListItem, log interface {
 	Error(msg string, args ...interface{})
-}) {
+}) int {
 	vaultCACert := cfg.GetVaultCACert()
 	if vaultCACert == "" {
-		return
+		return 0
 	}
 
 	// vault.cacert is either PEM text or the path of a PEM file, and the
@@ -351,17 +357,17 @@ func (h *Handler) loadVaultCACertificate(ctx context.Context, cfg interface {
 			// and a read error would repeat it, so only the cause is logged.
 			log.Error("failed to load vault CA certificate from vault.cacert: %s", loadFailureCause(fmt.Errorf("failed to read file: %w", err)))
 
-			return
+			return 0
 		}
 
 		pemText, path = string(content), vaultCACert
 	}
 
-	blocks := certificateBlocks(pemText)
+	blocks, skipped := certificateBlocks(pemText)
 	if len(blocks) == 0 {
 		log.Error("failed to load vault CA certificate from vault.cacert: %s", certificates.ErrFileDoesNotContainCertificate)
 
-		return
+		return skipped
 	}
 
 	for index, block := range blocks {
@@ -370,21 +376,39 @@ func (h *Handler) loadVaultCACertificate(ctx context.Context, cfg interface {
 			name = fmt.Sprintf("%s %d", name, index+1)
 		}
 
-		cert, err := h.loadCertificateFromPEM(ctx, block, name, path)
+		cert, err := h.loadCertificateFromPEM(ctx, block.pem, name, path)
 		if err != nil {
 			log.Error("failed to load vault CA certificate from vault.cacert: %s", loadFailureCause(err))
 
-			return
+			skipped++
+
+			continue
 		}
 
+		cert.NotCA = !block.isCA
 		*certList = append(*certList, *cert)
 	}
+
+	return skipped
 }
 
-// certificateBlocks returns each CERTIFICATE block of pemText as its own PEM
-// text, in order.
-func certificateBlocks(pemText string) []string {
-	var blocks []string
+// bundleBlock is one certificate of a CA bundle.
+type bundleBlock struct {
+	pem  string
+	isCA bool
+}
+
+// certificateBlocks returns each certificate of pemText that a client would
+// trust, as its own PEM text and in order, and the count of the other
+// blocks. It decides as x509.CertPool.AppendCertsFromPEM does. A block that
+// is not a certificate, one with headers, and one that does not parse are
+// skipped. A certificate that does not declare itself a CA is kept, and
+// marked, because the pool trusts it too.
+func certificateBlocks(pemText string) ([]bundleBlock, int) {
+	var (
+		blocks  []bundleBlock
+		skipped int
+	)
 
 	rest := []byte(pemText)
 
@@ -393,12 +417,26 @@ func certificateBlocks(pemText string) []string {
 
 		block, rest = pem.Decode(rest)
 		if block == nil {
-			return blocks
+			return blocks, skipped
 		}
 
-		if block.Type == "CERTIFICATE" {
-			blocks = append(blocks, string(pem.EncodeToMemory(block)))
+		if block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			skipped++
+
+			continue
 		}
+
+		parsed, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			skipped++
+
+			continue
+		}
+
+		blocks = append(blocks, bundleBlock{
+			pem:  string(pem.EncodeToMemory(block)),
+			isCA: parsed.BasicConstraintsValid && parsed.IsCA,
+		})
 	}
 }
 

@@ -21094,7 +21094,7 @@
         throw new Error(data.error || 'Failed to fetch blacksmith certificates');
       }
 
-      renderCertificateList(listContainer, data.data.certificates, 'blacksmith');
+      renderCertificateList(listContainer, data.data.certificates, 'blacksmith', Number(data.data.metadata && data.data.metadata.skippedBlocks) || 0);
 
       // Success feedback
       if (button) {
@@ -21257,7 +21257,7 @@
   };
 
   // Render a list of certificates through the safe certificate views
-  const renderCertificateRows = (container, certificates, sourceLabel) => {
+  const renderCertificateRows = (container, certificates, sourceLabel, skippedBlocks = 0) => {
     const header = CertView.el('div', 'cert-list-header');
     header.appendChild(CertView.el(container.closest('.cert-source-pane') ? 'h4' : 'h3', 'cert-list-title', `${sourceLabel} Certificates`));
     header.appendChild(CertView.el('span', 'cert-list-count',
@@ -21265,18 +21265,29 @@
 
     const list = CertView.el('div', 'cert-list');
     certificates.forEach((cert, index) => {
-      list.appendChild(CertView.summary(cert, {
+      const row = CertView.summary(cert, {
         fallbackName: `Certificate ${index + 1}`,
         onInspect: (selected) => window.inspectCertificateFromList(selected)
-      }));
+      });
+      // The Vault client trusts a bundle entry whether or not it is a CA.
+      if (cert && cert.notCA) {
+        row.appendChild(CertView.el('span', 'cert-not-ca cert-list-count', 'Not a CA, but the client still trusts it'));
+      }
+      list.appendChild(row);
     });
 
-    container.replaceChildren(header, list);
+    const nodes = [header, list];
+    if (skippedBlocks > 0) {
+      nodes.push(CertView.el('p', 'cert-skipped-blocks cert-list-count',
+        `${skippedBlocks} block${skippedBlocks === 1 ? '' : 's'} of this bundle ${skippedBlocks === 1 ? 'is' : 'are'} not trusted, because ${skippedBlocks === 1 ? 'it is' : 'they are'} not a certificate that parses.`));
+    }
+
+    container.replaceChildren(...nodes);
     container.certificateData = certificates;
   };
 
   // Render a list of certificates
-  const renderCertificateList = (container, certificates, source) => {
+  const renderCertificateList = (container, certificates, source, skippedBlocks = 0) => {
     if (!certificates || certificates.length === 0) {
       container.innerHTML = '<div class="cert-error">No certificates found</div>';
       return;
@@ -21288,7 +21299,7 @@
           source === 'vm-trusted' ? 'VM Trusted Store' :
             source === 'service-endpoint' ? 'Service Endpoint' : 'Endpoint';
 
-    renderCertificateRows(container, certificates, sourceLabel);
+    renderCertificateRows(container, certificates, sourceLabel, skippedBlocks);
   };
 
   // Handle certificate inspection from list

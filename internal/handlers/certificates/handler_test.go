@@ -809,7 +809,7 @@ func selfSignedCAPEM(t *testing.T, commonName string) string {
 		t.Fatalf("create certificate: %v", err)
 	}
 
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return string(pem.EncodeToMemory(&pem.Block{Type: pemCertificateType, Bytes: der}))
 }
 
 // blacksmithCertificate returns the item with the given name that the
@@ -859,8 +859,8 @@ func TestBlacksmithCertificatesIncludesConfiguredCAs(t *testing.T) {
 		wantCommon string
 	}{
 		{"BOSH PEM", &testConfig{boshCACert: selfSignedCAPEM(t, "Test BOSH CA")}, "BOSH CA Certificate", "config:bosh.cacert", "Test BOSH CA"},
-		{"Vault PEM", &testConfig{vaultCACert: selfSignedCAPEM(t, "Test Vault CA")}, "Vault CA Certificate", "config:vault.cacert", "Test Vault CA"},
-		{"Vault file", &testConfig{vaultCACert: filePath}, "Vault CA Certificate", filePath, "File Vault CA"},
+		{"Vault PEM", &testConfig{vaultCACert: selfSignedCAPEM(t, "Test Vault CA")}, vaultCAName, "config:vault.cacert", "Test Vault CA"},
+		{"Vault file", &testConfig{vaultCACert: filePath}, vaultCAName, filePath, "File Vault CA"},
 	}
 
 	for _, testCase := range cases {
@@ -893,7 +893,7 @@ func TestBlacksmithCertificatesTrimsAVaultCAPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	item := blacksmithCertificate(t, &testConfig{vaultCACert: "  " + filePath + "\n"}, "Vault CA Certificate")
+	item := blacksmithCertificate(t, &testConfig{vaultCACert: "  " + filePath + "\n"}, vaultCAName)
 
 	if item.Path != filePath || item.Details.Subject.CommonName != "Padded Vault CA" {
 		t.Errorf("Path = %q and common name = %q, want %q and %q", item.Path, item.Details.Subject.CommonName, filePath, "Padded Vault CA")
@@ -916,7 +916,7 @@ func TestBlacksmithCertificatesListsEveryCertificateOfAVaultCABundle(t *testing.
 	}
 
 	for name, value := range map[string]string{"PEM text": bundle, "a file": filePath} {
-		first := blacksmithCertificate(t, &testConfig{vaultCACert: value}, "Vault CA Certificate")
+		first := blacksmithCertificate(t, &testConfig{vaultCACert: value}, vaultCAName)
 		second := blacksmithCertificate(t, &testConfig{vaultCACert: value}, "Vault CA Certificate 2")
 
 		if first.Details.Subject.CommonName != "First Vault CA" || second.Details.Subject.CommonName != "Second Vault CA" {

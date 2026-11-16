@@ -76,6 +76,9 @@ type CertificateListItem struct {
 	Name    string          `json:"name"`
 	Path    string          `json:"path,omitempty"`
 	Details CertificateInfo `json:"details"`
+	// NotCA marks a certificate in a CA bundle that does not declare itself
+	// a CA. The client still trusts it.
+	NotCA bool `json:"notCA,omitempty"`
 }
 
 // CertificateResponse represents the API response for certificate operations.
@@ -96,6 +99,9 @@ type CertificateMetadata struct {
 	Source    string    `json:"source"`
 	Timestamp time.Time `json:"timestamp"`
 	Count     int       `json:"count"`
+	// SkippedBlocks counts the blocks of a CA bundle the client would not
+	// trust, such as a certificate that does not parse or a key.
+	SkippedBlocks int `json:"skippedBlocks,omitempty"`
 }
 
 // CertificateFileItem represents a certificate file reference without parsing the content.
