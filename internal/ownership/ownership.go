@@ -61,6 +61,30 @@ func ManagedDeployment(ctx context.Context, store Store, deploymentName string) 
 	return false, nil
 }
 
+// RetiredDeployment reports whether a tombstone of the index records
+// deploymentName as its deployment, which means the broker managed the
+// deployment and then deleted it. A deployment that was never in the index
+// is not retired. The answer says nothing about a live entry, so a caller
+// asks ManagedDeployment first.
+func RetiredDeployment(ctx context.Context, store Store, deploymentName string) (bool, error) {
+	index, err := Index(ctx, store)
+	if err != nil {
+		return false, err
+	}
+
+	for instanceID, instance := range index {
+		if instanceID == "" || instance == nil || !instance.IsTombstone() {
+			continue
+		}
+
+		if instance.DeploymentNameFor(instanceID) == deploymentName {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 // ErrInvalidID says an instance ID can't name an index entry, because it
 // is empty or holds a path separator, a parent reference, or an empty
 // segment. Such an ID would reach other Vault paths when a handler joins

@@ -26,6 +26,7 @@ const (
 	ownDeployment     = "lab-blacksmith"
 	stateProcessing   = "processing"
 	valkeyService     = "valkey"
+	neverIndexed      = "never-indexed"
 	outputTypeTask    = "task"
 	managedTaskRoute  = "/b/tasks/1"
 	managedOutputPath = "/b/tasks/1/output"
@@ -54,8 +55,9 @@ func newTaskScenario(t *testing.T, vault interfaces.Vault) taskScenario {
 	director.taskDetails[2] = bosh.Task{ID: 2, State: stateProcessing, Deployment: otherDeployment}
 	director.taskDetails[3] = bosh.Task{ID: 3, State: stateProcessing}
 	director.taskDetails[4] = bosh.Task{ID: 4, State: stateProcessing, Deployment: ownDeployment}
+	director.taskDetails[5] = bosh.Task{ID: 5, State: stateProcessing, Deployment: neverIndexed}
 
-	for id := 1; id <= 4; id++ {
+	for id := 1; id <= 5; id++ {
 		director.taskOutputs[outputKey{id: id, typ: outputTypeTask}] = "output"
 		director.taskOutputs[outputKey{id: id, typ: "result"}] = ""
 	}
@@ -104,17 +106,17 @@ func codeOf(t *testing.T, recorder *httptest.ResponseRecorder) string {
 }
 
 // The task routes answer only for tasks of the broker's own service
-// instances. A task of another deployment, or of one whose instance is gone,
-// is refused on every route with deployment_not_managed.
+// instances. A task of a deployment that was never in the index is refused
+// on every route with deployment_not_managed.
 func TestTaskRoutesRefuseATaskOfAnUnmanagedDeployment(t *testing.T) {
 	t.Parallel()
 
 	scenario := newTaskScenario(t, managingTaskVault())
 
 	routes := []struct{ method, path string }{
-		{http.MethodGet, "/b/tasks/2"},
-		{http.MethodGet, "/b/tasks/2/output"},
-		{http.MethodPost, "/b/tasks/2/cancel"},
+		{http.MethodGet, "/b/tasks/5"},
+		{http.MethodGet, "/b/tasks/5/output"},
+		{http.MethodPost, "/b/tasks/5/cancel"},
 	}
 
 	for _, route := range routes {
@@ -127,6 +129,29 @@ func TestTaskRoutesRefuseATaskOfAnUnmanagedDeployment(t *testing.T) {
 
 	if len(scenario.director.cancelledTasks) != 0 {
 		t.Errorf("cancelled %v, want no cancel of an unmanaged task", scenario.director.cancelledTasks)
+	}
+}
+
+// A task of a deployment the broker managed and then deleted, which the index
+// holds as a tombstone, can be read, and cancelling it is refused.
+func TestTaskRoutesReadButNeverCancelATaskOfATombstonedDeployment(t *testing.T) {
+	t.Parallel()
+
+	scenario := newTaskScenario(t, managingTaskVault())
+
+	for _, route := range []string{"/b/tasks/2", "/b/tasks/2/output"} {
+		if recorder := scenario.call(t, http.MethodGet, route); recorder.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200: %s", route, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	recorder := scenario.call(t, http.MethodPost, "/b/tasks/2/cancel")
+	if recorder.Code != http.StatusForbidden || codeOf(t, recorder) != apierr.CodeDeploymentNotManaged {
+		t.Errorf("cancel of a tombstoned task = %d %q, want 403 %s", recorder.Code, codeOf(t, recorder), apierr.CodeDeploymentNotManaged)
+	}
+
+	if len(scenario.director.cancelledTasks) != 0 {
+		t.Errorf("cancelled %v, want no cancel", scenario.director.cancelledTasks)
 	}
 }
 
@@ -216,7 +241,7 @@ func TestTaskRoutesIgnoreTheCallersTeam(t *testing.T) {
 
 	scenario := newTaskScenario(t, managingTaskVault())
 
-	recorder := scenario.call(t, http.MethodGet, "/b/tasks/2?team=everyone")
+	recorder := scenario.call(t, http.MethodGet, "/b/tasks/5?team=everyone")
 	if recorder.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403 whatever the team", recorder.Code)
 	}

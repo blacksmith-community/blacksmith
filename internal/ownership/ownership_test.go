@@ -13,6 +13,7 @@ import (
 const (
 	valkeyService = "valkey"
 	goneID        = "gone"
+	liveID        = "live"
 )
 
 var errDown = errors.New("vault is down")
@@ -50,11 +51,11 @@ func TestLiveInstanceSeparatesLiveFromGone(t *testing.T) {
 	t.Parallel()
 
 	store := &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
-		"live": {ServiceID: valkeyService, PlanID: "small"},
+		liveID: {ServiceID: valkeyService, PlanID: "small"},
 		goneID: {Status: vaultPkg.StatusDeleted},
 	}}
 
-	instance, err := ownership.LiveInstance(t.Context(), store, "live")
+	instance, err := ownership.LiveInstance(t.Context(), store, liveID)
 	if err != nil || instance == nil || instance.ServiceID != valkeyService {
 		t.Fatalf("a live instance = %v, %v", instance, err)
 	}
@@ -75,7 +76,7 @@ func TestLiveInstanceSeparatesLiveFromGone(t *testing.T) {
 func TestLiveInstanceReportsAnUnreadableIndex(t *testing.T) {
 	t.Parallel()
 
-	_, err := ownership.LiveInstance(t.Context(), brokenStore{}, "live")
+	_, err := ownership.LiveInstance(t.Context(), brokenStore{}, liveID)
 	if !errors.Is(err, errDown) || errors.Is(err, ownership.ErrNotLive) {
 		t.Fatalf("an unreadable index error = %v", err)
 	}
@@ -85,7 +86,7 @@ func TestManagedDeploymentSkipsTombstones(t *testing.T) {
 	t.Parallel()
 
 	store := &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
-		"live": {ServiceID: valkeyService, PlanID: "small", DeploymentName: "small-live"},
+		liveID: {ServiceID: valkeyService, PlanID: "small", DeploymentName: "small-live"},
 		goneID: {Status: vaultPkg.StatusDeleted, DeploymentName: "small-gone"},
 	}}
 
@@ -93,6 +94,23 @@ func TestManagedDeploymentSkipsTombstones(t *testing.T) {
 		got, err := ownership.ManagedDeployment(t.Context(), store, name)
 		if err != nil || got != want {
 			t.Errorf("ManagedDeployment(%q) = %t, %v, want %t", name, got, err, want)
+		}
+	}
+}
+
+// A deployment is retired when only a tombstone of the index records it.
+func TestRetiredDeploymentFindsOnlyTombstones(t *testing.T) {
+	t.Parallel()
+
+	store := &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
+		liveID: {ID: liveID, ServiceID: valkeyService, PlanID: valkeyService, DeploymentName: "dep-live"},
+		goneID: {ID: goneID, ServiceID: valkeyService, PlanID: valkeyService, DeploymentName: "dep-gone", Status: vaultPkg.StatusDeleted},
+	}}
+
+	for name, want := range map[string]bool{"dep-gone": true, "dep-live": false, "dep-never": false} {
+		got, err := ownership.RetiredDeployment(t.Context(), store, name)
+		if err != nil || got != want {
+			t.Errorf("RetiredDeployment(%q) = %t, %v, want %t", name, got, err, want)
 		}
 	}
 }

@@ -35,7 +35,9 @@ func writeDirectorReadFailure(writer http.ResponseWriter, err error, taskID int,
 // when the request may go on. Otherwise it has answered and returns false.
 //
 // A task is the broker's to show or cancel when its deployment is the
-// deployment of a live service instance in the broker's index. The broker's
+// deployment of a live service instance in the broker's index. A task of a
+// deployment the index holds only as a tombstone, which the broker managed
+// and then deleted, can still be shown, and never cancelled. The broker's
 // own deployment can be read and never cancelled, as its routes do. A task
 // with no deployment belongs to the director, so it can be read and never
 // cancelled. A task that is not the broker's is refused with 403 and the code
@@ -77,6 +79,13 @@ func (h *Handler) permitTask(ctx context.Context, writer http.ResponseWriter, lo
 		return nil, false
 	}
 
+	if !managed && !cancel {
+		managed, err = h.retired(ctx, writer, logger, taskID, deployment)
+		if err != nil {
+			return nil, false
+		}
+	}
+
 	if !managed {
 		verb := "show"
 		if cancel {
@@ -92,6 +101,22 @@ func (h *Handler) permitTask(ctx context.Context, writer http.ResponseWriter, lo
 	}
 
 	return task, true
+}
+
+// retired reports whether the index holds a tombstone for the deployment,
+// so a read of its task is allowed. It has answered 503 when the index can't
+// be read, and then returns an error.
+func (h *Handler) retired(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, taskID int, deployment string) (bool, error) {
+	retired, err := ownership.RetiredDeployment(ctx, h.vault, deployment)
+	if err != nil {
+		logger.Error("Unable to read the service index to check task %d: %v", taskID, err)
+		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeVaultUnavailable,
+			"the service index could not be read, so the broker can't tell whether it managed deployment "+deployment), http.StatusServiceUnavailable)
+
+		return false, fmt.Errorf("reading the service index: %w", err)
+	}
+
+	return retired, nil
 }
 
 // readOnlyTask lets a read of a task through and refuses a cancel.
