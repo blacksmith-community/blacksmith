@@ -16,29 +16,34 @@ The VM Monitor operates as a background service that:
 
 ### Core Components
 
-#### VMMonitor (`vm_monitor.go:11-25`)
-Main monitoring service managing the entire VM monitoring lifecycle:
+#### Monitor
+
+The `Monitor` type in `internal/vmmonitor/monitor.go` is the main monitoring service. It manages the whole VM monitoring lifecycle. Its main fields are the following.
 
 ```go
-type VMMonitor struct {
-    vault        *Vault           // Vault client for data storage
+type Monitor struct {
+    vault        vmVault          // Vault client for data storage
     boshDirector bosh.Director    // BOSH director for VM queries
-    config       *Config          // Global configuration
+    claims       OperationClaims  // Operations in this process that hold an instance
+    config       interface{}      // Global configuration
 
     normalInterval time.Duration  // Check interval for healthy services
     failedInterval time.Duration  // Check interval for failed services
+    checkTimeout   time.Duration  // Deadline for each check's VM listing
+    maxConcurrent  int            // Instances one check cycle checks at once
 
     services map[string]*ServiceMonitor  // Tracked services
+    checking map[string]bool             // Instances a cycle is checking now
     mu       sync.RWMutex                // Thread-safe access
 
-    ctx    context.Context     // Lifecycle context
     cancel context.CancelFunc  // Cancellation function
     wg     sync.WaitGroup      // Wait group for shutdown
 }
 ```
 
-#### ServiceMonitor (`vm_monitor.go:28-36`)
-Individual service tracking state:
+#### ServiceMonitor
+
+The `ServiceMonitor` type tracks the state of one service instance.
 
 ```go
 type ServiceMonitor struct {
@@ -49,11 +54,13 @@ type ServiceMonitor struct {
     NextCheck      time.Time // Scheduled next check time
     FailureCount   int       // Consecutive failure count
     IsHealthy      bool      // Current health status
+    IsProvisioning bool      // True until the first running, failing, or unresponsive agent status
 }
 ```
 
-#### VMStatus (`vm_monitor.go:39-47`)
-VM health status data structure:
+#### VMStatus
+
+The `VMStatus` type holds the VM health of one instance.
 
 ```go
 type VMStatus struct {
@@ -63,11 +70,13 @@ type VMStatus struct {
     LastUpdated time.Time              // Timestamp of last update
     NextUpdate  time.Time              // Scheduled next update
     VMs         []bosh.VM              // Detailed VM information
+    IPs         []string               // Addresses of the cached VMs
+    Stemcell    *StemcellInfo          // Stemcell of the first cached VM
     Details     map[string]interface{} // Additional status details
 }
 ```
 
-### VM Data Structure (`bosh/adapter.go:90-128`)
+### VM Data Structure
 
 The monitor works with VM data from BOSH:
 
@@ -115,26 +124,38 @@ type VM struct {
 
 ## Configuration
 
-### VM Monitoring Configuration (`config.go:70-77`)
+### VM Monitoring Configuration
 
 ```yaml
 vm_monitoring:
   enabled: true              # Enable/disable VM monitoring (pointer type)
   normal_interval: 3600      # Check interval for healthy services (seconds)
   failed_interval: 300       # Check interval for failed services (seconds)
-  max_retries: 3            # Maximum retry attempts before marking as failed
-  timeout: 300              # Deadline for each check's VM listing (seconds)
-  max_concurrent: 5         # Maximum concurrent health checks
+  timeout: 300               # Deadline for each check's VM listing (seconds)
+  max_concurrent: 3          # Instances one check cycle checks at the same time
 ```
 
-### Configuration Defaults (`vm_monitor.go:50-74`)
+### Configuration Defaults
 
 When not explicitly configured, the monitor uses these defaults:
-- **Normal Interval**: 1 hour (3600 seconds)
-- **Failed Interval**: 5 minutes (300 seconds)
-- **Check Deadline**: 5 minutes (300 seconds), from `timeout`, which bounds each check's VM listing
-- **Concurrency**: 3 concurrent health checks
-- **Retry Logic**: Exponential backoff for failed checks
+
+- **Normal Interval**
+  1 hour (3600 seconds)
+
+- **Failed Interval**
+  5 minutes (300 seconds)
+
+- **Check Deadline**
+  5 minutes (300 seconds), from `timeout`, which bounds each check's VM listing
+
+- **Concurrency**
+  3 concurrent health checks, from `max_concurrent`. A value below 1 falls back to 3, and the monitor logs a warning that names the bad value, the key, and the default.
+
+The monitor does not retry a failed check within the same cycle. A failed check counts a failure, and the monitor checks the instance again at the failed interval.
+
+### Deprecated Setting
+
+`vm_monitoring.max_retries` is deprecated. The monitor never read it. The broker still accepts the key, logs one warning at startup when it is set, and ignores it. It will be removed, and a config that leaves it unset stays silent.
 
 ### Example Configurations
 
@@ -152,7 +173,6 @@ vm_monitoring:
   enabled: true
   normal_interval: 900     # 15 minutes for healthy services
   failed_interval: 120     # 2 minutes for failed services
-  max_retries: 5
   timeout: 300             # Deadline for each check's VM listing (seconds)
   max_concurrent: 10
 ```
@@ -168,14 +188,14 @@ vm_monitoring:
 
 ## Workflow and Operations
 
-### Initialization Process (`vm_monitor.go:77-104`)
+### Initialization Process
 
 1. **Configuration Validation**
    - Check if monitoring is enabled via `config.VMMonitoring.Enabled`
    - Set interval defaults if not configured
    - Initialize service tracking maps
 
-2. **Service Discovery** (`vm_monitor.go:119-158`)
+2. **Service Discovery**
    - Query Vault `db` index for all service instances
    - Extract `plan_id` and `instance_id` for each service
    - Generate deployment names using pattern: `{planID}-{instanceID}`
@@ -186,7 +206,7 @@ vm_monitoring:
    - Schedule initial health checks for all services
    - Begin periodic checking cycle (1-minute intervals)
 
-### Health Monitoring Loop (`vm_monitor.go:161-179`)
+### Health Monitoring Loop
 
 The core monitoring operates on a continuous loop:
 
@@ -204,7 +224,8 @@ The core monitoring operates on a continuous loop:
       ▼
 ┌─────────────────────┐
 │ Concurrent health   │
-│ checks (max 3)      │
+│ checks              │
+│ (max_concurrent)    │
 └─────┬───────────────┘
       │
       ▼
@@ -214,7 +235,7 @@ The core monitoring operates on a continuous loop:
 └─────────────────────┘
 ```
 
-### Health Check Process (`vm_monitor.go:222-270`)
+### Health Check Process
 
 For each service requiring monitoring:
 
@@ -223,18 +244,18 @@ For each service requiring monitoring:
    - Retrieve complete VM information including vitals and processes
    - Handle connection errors and timeouts
 
-2. **Status Calculation** (`vm_monitor.go:303-331`)
+2. **Status Calculation**
    - Analyze `JobState` for each VM (primary health indicator)
    - Apply status priority ranking:
      - `failing` (priority 1 - highest concern)
-     - `unresponsive` (priority 2)
+     - `unresponsive agent` and `unresponsive` (priority 2)
      - `stopping` (priority 3)
      - `starting` (priority 4)
      - `stopped` (priority 5)
      - `running` (priority 6 - healthy)
    - Set overall service status to worst individual VM status
 
-3. **Health Metrics** (`vm_monitor.go:334-347`)
+3. **Health Metrics**
    - Count VMs with `JobState == "running"`
    - Calculate healthy VM percentage
    - Log detailed VM state information
@@ -244,12 +265,12 @@ For each service requiring monitoring:
    - **Failed Services**: Next check scheduled using `failedInterval`
    - **Error Handling**: Failed checks increment failure count and use failed interval
 
-5. **Data Persistence** (`vm_monitor.go:350-366`)
+5. **Data Persistence**
    - Store `VMStatus` in Vault at path: `{serviceID}/vm_status`
    - Include timestamp information for trend analysis
    - Store detailed VM information for debugging
 
-### Error Handling (`vm_monitor.go:273-300`)
+### Error Handling
 
 When health checks fail:
 
@@ -306,7 +327,7 @@ When health checks fail:
 - Network configuration and IPs
 - Disk allocation and usage
 
-### Internal API Integration (`internal_api.go:535-542`)
+### Internal API Integration
 
 VM status data is exposed through the internal management API:
 
@@ -323,40 +344,41 @@ if vmStatus, err := api.VMMonitor.GetServiceVMStatus(instanceID); err == nil && 
 
 ### Manual Refresh Operations
 
-#### Individual Service Refresh (`vm_monitor.go:397-410`)
+#### Individual Service Refresh
 ```go
-func (m *VMMonitor) TriggerRefresh(serviceID string) error
+func (m *Monitor) TriggerRefresh(serviceID string) error
 ```
 - Immediately schedules health check for specific service
 - Updates `NextCheck` to current time
 - Useful for on-demand health verification
 
-#### Global Refresh (`vm_monitor.go:413-425`)
+#### Global Refresh
 ```go
-func (m *VMMonitor) TriggerRefreshAll()
+func (m *Monitor) TriggerRefreshAll(ctx context.Context)
 ```
 - Triggers immediate health check for all monitored services
 - Forces re-evaluation of all service states
 - Useful after system maintenance or configuration changes
 
-### Status Retrieval (`vm_monitor.go:369-394`)
+### Status Retrieval
 
 ```go
-func (m *VMMonitor) GetServiceVMStatus(serviceID string) (*VMStatus, error)
+func (m *Monitor) GetServiceVMStatus(ctx context.Context, serviceID string) (*VMStatus, error)
 ```
 - Retrieves current VM status from Vault
+- Reads the stemcell from the first cached VM, and its OS from the stemcell name, for example `ubuntu-noble`
 - Returns structured `VMStatus` with timing information
 - Used by API endpoints for status reporting
 
 ### Lifecycle Management
 
-#### Startup Sequence (`main.go:391, 418-429`)
-1. VMMonitor initialization with Vault, BOSH Director, and config
+#### Startup Sequence
+1. Monitor initialization with Vault, BOSH Director, and config
 2. Service discovery from Vault index
 3. Background monitoring loop startup
 4. Initial health check trigger (2-second delay)
 
-#### Shutdown Sequence (`main.go:424-428`)
+#### Shutdown Sequence
 1. Context cancellation signal
 2. Graceful monitoring loop termination
 3. Wait for ongoing health checks to complete
@@ -369,7 +391,8 @@ func (m *VMMonitor) GetServiceVMStatus(serviceID string) (*VMStatus, error)
 Based on BOSH Director VM information:
 - **`running`**: VM and all processes are healthy and operational
 - **`failing`**: One or more processes have failed or are unhealthy
-- **`unresponsive`**: VM agent is not responding to director queries
+- **`unresponsive agent`**: VM agent is not responding to director queries. This is the job state the director itself writes, so it is the form the monitor sees and stores when an agent stops answering.
+- **`unresponsive`**: The short form of the same state. The monitor treats it exactly as it treats `unresponsive agent`, with the same priority, and it also ends provisioning. Nothing in the broker writes the short form, so it appears only when another caller stores it.
 - **`stopping`**: VM is in the process of being stopped
 - **`starting`**: VM is in the process of starting up
 - **`stopped`**: VM is intentionally stopped
@@ -390,7 +413,7 @@ The monitor also stores a few statuses that don't come from a VM's job state:
 
 Overall service health is determined by the worst VM state:
 - If any VM is `failing` → Service status: `failing`
-- If any VM is `unresponsive` → Service status: `unresponsive`
+- If any VM is `unresponsive agent` (or `unresponsive`) → Service status: that value
 - If all VMs are `running` → Service status: `running`
 
 ### Health Metrics
@@ -427,7 +450,7 @@ else:
 
 ### Concurrency Management
 
-- **Maximum Concurrent Checks**: 3 (hardcoded in `checkScheduledServices`)
+- **Maximum Concurrent Checks**: `vm_monitoring.max_concurrent`, which defaults to 3
 - **One Check per Instance**: The monitor loop's tick and the refresh that `Start` triggers can run overlapping cycles. A cycle marks the ID of each instance it takes as being checked and skips an instance that another cycle is still checking, so no two cycles check the same instance at once. The mark belongs to the instance ID, not to the watched record, so it still holds when a rescan drops an instance that's being checked and `AddService` watches it again. Each check releases its mark when it ends, even when it panics, returns early, or runs with a cancelled context.
 - **Locked State**: `GetStatus` reads each instance's state from request goroutines while a cycle runs. A check updates that state under the monitor's lock, and it never holds the lock while it calls the director or Vault.
 - **Semaphore-Based Limiting**: Prevents BOSH Director overload
@@ -457,7 +480,7 @@ else:
 #### Performance Issues
 **Symptom**: Slow monitoring updates or timeouts
 **Check**: Concurrent check limits and BOSH Director performance
-**Solution**: Tune `max_concurrent` and monitoring intervals
+**Solution**: Tune `max_concurrent`, `timeout`, and monitoring intervals
 
 ### Monitoring Best Practices
 
@@ -517,6 +540,37 @@ curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/deployments/{deployme
 curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/bosh/vm-monitor
 ```
 
+### The VM Monitor Status Route
+
+`GET /b/bosh/vm-monitor` returns the monitor's own state for debugging. The response is JSON with these fields.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `running` | boolean | True once the monitor has started its loop. It stays true after a stop, and it is false when `vm_monitoring.enabled` is `false`, because the loop never starts |
+| `service_count` | integer | How many instances the monitor watches |
+| `normal_interval` | string | The healthy check interval as a Go duration, such as `1h0m0s` |
+| `failed_interval` | string | The failed check interval as a Go duration, such as `5m0s` |
+| `services` | array | One entry per watched instance, described below |
+| `summary` | object | Counts of the watched instances, described below |
+
+Each entry of `services` has these fields.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `service_id` | string | The service instance ID |
+| `deployment_name` | string | The BOSH deployment the monitor checks |
+| `last_status` | string | The VM status from the latest check |
+| `last_check` | timestamp | When the latest check ran |
+| `next_check` | timestamp | When the next check is due |
+| `is_due` | boolean | True when the next check is due now |
+| `failure_count` | integer | Consecutive failed checks |
+| `is_healthy` | boolean | The instance's current health |
+| `is_provisioning` | boolean | True while the instance counts as provisioning |
+
+The `summary` object holds `total`, `due_for_check`, `healthy`, `failing`, and `provisioning`. Every instance counts in exactly one of `healthy`, `failing`, and `provisioning`, and an instance that is still provisioning counts as `provisioning` whatever its health says.
+
+When the broker runs without a VM monitor, the route answers `{"error": "VM monitor not configured", "running": false}` and nothing else.
+
 ## Performance Considerations
 
 ### Resource Usage
@@ -540,7 +594,7 @@ curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/bosh/vm-monitor
 
 #### Large Deployments (100+ Services)
 - Increase `normal_interval` to reduce director load
-- Consider increasing concurrency limits
+- Consider raising `max_concurrent`
 - Monitor BOSH Director performance impact
 
 #### High VM Count Services
@@ -581,12 +635,12 @@ VM health calculation uses a priority-based approach to determine overall servic
 
 ```go
 statusPriority := map[string]int{
-    "failing":      1,  // Highest priority (worst state)
-    "unresponsive": 2,
-    "stopping":     3,
-    "starting":     4,
-    "stopped":      5,
-    "running":      6,  // Lowest priority (best state)
+    "failing":            1,  // Highest priority (worst state)
+    "unresponsive agent": 2,  // "unresponsive" shares this priority
+    "stopping":           3,
+    "starting":           4,
+    "stopped":            5,
+    "running":            6,  // Lowest priority (best state)
 }
 ```
 
