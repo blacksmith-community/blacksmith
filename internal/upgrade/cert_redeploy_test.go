@@ -814,7 +814,7 @@ func TestRedeployHoldsGuardUntilVerified(t *testing.T) {
 
 	select {
 	case <-accepted:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the listener was never probed")
 	}
 
@@ -829,7 +829,7 @@ func TestRedeployHoldsGuardUntilVerified(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the runner never returned")
 	}
 
@@ -1187,7 +1187,7 @@ func TestRedeployWaitsForTheRestoreWaitingList(t *testing.T) {
 		if !goOn {
 			t.Fatalf("expected the processor to go on, got %+v", current(t, manager).Instances[0])
 		}
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the processor never returned")
 	}
 
@@ -1295,7 +1295,7 @@ func TestRedeployResumeClearsNeverStartedMessage(t *testing.T) {
 
 	select {
 	case <-accepted:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the listener was never probed")
 	}
 
@@ -1692,7 +1692,7 @@ func TestCertificatePauseBetweenInstances(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the deploy never started")
 	}
 
@@ -1770,7 +1770,7 @@ func TestCertificateCancelCancelsDeploy(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the deploy never started")
 	}
 
@@ -2016,7 +2016,7 @@ func TestCertificateCancelLetsVerificationFinish(t *testing.T) {
 
 	select {
 	case <-accepted:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the verification never probed the listener")
 	}
 
@@ -2065,7 +2065,7 @@ func TestCertificatePauseDuringVerification(t *testing.T) {
 
 	select {
 	case <-accepted:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the verification never probed the listener")
 	}
 

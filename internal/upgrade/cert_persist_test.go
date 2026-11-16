@@ -364,7 +364,7 @@ func TestConfirmedSaveDroppedAsOlder(t *testing.T) {
 
 	select {
 	case err = <-saved:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the confirmed save never returned")
 	}
 
@@ -633,7 +633,7 @@ func TestConfirmedIndexNeverRegressesTheStatus(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the newer save failed: %v", err)
 		}
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the newer save never finished")
 	}
 

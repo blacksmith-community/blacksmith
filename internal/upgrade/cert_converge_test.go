@@ -662,7 +662,7 @@ func TestConvergeHoldsGuardUntilReconciled(t *testing.T) {
 
 	select {
 	case <-entered:
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		close(release)
 		t.Fatal("the converge never scanned the instance after its deploy")
 	}
@@ -686,7 +686,7 @@ func TestConvergeHoldsGuardUntilReconciled(t *testing.T) {
 		if !settled {
 			t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
 		}
-	case <-time.After(waitTimeout):
+	case <-time.After(time.Until(waitDeadline(t))):
 		t.Fatal("the converge never finished")
 	}
 
