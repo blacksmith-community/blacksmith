@@ -163,12 +163,21 @@ func (f *taskFixture) countOps(deployment string, index int, op string) int {
 	return n
 }
 
-// commandWatchers counts the goroutines that watch a node's cancel.
+// commandWatchers counts the goroutines that watch a node's cancel. A
+// goroutine that has been started and not yet scheduled has no frame of
+// its own in a dump, so each one is counted by the line that says
+// commandNodeContext created it.
 func commandWatchers() int {
-	buf := make([]byte, 1<<20)
-	buf = buf[:runtime.Stack(buf, true)]
+	size := 1 << 20
 
-	return strings.Count(string(buf), ".watchNodeCancel(")
+	for {
+		buf := make([]byte, size)
+		if n := runtime.Stack(buf, true); n < len(buf) {
+			return strings.Count(string(buf[:n]), "created by blacksmith/internal/upgrade.(*Manager).commandNodeContext")
+		}
+
+		size *= 2
+	}
 }
 
 func nodeOf(task UpgradeTask, instance, index int) CommandVM {

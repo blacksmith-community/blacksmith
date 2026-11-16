@@ -167,8 +167,9 @@ func (m *Manager) commandNodeContext(ctx context.Context, task *UpgradeTask) (co
 
 // watchNodeCancel ends the node's context with errCommandCancelled when
 // taskDone closes, and returns when the node's context ends. It closes
-// done on the way out. It is the goroutine's own entry frame, so a dump of
-// the goroutines names it.
+// done on the way out. A dump of the goroutines shows a watcher by the
+// commandNodeContext that started it, since that line is there from the
+// moment the goroutine exists, before it has run.
 func watchNodeCancel(nodeCtx context.Context, cancel context.CancelCauseFunc, taskDone <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
 
