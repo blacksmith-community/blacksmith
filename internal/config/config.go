@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
@@ -23,6 +24,8 @@ var (
 	ErrBOSHPasswordNotSet         = errors.New("BOSH password is not set")
 	ErrBOSHRequestTimeoutNegative = errors.New("bosh.request_timeout must not be negative")
 	ErrBOSHTaskWatchMaxNegative   = errors.New("bosh.task_watch_max must not be negative")
+	// ErrBrokerErrandTimeoutNotPositive means broker.errand_timeout was set to zero or less.
+	ErrBrokerErrandTimeoutNotPositive = errors.New("broker.errand_timeout must be greater than zero")
 	// ErrBOSHDirectorWorkersTooFew is the error a bosh.director_workers of 1 or
 	// less loads with, other than 0.
 	ErrBOSHDirectorWorkersTooFew = errors.New("bosh.director_workers must be at least 2")
@@ -249,6 +252,23 @@ type BrokerConfig struct {
 	TLS          TLSConfig         `yaml:"tls"`
 	CF           CFBrokerConfig    `yaml:"cf"`          // CF registration configuration
 	Compression  CompressionConfig `yaml:"compression"` // HTTP compression configuration
+	// ErrandTimeout is the longest the broker holds a request open for a
+	// BOSH errand to finish, as a duration such as 30m. Absent means 30
+	// minutes, and a value of zero or less fails the load.
+	ErrandTimeout *time.Duration `yaml:"errand_timeout,omitempty"`
+}
+
+// DefaultErrandTimeout is the errand wait when broker.errand_timeout is
+// absent.
+const DefaultErrandTimeout = 30 * time.Minute
+
+// ErrandWait returns the longest the broker waits for an errand.
+func (b BrokerConfig) ErrandWait() time.Duration {
+	if b.ErrandTimeout == nil {
+		return DefaultErrandTimeout
+	}
+
+	return *b.ErrandTimeout
 }
 
 // CFBrokerConfig holds configuration for CF broker registration.
@@ -385,6 +405,10 @@ func ReadConfig(path string) (Config, error) {
 	err = validateRequiredFields(&config)
 	if err != nil {
 		return config, err
+	}
+
+	if config.Broker.ErrandTimeout != nil && *config.Broker.ErrandTimeout <= 0 {
+		return config, fmt.Errorf("%w: it is %v, and it must be a duration such as 30m, or absent for the default of %v", ErrBrokerErrandTimeoutNotPositive, *config.Broker.ErrandTimeout, DefaultErrandTimeout)
 	}
 
 	err = setBOSHDefaults(&config)

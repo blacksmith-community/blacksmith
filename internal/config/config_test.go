@@ -665,3 +665,61 @@ func TestVMMonitoringMaxConcurrentRejectsANegativeValue(t *testing.T) {
 		t.Errorf("the error %q does not name the value", err)
 	}
 }
+
+// broker.errand_timeout is a duration. It loads as written, and an absent
+// value means 30 minutes.
+func TestBrokerErrandTimeoutLoadsAndDefaultsToThirtyMinutes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		setting string
+		want    time.Duration
+	}{
+		{name: "absent", setting: "", want: 30 * time.Minute},
+		{name: "minutes", setting: "broker:\n  errand_timeout: 45m\n", want: 45 * time.Minute},
+		{name: "hours and minutes", setting: "broker:\n  errand_timeout: 1h30m\n", want: 90 * time.Minute},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.ReadConfig(writeBOSHConfig(t, testCase.setting))
+			if err != nil {
+				t.Fatalf("ReadConfig: %v", err)
+			}
+
+			if got := cfg.Broker.ErrandWait(); got != testCase.want {
+				t.Errorf("ErrandWait = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+// A broker.errand_timeout of zero or less, or one that is not a duration,
+// fails the load, and the error names the setting.
+func TestBrokerErrandTimeoutRejectsBadValues(t *testing.T) {
+	t.Parallel()
+
+	for name, value := range map[string]string{"zero": "0s", "negative": "-5m", "bare number": "90", "text": "soon"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := config.ReadConfig(writeBOSHConfig(t, "broker:\n  errand_timeout: "+value+"\n"))
+			if err == nil {
+				t.Fatalf("a broker.errand_timeout of %q loaded", value)
+			}
+
+			if name == "zero" || name == "negative" {
+				if !errors.Is(err, config.ErrBrokerErrandTimeoutNotPositive) {
+					t.Errorf("error = %v, want %v", err, config.ErrBrokerErrandTimeoutNotPositive)
+				}
+
+				if !strings.Contains(err.Error(), "errand_timeout") {
+					t.Errorf("error = %q, want it to name errand_timeout", err.Error())
+				}
+			}
+		})
+	}
+}

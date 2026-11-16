@@ -8,15 +8,23 @@ import (
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/config"
 	"blacksmith/internal/interfaces"
 )
 
-// errandRunLimit is the longest the broker holds a request open for an
-// errand to finish. The director sets no limit of its own, and a smoke
-// test of a large deployment can run for many minutes, so the limit is
-// well past the server's write timeout, which would otherwise close the
-// connection with no answer at all.
-const errandRunLimit = 30 * time.Minute
+// errandLimit is the longest the broker holds a request open for an
+// errand to finish, which is broker.errand_timeout. The director sets no
+// limit of its own, and a smoke test of a large deployment can run for
+// many minutes, so the limit can run well past the server's write
+// timeout, which would otherwise close the connection with no answer at
+// all.
+func (h *Handler) errandLimit() time.Duration {
+	if h.config == nil {
+		return config.DefaultErrandTimeout
+	}
+
+	return h.config.GetBrokerConfig().ErrandWait()
+}
 
 var errErrandOutOfTime = errors.New("the errand ran out of time")
 
@@ -30,13 +38,13 @@ var errErrandOutOfTime = errors.New("the errand ran out of time")
 // instance action does, so the broker still writes its own answer.
 func (h *Handler) errandContext(parent context.Context, writer http.ResponseWriter, logger interfaces.Logger) (context.Context, context.CancelFunc) {
 	writeTimeout := h.serverWriteTimeout()
-	limit := max(errandRunLimit, writeTimeout-actionDeadlineMargin)
+	limit := h.errandLimit()
 
 	err := http.NewResponseController(writer).SetWriteDeadline(time.Now().Add(limit + actionDeadlineMargin))
 	if err != nil {
 		logger.Warning("Unable to extend the write deadline for an errand, so the wait stays within the write timeout of %d seconds: %v", int(writeTimeout/time.Second), err)
 
-		limit = max(writeTimeout-actionDeadlineMargin, writeTimeout/shortActionTimeoutDivisor)
+		limit = min(limit, max(writeTimeout-actionDeadlineMargin, writeTimeout/shortActionTimeoutDivisor))
 	}
 
 	cause := fmt.Errorf("%w after %v", errErrandOutOfTime, limit)

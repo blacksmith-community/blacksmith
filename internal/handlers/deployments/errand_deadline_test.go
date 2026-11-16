@@ -12,6 +12,7 @@ import (
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/config"
 	"blacksmith/internal/handlers/deployments"
 	"blacksmith/internal/middleware"
 	"blacksmith/pkg/logger"
@@ -117,5 +118,57 @@ func TestErrandWaitsLessThanTheWriteTimeoutWhenTheDeadlineCannotMove(t *testing.
 
 	if code := decodeCode(t, recorder); code != apierr.CodeOutcomeUnknown {
 		t.Errorf("code = %q, want %q", code, apierr.CodeOutcomeUnknown)
+	}
+}
+
+// errandTimeoutConfig is a config whose broker.errand_timeout is set.
+type errandTimeoutConfig struct {
+	writeTimeoutConfig
+
+	timeout time.Duration
+}
+
+func (c errandTimeoutConfig) GetBrokerConfig() config.BrokerConfig {
+	return config.BrokerConfig{ErrandTimeout: &c.timeout}
+}
+
+// The wait for an errand ends at broker.errand_timeout, as the server's
+// write deadline moves to match, and the broker answers 504 with the code
+// outcome_unknown.
+func TestErrandWaitEndsAtTheConfiguredTimeout(t *testing.T) {
+	t.Parallel()
+
+	handler := deployments.NewHandler(deployments.Dependencies{
+		Logger:   logger.NewNoOpLogger(),
+		Config:   errandTimeoutConfig{timeout: 300 * time.Millisecond},
+		Director: &slowErrandDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), run: time.Minute},
+		Vault:    managingVault(errandDeployment),
+	})
+
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.WriteTimeout = time.Second
+	server.Start()
+	t.Cleanup(server.Close)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+errandPath, nil)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+
+	start := time.Now()
+
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("no answer: %v", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if elapsed := time.Since(start); elapsed > 900*time.Millisecond {
+		t.Errorf("the wait lasted %v, want about 300ms", elapsed)
+	}
+
+	if resp.StatusCode != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504", resp.StatusCode)
 	}
 }

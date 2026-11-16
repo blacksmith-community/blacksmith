@@ -186,6 +186,7 @@ broker:
   read_timeout: 120             # HTTP read timeout (seconds)
   write_timeout: 120            # HTTP write timeout (seconds)
   idle_timeout: 300             # HTTP idle timeout (seconds)
+  errand_timeout: 30m           # Longest wait for a BOSH errand (duration)
   tls:                          # TLS configuration (see TLS section)
     enabled: true
     port: "443"
@@ -232,6 +233,11 @@ HTTP server write timeout in seconds. Maximum time allowed for writing the respo
 **Default:** `300`
 
 HTTP server idle timeout in seconds. Maximum time to wait for the next request when keep-alives are enabled.
+
+#### `errand_timeout` (duration)
+**Default:** `30m`
+
+The longest the broker holds a request open while a BOSH errand runs, written as a duration such as `45m` or `1h30m`. A bare number is refused, and so is a value of zero or less, which fails the load. The broker moves the connection's write deadline out to match, so an errand that runs past `write_timeout` still gets its answer. When the wait runs out, the broker answers 504 with the code `outcome_unknown`, because the errand may still be running. This setting is read from the configuration file only, and the runtime settings saved in Vault don't cover it.
 
 #### `tls` (TLSConfig)
 **Default:** See TLS Configuration section
