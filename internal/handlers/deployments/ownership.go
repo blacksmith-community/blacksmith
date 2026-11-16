@@ -41,12 +41,21 @@ func (h *Handler) ownDeployment() (string, bool) {
 // not allowed on the deployment. A change needs a deployment of one of the
 // broker's service instances. A read needs the same, except that the
 // broker's own deployment, matched exactly, can be read and never
-// changed, because the UI shows it.
+// changed, because the UI shows it. A change to the own deployment is
+// refused before the index is read, whatever the index records.
 func (h *Handler) permitDeployment(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, method string, pathParts []string, deploymentName string) bool {
 	changes := changesDeployment(method, pathParts)
 
-	if own, ok := h.ownDeployment(); ok && !changes && deploymentName == own {
-		return true
+	if own, ok := h.ownDeployment(); ok && deploymentName == own {
+		if !changes {
+			return true
+		}
+
+		logger.Warning("Refusing to change deployment %q, which is the broker's own deployment", deploymentName)
+		apierr.Write(writer, apierr.New(http.StatusForbidden, apierr.CodeDeploymentNotManaged,
+			"deployment "+deploymentName+" is the broker's own deployment, which can be shown and never changed"), http.StatusForbidden)
+
+		return false
 	}
 
 	return h.refuseUnmanaged(ctx, writer, logger, deploymentName, changes)

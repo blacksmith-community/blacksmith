@@ -348,6 +348,63 @@ func TestBrokersOwnDeploymentIsReadableButNotChangeable(t *testing.T) {
 	}
 }
 
+// An index entry that records the broker's own deployment name does not
+// make that deployment changeable. Every change is refused before the
+// index is read, and the read still runs.
+func TestIndexedOwnDeploymentIsStillNotChangeable(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range deploymentActions() {
+		t.Run(action.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, director := ownershipHandlerWithConfig(managingVault(ownDeployment))
+
+			own := action
+			own.path = strings.Replace(action.path, guardedDeployment, ownDeployment, 1)
+
+			recorder := serveAction(t, handler, own)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403: %s", recorder.Code, recorder.Body.String())
+			}
+
+			if code := decodeCode(t, recorder); code != apierr.CodeDeploymentNotManaged {
+				t.Errorf("code = %q, want %q", code, apierr.CodeDeploymentNotManaged)
+			}
+
+			calls, _ := director.recorded()
+			if len(calls) != 0 {
+				t.Errorf("director calls = %v, want none", calls)
+			}
+		})
+	}
+}
+
+// A change to the own deployment is refused even when the index can't be
+// read, because the answer doesn't depend on the index.
+func TestOwnDeploymentChangeIsRefusedWithoutReadingTheIndex(t *testing.T) {
+	t.Parallel()
+
+	guard := mutation.NewGuard(time.Now)
+	handler := deployments.NewHandler(deployments.Dependencies{
+		Logger:   logger.NewNoOpLogger(),
+		Config:   ownEnvironmentConfig{},
+		Director: newRecordingDirector(guard, false),
+		Vault:    &unreadableIndexVault{InstanceVault: *managingVault(ownDeployment)},
+		Guard:    guard,
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/"+ownDeployment+"/restart", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // Only the exact own name is readable. Another environment's name, and a
 // literal blacksmith deployment, are other deployments.
 func TestOnlyTheBrokersOwnNameIsReadable(t *testing.T) {
