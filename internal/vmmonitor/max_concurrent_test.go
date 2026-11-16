@@ -2,6 +2,7 @@ package vmmonitor_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -152,13 +153,12 @@ func TestMonitorWarnsOfAnUnusableWorkerCount(t *testing.T) { //nolint:parallelte
 		}
 
 		capture.mu.Lock()
-		last := capture.lines[len(capture.lines)-1]
+		lines := append([]string(nil), capture.lines...)
 		capture.mu.Unlock()
 
-		for _, want := range []string{fmt.Sprintf("is %d", workers), "vm_monitoring.max_concurrent", "default of 3"} {
-			if !strings.Contains(last, want) {
-				t.Errorf("the warning for max_concurrent %d is %q, want it to contain %q", workers, last, want)
-			}
+		wants := []string{fmt.Sprintf("is %d", workers), "vm_monitoring.max_concurrent", "default of 3"}
+		if !slices.ContainsFunc(lines, func(line string) bool { return containsAll(line, wants) }) {
+			t.Errorf("no warning for max_concurrent %d contains %q, got %q", workers, wants, lines)
 		}
 	}
 
@@ -174,4 +174,15 @@ func TestMonitorWarnsOfAnUnusableWorkerCount(t *testing.T) { //nolint:parallelte
 	if len(capture.lines) != before {
 		t.Errorf("a usable max_concurrent of 4 drew a warning: %q", capture.lines[before:])
 	}
+}
+
+// containsAll reports whether the line contains every one of the parts.
+func containsAll(line string, parts []string) bool {
+	for _, part := range parts {
+		if !strings.Contains(line, part) {
+			return false
+		}
+	}
+
+	return true
 }

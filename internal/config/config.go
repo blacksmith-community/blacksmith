@@ -29,6 +29,9 @@ var (
 	// ErrVMMonitoringTimeoutNegative is the error a negative
 	// vm_monitoring.timeout loads with.
 	ErrVMMonitoringTimeoutNegative = errors.New("vm_monitoring.timeout must not be negative")
+	// ErrVMMonitoringMaxConcurrentNegative is the error a negative
+	// vm_monitoring.max_concurrent loads with.
+	ErrVMMonitoringMaxConcurrentNegative = errors.New("vm_monitoring.max_concurrent must not be negative")
 )
 
 // defaultBOSHTaskWatchMax is what a bosh.task_watch_max of 0 means, in
@@ -649,6 +652,10 @@ func setVaultDefaults(config *Config) {
 func setVMMonitoringDefaults(config *Config) error {
 	if config.VMMonitoring.Timeout < 0 {
 		return fmt.Errorf("%w: it is %d, and it must be a number of seconds, or 0 for the default of %d", ErrVMMonitoringTimeoutNegative, config.VMMonitoring.Timeout, defaultVMMonitoringTimeout)
+	}
+
+	if config.VMMonitoring.MaxConcurrent < 0 {
+		return fmt.Errorf("%w: it is %d, and it must be the number of checks that run at once, or 0 for the default of 3", ErrVMMonitoringMaxConcurrentNegative, config.VMMonitoring.MaxConcurrent)
 	}
 
 	if config.VMMonitoring.NormalInterval == 0 {

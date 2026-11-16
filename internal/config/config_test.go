@@ -622,3 +622,46 @@ func TestConfigThatSetsTheRemovedSSHHostKeySettingsStillLoads(t *testing.T) {
 		}
 	}
 }
+
+// vm_monitoring.max_concurrent loads as the number of checks that run at
+// once. An absent key and an explicit 0 both mean the default of 3.
+func TestVMMonitoringMaxConcurrentLoads(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		setting string
+		want    int
+	}{
+		"absent":   {"", 3},
+		"explicit": {"vm_monitoring:\n  max_concurrent: 7\n", 7},
+		"zero":     {"vm_monitoring:\n  max_concurrent: 0\n", 3},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.ReadConfig(writeBOSHConfig(t, testCase.setting))
+			if err != nil {
+				t.Fatalf("ReadConfig: %v", err)
+			}
+
+			if got := cfg.GetVMMonitoringMaxConcurrent(); got != testCase.want {
+				t.Errorf("GetVMMonitoringMaxConcurrent() = %d, want %d", got, testCase.want)
+			}
+		})
+	}
+}
+
+// A negative vm_monitoring.max_concurrent is refused with an error of its
+// own.
+func TestVMMonitoringMaxConcurrentRejectsANegativeValue(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.ReadConfig(writeBOSHConfig(t, "vm_monitoring:\n  max_concurrent: -2\n"))
+	if !errors.Is(err, config.ErrVMMonitoringMaxConcurrentNegative) {
+		t.Fatalf("expected %v, got %v", config.ErrVMMonitoringMaxConcurrentNegative, err)
+	}
+
+	if !strings.Contains(err.Error(), "-2") {
+		t.Errorf("the error %q does not name the value", err)
+	}
+}
