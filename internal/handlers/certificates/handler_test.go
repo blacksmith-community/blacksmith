@@ -879,3 +879,29 @@ func TestBlacksmithCertificatesIncludesConfiguredCAs(t *testing.T) {
 		})
 	}
 }
+
+// The Vault client trusts every certificate in a configured bundle, so the
+// route lists every one of them, the first under the plain name and the
+// rest under a numbered name.
+func TestBlacksmithCertificatesListsEveryCertificateOfAVaultCABundle(t *testing.T) {
+	t.Parallel()
+
+	bundle := selfSignedCAPEM(t, "First Vault CA") + selfSignedCAPEM(t, "Second Vault CA")
+
+	filePath := filepath.Join(t.TempDir(), "vault-bundle.pem")
+
+	err := os.WriteFile(filePath, []byte(bundle), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, value := range map[string]string{"PEM text": bundle, "a file": filePath} {
+		first := blacksmithCertificate(t, &testConfig{vaultCACert: value}, "Vault CA Certificate")
+		second := blacksmithCertificate(t, &testConfig{vaultCACert: value}, "Vault CA Certificate 2")
+
+		if first.Details.Subject.CommonName != "First Vault CA" || second.Details.Subject.CommonName != "Second Vault CA" {
+			t.Errorf("%s listed %q and %q, want both certificates in order", name,
+				first.Details.Subject.CommonName, second.Details.Subject.CommonName)
+		}
+	}
+}

@@ -3,6 +3,7 @@ package certificates
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -334,27 +335,67 @@ func (h *Handler) loadVaultCACertificate(ctx context.Context, cfg interface {
 		return
 	}
 
-	// vault.cacert is either PEM text or the path of a PEM file.
-	var (
-		cert *certificates.CertificateListItem
-		err  error
-	)
+	// vault.cacert is either PEM text or the path of a PEM file, and the
+	// Vault client trusts every certificate in it.
+	pemText, path := vaultCACert, "config:vault.cacert"
 
-	if strings.Contains(vaultCACert, "-----BEGIN") {
-		cert, err = h.loadCertificateFromPEM(ctx, vaultCACert, "Vault CA Certificate", "config:vault.cacert")
-	} else {
-		cert, err = h.loadCertificateFromFile(ctx, vaultCACert, "Vault CA Certificate")
+	if !strings.Contains(vaultCACert, "-----BEGIN") {
+		// #nosec G304 - the operator names this file in the broker's own config
+		content, err := os.ReadFile(vaultCACert)
+		if err != nil {
+			// The value may be a certificate body that lost its header,
+			// and a read error would repeat it, so only the cause is logged.
+			log.Error("failed to load vault CA certificate from vault.cacert: %s", loadFailureCause(fmt.Errorf("failed to read file: %w", err)))
+
+			return
+		}
+
+		pemText, path = string(content), vaultCACert
 	}
 
-	if err != nil {
-		// The value may be a certificate body that lost its header, and
-		// a read error would repeat it, so only the cause is logged.
-		log.Error("failed to load vault CA certificate from vault.cacert: %s", loadFailureCause(err))
+	blocks := certificateBlocks(pemText)
+	if len(blocks) == 0 {
+		log.Error("failed to load vault CA certificate from vault.cacert: %s", certificates.ErrFileDoesNotContainCertificate)
 
 		return
 	}
 
-	*certList = append(*certList, *cert)
+	for index, block := range blocks {
+		name := "Vault CA Certificate"
+		if index > 0 {
+			name = fmt.Sprintf("%s %d", name, index+1)
+		}
+
+		cert, err := h.loadCertificateFromPEM(ctx, block, name, path)
+		if err != nil {
+			log.Error("failed to load vault CA certificate from vault.cacert: %s", loadFailureCause(err))
+
+			return
+		}
+
+		*certList = append(*certList, *cert)
+	}
+}
+
+// certificateBlocks returns each CERTIFICATE block of pemText as its own PEM
+// text, in order.
+func certificateBlocks(pemText string) []string {
+	var blocks []string
+
+	rest := []byte(pemText)
+
+	for {
+		var block *pem.Block
+
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			return blocks
+		}
+
+		if block.Type == "CERTIFICATE" {
+			blocks = append(blocks, string(pem.EncodeToMemory(block)))
+		}
+	}
 }
 
 // loadFailureCause returns the part of a load error that is safe to log. A
