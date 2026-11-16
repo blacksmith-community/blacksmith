@@ -227,7 +227,7 @@ HTTP server read timeout in seconds. Maximum time allowed for reading the entire
 #### `write_timeout` (integer)
 **Default:** `120`
 
-HTTP server write timeout in seconds. Maximum time allowed for writing the response.
+HTTP server write timeout in seconds. Maximum time allowed for writing the response. A request that runs a BOSH errand is the one exception, because the broker moves the write deadline out for that request, so the errand can run past `write_timeout` for as long as `errand_timeout` allows.
 
 #### `idle_timeout` (integer)
 **Default:** `300`
@@ -237,7 +237,19 @@ HTTP server idle timeout in seconds. Maximum time to wait for the next request w
 #### `errand_timeout` (duration)
 **Default:** `30m`
 
-The longest the broker holds a request open while a BOSH errand runs, written as a duration such as `45m` or `1h30m`. A bare number is refused, and so is a value of zero or less, which fails the load. The broker moves the connection's write deadline out to match, so an errand that runs past `write_timeout` still gets its answer. When the wait runs out, the broker answers 504 with the code `outcome_unknown`, because the errand may still be running. This setting is read from the configuration file only, and the runtime settings saved in Vault don't cover it.
+The longest the broker holds a request open while a BOSH errand runs, written as a duration such as `45m` or `1h30m`. The broker moves the connection's write deadline out to match, so an errand that runs past `write_timeout` still gets its answer. When the wait runs out, the broker answers 504 with the code `outcome_unknown`, because the errand may still be running.
+
+The broker takes the wait from the first of these that holds a usable value, in this order:
+
+- The runtime setting `errand_timeout`, saved in Vault from the Settings page or with a POST to `/b/blacksmith/settings`
+
+- The environment variable `BLACKSMITH_ERRAND_TIMEOUT`
+
+- This `broker.errand_timeout` setting in the configuration file
+
+- The default of `30m`
+
+Every layer takes a duration, so a bare number is refused, and so is a value of zero or less. A layer that is refused is skipped, and the broker writes a warning to its log that names the layer and the reason. A refused value in the configuration file also fails the load. The Settings page and the settings API show the wait now in effect, and the layer it comes from.
 
 #### `tls` (TLSConfig)
 **Default:** See TLS Configuration section

@@ -614,7 +614,7 @@ Check deployment naming conventions:
 - Should follow `{serviceID}-{planID}-{instanceID}` pattern
 - Instance ID should be a valid UUID matching CF service instance GUID
 
-Verify manifest metadata in BOSH deployments by reading the manifest text from the manifest route. The route answers HTTP 404 for a deployment the director does not know and HTTP 500 when the director call fails, and both answers carry the reason in their `error` field. With `-f`, curl prints nothing and exits non-zero on either answer, so a manifest in the output proves the deployment exists:
+Verify manifest metadata in BOSH deployments by reading the manifest text from the manifest route. The route answers only for a deployment that belongs to one of the broker's own service instances, or for the broker's own deployment, which it shows and never changes. It answers HTTP 403 with the code `deployment_not_managed` for any other name, and that check comes before the director is asked, so a deployment the broker does not track, such as an orphan, gets 403 and never 404. For a managed name, the route answers HTTP 404 for a deployment the director does not know and HTTP 500 when the director call fails. Each of these answers carries the reason in its `error` field. With `-f`, curl prints nothing and exits non-zero on any of them, so a manifest in the output proves the deployment exists:
 ```bash
 curl -sf -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/deployments/<deployment-name>/manifest | jq -r .text | grep -A5 -B5 blacksmith
 ```

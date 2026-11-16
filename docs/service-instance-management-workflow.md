@@ -91,6 +91,12 @@ The status answer has no reconciler section. The orphan state has its own route,
 
 [broker.md](broker.md) lists every route with its method.
 
+The deployment routes answer only for the deployments of the broker's own service instances. The broker's own deployment can be read and never changed, and any other name gets HTTP 403 with the code `deployment_not_managed`. When the broker cannot read its service index, or has no Vault, the routes answer HTTP 503 with the code `vault_unavailable`, because then nobody knows what the broker owns.
+
+The task routes (`/b/tasks/{id}`, `/b/tasks/{id}/output`, and `/b/tasks/{id}/cancel`) apply the same rule to the deployment the task belongs to. A task with no deployment and a task of the broker's own deployment can both be read, but cancelling either one gets 403. A task of a deployment the broker does not own gets 403 on every one of the three routes, and a task the director cannot return gets 404.
+
+The instance routes under `/b/{instance}/`, which cover `vms`, `logs`, `events`, `manifest`, `credentials`, `details`, `config`, `task/log`, and `task/debug`, answer only for an instance that the service index holds as live. An ID that was never provisioned, an instance that was deprovisioned, and an ID that is empty or holds a slash, a backslash, or `..` all get HTTP 404 with the code `instance_not_found`, and an index that cannot be read gets 503 `vault_unavailable`. The upgrade routes follow the same rule. An upgrade lists such an ID as failed with the reason that the instance was not found in Vault, and a command preview lists it as blocked with the code `instance_not_found`. A command preview that cannot read the index answers 503 `vault_unavailable`.
+
 ### 3. Service Instance Lifecycle
 
 #### Provisioning Workflow
