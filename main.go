@@ -1600,6 +1600,9 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 		return err
 	}
 
+	// The vault CA file exists from here on, so every return below removes it.
+	defer removeVaultCAFile()
+
 	// The broker has exactly one mutation guard, and every operation that
 	// changes an instance reserves it through this one. The broker holds it,
 	// and the API reads it back from the broker.
@@ -1638,8 +1641,6 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	sshService, apiHandler, upgradeHandler, certificates, changes := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
-	defer removeVaultCAFile()
-
 	serverWaitGroup, servers := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancelWithCause, logger)
 
 	certificates.Start(ctx)
@@ -1778,6 +1779,17 @@ func apiReconciler(reconciler *recovery.ReconcilerAdapter) blacksmith.Reconciler
 
 	return reconciler
 }
+
+// These assertions make a service that stops satisfying its interface fail
+// the build. Otherwise orNil would turn the mismatch into a nil service and
+// the feature would report itself as not configured.
+var (
+	_ interfaces.SSHService                     = (*ssh.ServiceImpl)(nil)
+	_ interfaces.RabbitMQSSHService             = (*rabbitmq.SSHService)(nil)
+	_ interfaces.RabbitMQExecutorService        = (*rabbitmq.ExecutorService)(nil)
+	_ interfaces.RabbitMQPluginsExecutorService = (*rabbitmq.PluginsExecutorService)(nil)
+	_ interfaces.WebSocketHandler               = (*websocket.SSHHandler)(nil)
+)
 
 // orNil converts a pointer to the interface the API takes. A nil pointer
 // becomes a nil interface, because a nil pointer wrapped in an interface
