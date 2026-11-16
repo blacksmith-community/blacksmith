@@ -280,6 +280,10 @@ func (m *Manager) driveCommandNode(ctx context.Context, sessions *patchSessions,
 	}
 
 	err = run.connect(ctx, live)
+	if errors.Is(err, ErrSSHDisabled) {
+		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "SSH is disabled (ssh.enabled is false), so nothing was sent.", err: err}), nil
+	}
+
 	if err != nil {
 		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Blacksmith could not open an SSH session on the node, so nothing was sent.", err: err}), nil
 	}

@@ -143,6 +143,9 @@ func (m *Manager) certDeps() Deps {
 	return m.deps
 }
 
+// ErrSSHDisabled is what a runner reports when ssh.enabled is false.
+var ErrSSHDisabled = errors.New("SSH is disabled in configuration (ssh.enabled is false)")
+
 // SSHDisabledMessage is what a refusal says when ssh.enabled is false.
 const SSHDisabledMessage = "SSH is disabled. Set ssh.enabled to true to allow features that open SSH sessions to VMs."
 

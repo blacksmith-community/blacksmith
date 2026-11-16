@@ -413,6 +413,9 @@ type runFixture struct {
 	// noRunner leaves Deps.CommandRunner nil.
 	noRunner bool
 
+	// openErr, when set, is what the runner answers in place of a session.
+	openErr error
+
 	// The script. A zero value is a node that succeeds.
 	sudo         ssh.Result
 	sudoErr      error
@@ -511,6 +514,10 @@ func newRunFixture(t *testing.T, options ...runOption) *runFixture {
 	if !fix.noRunner {
 		deps.CommandRunner = func(_ context.Context, _, _ string, indices []int) (PatchSession, error) {
 			fix.opened = append(fix.opened, slices.Clone(indices))
+
+			if fix.openErr != nil {
+				return nil, fix.openErr
+			}
 
 			return fix.sess, nil
 		}
@@ -3109,4 +3116,32 @@ func TestCommandAdvancePanicLeavesTheLockFree(t *testing.T) {
 	expectUnlockedAfterPanic(t, fix.manager, func() {
 		_ = run.advance(context.Background(), func(*CommandVM) { panic("the change failed") })
 	})
+}
+
+// A node that resumes after ssh.enabled was turned off settles as failed
+// with a reason that names the switch, sends nothing, and does not stop the
+// task or hang the run.
+func TestRunCommandNodeFailsNamingSSHWhenItIsOff(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	fix.openErr = ErrSSHDisabled
+
+	stopped, err := fix.manager.runCommandNode(context.Background(), fix.sessions, fix.task, fix.inst, 0)
+	if err != nil || stopped {
+		t.Fatalf("stopped=%v err=%v, want the node failed and nothing more", stopped, err)
+	}
+
+	wantOps(t, fix.sess)
+
+	node := fix.vault.stored(t)
+	if node.Status != CommandStatusFailed {
+		t.Errorf("status = %s, want failed", node.Status)
+	}
+
+	if !strings.Contains(node.Reason, "ssh.enabled") {
+		t.Errorf("reason %q does not name ssh.enabled", node.Reason)
+	}
+
+	fix.assertNoCommandText()
 }

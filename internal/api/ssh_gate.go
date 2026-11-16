@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"regexp"
 
@@ -13,7 +12,7 @@ import (
 )
 
 // errSSHDisabled is what a runner reports when ssh.enabled is false.
-var errSSHDisabled = errors.New("SSH is disabled in configuration (ssh.enabled is false)")
+var errSSHDisabled = upgrade.ErrSSHDisabled
 
 // sshBackedRoutes are the routes served by handlers that open an SSH session
 // to a VM, or that belong to the SSH terminal. ssh.enabled false refuses each
