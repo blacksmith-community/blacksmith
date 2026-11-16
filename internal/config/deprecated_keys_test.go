@@ -118,3 +118,14 @@ func TestReadConfigIsSilentWhenDeprecatedKeysAreUnset(t *testing.T) { //nolint:p
 		}
 	}
 }
+
+// A key set to 0 is still a key an operator wrote, so it warns too.
+func TestReadConfigWarnsOfDeprecatedKeysSetToZero(t *testing.T) { //nolint:paralleltest // swaps the global logger
+	lines := readWithWarnings(t, "broker:\n  tls:\n    reuse_after: 0\nvm_monitoring:\n  max_retries: 0\n")
+
+	for _, key := range []string{"broker.tls.reuse_after", "vm_monitoring.max_retries"} {
+		if got := countMentions(lines, key); got != 1 {
+			t.Errorf("got %d warnings naming %s set to 0, want 1: %q", got, key, lines)
+		}
+	}
+}

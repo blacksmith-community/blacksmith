@@ -378,7 +378,6 @@ func ReadConfig(path string) (Config, error) {
 		return config, err
 	}
 
-	warnDeprecatedKeys(&config)
 	setBrokerDefaults(&config)
 	setTLSDefaults(&config)
 	setCompressionDefaults(&config)
@@ -432,21 +431,42 @@ func loadConfigFromFile(path string) (Config, error) {
 		return config, fmt.Errorf("failed to unmarshal config YAML: %w", err)
 	}
 
+	warnDeprecatedKeys(b)
+
 	return config, nil
 }
 
-// warnDeprecatedKeys logs one warning for each deprecated key the config
-// sets. The keys still load, so an existing config keeps working, but the
-// broker reads neither of them. No default fills them in, so a key that is
-// unset stays silent.
-func warnDeprecatedKeys(config *Config) {
+// deprecatedKeys is the part of the config file that holds the deprecated
+// keys. The pointers tell a key an operator set to 0 from one that is absent.
+type deprecatedKeys struct {
+	Broker struct {
+		TLS struct {
+			ReuseAfter *int `yaml:"reuse_after"`
+		} `yaml:"tls"`
+	} `yaml:"broker"`
+	VMMonitoring struct {
+		MaxRetries *int `yaml:"max_retries"`
+	} `yaml:"vm_monitoring"`
+}
+
+// warnDeprecatedKeys logs one warning for each deprecated key the file sets,
+// including a key set to 0. The keys still load, so an existing config keeps
+// working, but the broker reads neither of them. An absent key stays silent.
+func warnDeprecatedKeys(raw []byte) {
+	var keys deprecatedKeys
+
+	err := yaml.Unmarshal(raw, &keys)
+	if err != nil {
+		return
+	}
+
 	log := logger.Get().Named("config")
 
-	if config.Broker.TLS.ReuseAfter != 0 {
+	if keys.Broker.TLS.ReuseAfter != nil {
 		log.Warn("broker.tls.reuse_after is deprecated, has no effect, and will be removed")
 	}
 
-	if config.VMMonitoring.MaxRetries != 0 {
+	if keys.VMMonitoring.MaxRetries != nil {
 		log.Warn("vm_monitoring.max_retries is deprecated, has no effect, and will be removed")
 	}
 }
