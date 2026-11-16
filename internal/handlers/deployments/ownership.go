@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ownname"
 	vaultPkg "blacksmith/pkg/vault"
 )
 
@@ -21,20 +21,16 @@ const (
 	routeErrands  = "errands"
 )
 
-// ownDeployment returns the name of the broker's own deployment, which is
-// the configured environment plus -blacksmith, and false when the broker
-// has no environment to name it from.
+// ownDeployment returns the name of the broker's own deployment, from the
+// instance file BOSH writes or else the configured environment plus
+// -blacksmith, and false when neither names it.
 func (h *Handler) ownDeployment() (string, bool) {
-	if h.config == nil {
-		return "", false
+	environment := ""
+	if h.config != nil {
+		environment = h.config.GetEnvironment()
 	}
 
-	environment := strings.TrimSpace(h.config.GetEnvironment())
-	if environment == "" {
-		return "", false
-	}
-
-	return environment + "-blacksmith", true
+	return ownname.Resolve(h.ownFile, environment)
 }
 
 // permitDeployment reports false, after it answers, when the request is

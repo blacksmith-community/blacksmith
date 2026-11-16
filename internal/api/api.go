@@ -143,7 +143,7 @@ func createHandlers(deps Dependencies) apiHandlers {
 		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
 		inventory:         createInventoryHandler(deps, upgradeHandler.GetManager(), changes),
 		cf:                createCFHandler(deps, changes),
-		instance:          instances.NewHandler(deps.Logger),
+		instance:          instances.NewHandler(deps.Logger, deps.Config),
 		redis:             redis.NewHandler(deps.Logger, deps.Vault, deps.ServicesManager),
 		rabbitMQTesting:   createRabbitMQTestingHandler(deps),
 		rabbitMQWebSocket: createRabbitMQWebSocketHandler(deps),

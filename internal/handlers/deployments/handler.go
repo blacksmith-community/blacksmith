@@ -13,6 +13,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
+	"blacksmith/internal/ownname"
 	"blacksmith/pkg/http/response"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
@@ -54,6 +55,7 @@ type Handler struct {
 	loaded   <-chan struct{}
 	waiters  TaskWaiters
 	changes  *audit.ChangeStore
+	ownFile  string
 }
 
 // Dependencies contains all dependencies needed by the Deployments handler.
@@ -78,6 +80,9 @@ type Dependencies struct {
 	// Changes keeps a record of every instance restart and recreate
 	// attempt. A nil Changes keeps none.
 	Changes *audit.ChangeStore
+	// OwnNameFile is the file that names the broker's own deployment. It
+	// defaults to the instance file BOSH writes.
+	OwnNameFile string
 }
 
 // TaskWaiters reports the stored task that waits to reserve an instance,
@@ -112,7 +117,13 @@ type Stemcell struct {
 
 // NewHandler creates a new Deployments handler.
 func NewHandler(deps Dependencies) *Handler {
+	ownFile := deps.OwnNameFile
+	if ownFile == "" {
+		ownFile = ownname.InstanceFile
+	}
+
 	return &Handler{
+		ownFile:  ownFile,
 		logger:   deps.Logger,
 		config:   deps.Config,
 		vault:    deps.Vault,

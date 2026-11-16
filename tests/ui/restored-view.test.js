@@ -110,6 +110,7 @@ test('the real Refresh button moves the fetched time that a restored view shows'
     w.Date.now = () => now;
     await settle(200);
     stubFetch(w);
+    w.blacksmithDeploymentName = 'test-blacksmith';
     const content = mountVms(w, d);
     w.__T.markFetched(content);
     now = Date.parse('2026-11-01T10:30:00Z');

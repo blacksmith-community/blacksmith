@@ -383,7 +383,7 @@ func TestInstanceActionsBuildTheLegacyDeploymentName(t *testing.T) {
 func TestInstanceActionsRefuseInstancesTheBrokerDoesNotOwn(t *testing.T) {
 	t.Parallel()
 
-	for _, instanceID := range []string{"blacksmith", "cf", "9f9f-not-ours", ownedDeployment} {
+	for _, instanceID := range []string{literalBlacksmith, "cf", "9f9f-not-ours", ownedDeployment} {
 		t.Run(instanceID, func(t *testing.T) {
 			t.Parallel()
 

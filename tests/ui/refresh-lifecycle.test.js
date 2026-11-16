@@ -15,7 +15,7 @@ for(const [label,owner,section,container,method,path] of cases){
   const {w,d}=boot();await sleep(50);
   const root=d.getElementById(owner);root.classList.add('active');
   root.innerHTML=`<div class="entity-workspace" data-section="${section}"><div class="detail-content"><div class="${container}"><button id="refresh"><span>Refresh</span></button></div></div></div>`;
-  w.currentInstanceInfo={id:'one'};
+  w.currentInstanceInfo={id:'one'};w.blacksmithDeploymentName='test-blacksmith';
   let release;w.__routes.push([path,()=>new Promise(r=>release=()=>r({ok:true,json:async()=>[],text:async()=> '[]'}))]);
   const fn=w[method]||w.__T[method]; const event={currentTarget:d.getElementById('refresh')};
   const promise=owner==='services'?fn('one',event):fn(event);

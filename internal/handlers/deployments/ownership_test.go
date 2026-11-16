@@ -410,7 +410,7 @@ func TestOwnDeploymentChangeIsRefusedWithoutReadingTheIndex(t *testing.T) {
 func TestOnlyTheBrokersOwnNameIsReadable(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"blacksmith", "dev-blacksmith", ownDeployment + "-2", "x" + ownDeployment} {
+	for _, name := range []string{literalBlacksmith, "dev-blacksmith", ownDeployment + "-2", "x" + ownDeployment} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

@@ -3,10 +3,10 @@ package instances
 import (
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ownname"
 	"blacksmith/pkg/http/response"
 )
 
@@ -21,13 +21,22 @@ const (
 
 // Handler handles instance-related HTTP requests.
 type Handler struct {
-	logger interfaces.Logger
+	logger  interfaces.Logger
+	env     Environment
+	ownFile string
+}
+
+// Environment names the broker's environment.
+type Environment interface {
+	GetEnvironment() string
 }
 
 // NewHandler creates a new instance handler.
-func NewHandler(logger interfaces.Logger) *Handler {
+func NewHandler(logger interfaces.Logger, env Environment) *Handler {
 	return &Handler{
-		logger: logger,
+		logger:  logger,
+		env:     env,
+		ownFile: ownname.InstanceFile,
 	}
 }
 
@@ -49,21 +58,10 @@ func (h *Handler) GetInstanceDetails(writer http.ResponseWriter, req *http.Reque
 		instanceDetails["az"] = ""
 	}
 
-	// Read Deployment
-	data, err = os.ReadFile("/var/vcap/instance/deployment")
-	if err == nil {
-		deploymentName := strings.TrimSpace(string(data))
-		// If deployment name is just a GUID, provide a more user-friendly name
-		if isGUID(deploymentName) {
-			instanceDetails["deployment"] = serviceNameBlacksmith
-		} else {
-			instanceDetails["deployment"] = deploymentName
-		}
-	} else {
-		logger.Debug("unable to read deployment file: %s", err)
-
-		instanceDetails["deployment"] = serviceNameBlacksmith
-	}
+	// The deployment is the broker's own name, which the ownership gate
+	// resolves the same way. With no name it stays empty.
+	deploymentName, _ := ownname.Resolve(h.ownFile, h.environment())
+	instanceDetails["deployment"] = deploymentName
 
 	// Read Instance ID
 	data, err = os.ReadFile("/var/vcap/instance/id")
@@ -157,9 +155,10 @@ func (h *Handler) getBoshDNSFromHosts(instanceID string) string {
 	return ""
 }
 
-// isGUID checks if a string matches the GUID/UUID pattern.
-func isGUID(s string) bool {
-	guidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+func (h *Handler) environment() string {
+	if h.env == nil {
+		return ""
+	}
 
-	return guidRegex.MatchString(s)
+	return h.env.GetEnvironment()
 }

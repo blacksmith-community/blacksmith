@@ -63,7 +63,8 @@ function boot(opts={}){
   watchUncaught(w,errors);
   w.console.trace=keep; w.console.dir=keep; w.console.table=keep; w.console.group=keep; w.console.groupCollapsed=keep;
   w.console.assert=(ok,...a)=>{ if(!ok) keep(...a); };
-  w.__routes=(opts.routes||[]).slice();
+  // A broker that answers nothing else still names its own deployment, as a real one does, unless a suite scripts the answer.
+  w.__routes=[...(opts.routes||[]),[/\/b\/instance(\?|$)/,(u,o,j)=>j(200,{deployment:'test-blacksmith',id:'b'})]];
   const json=(status,body)=>Promise.resolve({ok:status>=200&&status<300,status,statusText:'st',json:()=>Promise.resolve(body),text:()=>Promise.resolve(typeof body==='string'?body:JSON.stringify(body))});
   w.fetch=(u,o={})=>{
     u=String(u); calls.push((o.method||'GET')+' '+u+(o.body?' '+o.body:''));

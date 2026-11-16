@@ -49,7 +49,7 @@ t('the config details view stays usable when the tabs element never loads',async
 
 t('a route subview names the missing detail view when the tabs element never loads',async()=>{
  const env=await start({noOat:true}); const {w,d}=env;
- w.__routes.push(['/b/deployments/blacksmith/manifest',(u,o,j)=>j(200,{text:'name: test',parsed:{name:'test',releases:[{name:'release',version:'1'}],stemcells:[],update:{canaries:1}}})]);
+ w.__routes.push(['/b/deployments/test-blacksmith/manifest',(u,o,j)=>j(200,{text:'name: test',parsed:{name:'test',releases:[{name:'release',version:'1'}],stemcells:[],update:{canaries:1}}})]);
  expect(w.customElements.get('bs-tabs')).toBeUndefined();
  let failure=null;
  try{ await w.blacksmithViews.activate({screen:'blacksmith',section:'manifest',subview:'versions'}); }catch(e){ failure=e; }

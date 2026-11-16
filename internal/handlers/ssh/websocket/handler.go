@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ownname"
 	"blacksmith/internal/services"
 	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/http/response"
@@ -32,6 +32,7 @@ var (
 	errServiceInstanceNotFound         = errors.New("service instance not found")
 	errVaultNotConfigured              = errors.New("vault not configured")
 	errBOSHDirectorNotConfigured       = errors.New("BOSH director not configured")
+	errNoOwnDeployment                 = errors.New("the broker has no own deployment name, from the instance file or the environment")
 	errManifestMissingInstanceGroups   = errors.New("manifest missing instance_groups")
 	errFirstInstanceGroupInvalidFormat = errors.New("first instance group has invalid format")
 	errFirstInstanceGroupMissingName   = errors.New("first instance group missing name field")
@@ -78,6 +79,7 @@ type Handler struct {
 	director         interfaces.Director
 	vault            interfaces.Vault
 	broker           interfaces.Broker
+	ownFile          string
 }
 
 // Dependencies contains all dependencies needed by the SSH WebSocket handler.
@@ -88,11 +90,20 @@ type Dependencies struct {
 	Director         interfaces.Director
 	Vault            interfaces.Vault
 	Broker           interfaces.Broker
+	// OwnNameFile is the file that names the broker's own deployment. It
+	// defaults to the instance file BOSH writes.
+	OwnNameFile string
 }
 
 // NewHandler creates a new SSH WebSocket handler.
 func NewHandler(deps Dependencies) *Handler {
+	ownFile := deps.OwnNameFile
+	if ownFile == "" {
+		ownFile = ownname.InstanceFile
+	}
+
 	return &Handler{
+		ownFile:          ownFile,
 		logger:           deps.Logger,
 		config:           deps.Config,
 		webSocketHandler: deps.WebSocketHandler,
@@ -196,17 +207,19 @@ func (h *Handler) handleBlacksmithSSH(writer http.ResponseWriter, req *http.Requ
 }
 
 func (h *Handler) resolveBlacksmithDeployment(ctx context.Context, logger interfaces.Logger) (string, string, error) {
-	deploymentName := h.readDeploymentNameFromInstanceFile(logger)
-	if deploymentName == "" {
-		env := strings.TrimSpace(h.config.GetEnvironment())
-		if env != "" {
-			deploymentName = env + "-blacksmith"
-		} else {
-			deploymentName = deploymentNameBlacksmith
-		}
-
-		logger.Debug("Using fallback deployment name: %s", deploymentName)
+	environment := ""
+	if h.config != nil {
+		environment = h.config.GetEnvironment()
 	}
+
+	deploymentName, named := ownname.Resolve(h.ownFile, environment)
+	if !named {
+		logger.Error("The broker's own deployment has no name, from the instance file or the environment")
+
+		return "", deploymentNameBlacksmith, errNoOwnDeployment
+	}
+
+	logger.Debug("Using the own deployment name: %s", deploymentName)
 
 	if h.director == nil {
 		logger.Error("BOSH director not configured for blacksmith SSH handler")
@@ -227,26 +240,6 @@ func (h *Handler) resolveBlacksmithDeployment(ctx context.Context, logger interf
 	}
 
 	return resolvedDeployment, instanceGroup, nil
-}
-
-func (h *Handler) readDeploymentNameFromInstanceFile(logger interfaces.Logger) string {
-	data, err := os.ReadFile("/var/vcap/instance/deployment")
-	if err != nil {
-		logger.Debug("Unable to read deployment name from instance file: %v", err)
-
-		return ""
-	}
-
-	deployment := strings.TrimSpace(string(data))
-	if deployment == "" {
-		logger.Debug("Deployment name file is empty")
-
-		return ""
-	}
-
-	logger.Debug("Read deployment name from instance file: %s", deployment)
-
-	return deployment
 }
 
 func (h *Handler) extractBlacksmithManifestMetadata(manifestYAML string, fallbackName string, logger interfaces.Logger) (string, string, error) {

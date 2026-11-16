@@ -17,6 +17,7 @@
   // detail value, showEmpty turns a held EMPTY into that markup, and
   // setCellText writes a value into an element, or the markup when it is empty.
   const EMPTY = '—';
+  const NO_OWN_DEPLOYMENT = 'the broker has not reported the name of its own deployment';
   const EMPTY_HTML = `<span class="empty-value">${EMPTY}</span>`;
   const isEmptyValue = (value) => value === null || value === undefined || value === '' || value === '-' || value === EMPTY;
   const showEmpty = (value) => (value === EMPTY ? EMPTY_HTML : value);
@@ -2930,7 +2931,7 @@
     const plans = Object.keys(data.plans || {}).length;
     const attention = instances.filter(hasVmAlert).length;
     const serviceTypes = groupServicesAndPlans(data).length;
-    const facts = [['Deployment',data.deployment || 'blacksmith'],['Environment',data.env || 'Not reported']];
+    const facts = [['Deployment',data.deployment || 'Not reported'],['Environment',data.env || 'Not reported']];
     const technical = [['BOSH DNS',data.boshDNS || 'Not reported']];
     for (const [service, fields] of Object.entries({BOSH:['address','username','network'],Vault:['address'],Broker:['username','port','bind_ip']})) {
       fields.forEach(key => { if (creds[service]?.[key] !== undefined) technical.push([`${service} ${key.replaceAll('_',' ')}`,creds[service][key]]); });
@@ -16910,7 +16911,8 @@
 
     try {
       // Use the stored deployment name
-      const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
+      const deploymentName = window.blacksmithDeploymentName;
+      if (!deploymentName) throw new Error(NO_OWN_DEPLOYMENT);
 
       // Fetch events
       const response = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
@@ -16996,7 +16998,8 @@
 
     try {
       // Use the stored deployment name
-      const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
+      const deploymentName = window.blacksmithDeploymentName;
+      if (!deploymentName) throw new Error(NO_OWN_DEPLOYMENT);
 
       // Fetch VMs
       const response = await fetch(`/b/deployments/${deploymentName}/vms`, { cache: 'no-cache' });
@@ -18613,7 +18616,8 @@
 
           // Get deployment name from the blacksmith instance data
           // This should already be available from the initial blacksmith status load
-          const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
+          const deploymentName = window.blacksmithDeploymentName;
+          if (!deploymentName) throw new Error(NO_OWN_DEPLOYMENT);
 
           const content = await fetchBlacksmithDetail(deploymentName, tabType, () => request === blacksmithRequestSequence);
           if (request !== blacksmithRequestSequence) return;
@@ -18676,13 +18680,13 @@
           if (instanceResponse.ok) {
             const instanceData = await instanceResponse.json();
             // Merge instance data with status data
-            data.deployment = instanceData.deployment || 'blacksmith';
+            data.deployment = instanceData.deployment || '';
             data.az = instanceData.az;
             data.instanceId = instanceData.id;
             data.instanceName = instanceData.name;
             data.boshDNS = instanceData.bosh_dns;
             // Store deployment name globally for tab handlers to use
-            window.blacksmithDeploymentName = instanceData.deployment || 'blacksmith';
+            window.blacksmithDeploymentName = instanceData.deployment || '';
 
             // Update the header with deployment name
             const deploymentNameEl = document.getElementById('deployment-name');
@@ -18694,8 +18698,8 @@
           }
         } catch (error) {
           console.error('Failed to fetch blacksmith instance details:', loggableError(error));
-          data.deployment = 'blacksmith'; // Fallback
-          window.blacksmithDeploymentName = 'blacksmith';
+          data.deployment = '';
+          window.blacksmithDeploymentName = '';
         }
 
         // Store status data for later use
