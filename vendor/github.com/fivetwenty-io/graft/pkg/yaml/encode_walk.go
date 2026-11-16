@@ -274,7 +274,13 @@ func (n *normalizer) key(k reflect.Value, path string) (any, error) {
 	case uint64:
 		return yamlcodec.PlainScalar(strconv.FormatUint(kv, 10)), nil
 	default:
-		return nil, refuse("Marshal does not support a map key of Go type %s, which %s holds", k.Type(), path)
+		// A key held in an any is named by the type it holds. A nil
+		// one normalizes to nil, so it never reaches this arm.
+		kt := k.Type()
+		if k.Kind() == reflect.Interface && !k.IsNil() {
+			kt = k.Elem().Type()
+		}
+		return nil, refuse("Marshal does not support a map key of Go type %s, which %s holds", kt, path)
 	}
 }
 

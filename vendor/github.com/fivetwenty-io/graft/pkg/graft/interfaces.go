@@ -2,6 +2,7 @@ package graft
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -54,15 +55,34 @@ type Expr struct {
 	// notation, as recovered by tree.BracketsOf. Only populated for
 	// Reference expressions; nil/empty for every other expression type.
 	BracketedNodes []bool
-	Call           *Opcall
-	Pos            Position
-	evaluator      *Evaluator // Optional evaluator for nested operator calls
+	// writtenNodes holds a Reference's nodes as the source wrote them,
+	// when the parser replaced a $NAME node with the variable's value.
+	// It is nil when no node changed. WrittenPath reads it.
+	writtenNodes []string
+	Call         *Opcall
+	Pos          Position
+	evaluator    *Evaluator // Optional evaluator for nested operator calls
 	// modifiers holds `:modifier` annotations parsed from the operator
 	// name position (e.g. the "nocache" in "(( vault:nocache ... ))").
 	// nil means none; access through SetModifier/HasModifier/GetModifiers
 	// so the zero value stays valid. Deliberately excluded from String()
 	// and from anything that feeds cache keys or error text.
 	modifiers map[string]bool
+}
+
+// WrittenPath returns a Reference's path as the source wrote it. A
+// $NAME node that the parser replaced with the variable's value is
+// written as $NAME again, so text that graft writes back out for a
+// later pass reads the variable then. It returns "" when e holds no
+// cursor.
+func (e *Expr) WrittenPath() string {
+	if e == nil || e.Reference == nil {
+		return ""
+	}
+	if e.writtenNodes != nil {
+		return (&tree.Cursor{Nodes: e.writtenNodes}).String()
+	}
+	return e.Reference.String()
 }
 
 // SetModifier records a `:modifier` annotation on the expression.
@@ -490,7 +510,7 @@ func (e *Expr) String() string {
 		return fmt.Sprintf("%v", e.Literal)
 	case Reference:
 		if e.Reference != nil {
-			return e.Reference.String()
+			return e.WrittenPath()
 		}
 		return "<nil reference>"
 	case OperatorCall:
@@ -598,8 +618,26 @@ func (e *Expr) Evaluate(treeData interface{}) (interface{}, error) {
 			return nil, fmt.Errorf("operator call evaluation requires an evaluator; use SetEvaluator() first")
 		}
 		if e.Call != nil {
-			resp, err := e.Call.Run(e.evaluator)
+			call := e.Call
+			here := e.evaluator.Here
+			if call.where == nil && here != nil {
+				// A nested call runs at the path of the call
+				// it sits in, as evaluateNestedOperator runs
+				// one, so an operator that reads ev.Here
+				// finds that path.
+				at := *call
+				at.where = here.Copy()
+				call = &at
+			}
+			resp, err := call.Run(e.evaluator)
 			if err != nil {
+				// The call this one sits in names the same
+				// path in its own error, so only the cause is
+				// kept here and the path appears once.
+				var perr *PathError
+				if here != nil && errors.As(err, &perr) && perr.Path == here.String() {
+					err = perr.Cause
+				}
 				return nil, err
 			}
 			return resp.Value, nil
@@ -613,7 +651,9 @@ func (e *Expr) Evaluate(treeData interface{}) (interface{}, error) {
 			if e.evaluator != nil && e.Left.evaluator == nil {
 				e.Left.SetEvaluator(e.evaluator)
 			}
-			left, err := e.Left.Evaluate(treeData)
+			left, err := orOperand(e.Left, func(x *Expr) (interface{}, error) {
+				return x.Evaluate(treeData)
+			})
 			if err == nil {
 				// Return the value even if it's nil
 				return left, nil
@@ -621,6 +661,9 @@ func (e *Expr) Evaluate(treeData interface{}) (interface{}, error) {
 			if pending.StopsFallback(err) {
 				return nil, err
 			}
+		}
+		if pruneFallback(e.Right, e.evaluator) {
+			return nil, nil
 		}
 		if e.Right != nil {
 			// Propagate evaluator to right side before evaluating

@@ -27,6 +27,12 @@ var (
 	sortRx     = regexp.MustCompile(`^\s*\Q((\E\s*sort(?:\s+by\s+(.*?))?\s*\Q))\E$`)
 	keyMergeRx = regexp.MustCompile(`^\Q((\E\s*merge(?:\s+on\s+(.*?))?\s*\Q))\E$`)
 
+	// pruneEntryRx matches a list entry that is a (( prune )) call and
+	// nothing more. pruneRx, which matches any string that starts with
+	// the call, is for map values and for an inline merge's entries that
+	// line up with an original entry, where spruce matches the same way.
+	pruneEntryRx = regexp.MustCompile(`^\s*\Q((\E\s*prune\s*\Q))\E\s*$`)
+
 	mergeRegEx                = regexp.MustCompile(`^\Q((\E\s*merge\s*\Q))\E$`)
 	mergeOnKeyRegEx           = regexp.MustCompile(`^\Q((\E\s*merge\s+(on)\s+(.+)\s*\Q))\E$`)
 	replaceRegEx              = regexp.MustCompile(`^\Q((\E\s*replace\s*\Q))\E$`)
@@ -644,6 +650,12 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 
 	// Process the modifications definitions that were found in the new list
 	for i, modificationDefinition := range modificationDefinitions {
+		// A list that a prepend, an append, an insert, or a replace
+		// adds drops its (( prune )) entries, since no entry of the
+		// original list sits at their place for them to prune.
+		if op := modificationDefinition.listOp; op == listOpInsert || op == listOpReplace {
+			modificationDefinition.list = withoutPruneEntries(modificationDefinition.list)
+		}
 		log.DEBUG("  #%d %#v", i, modificationDefinition)
 		log.DEBUG("  modification: op=%v, key=%v, name=%v, index=%v, list_len=%d",
 			modificationDefinition.listOp, modificationDefinition.key, modificationDefinition.name,
@@ -811,8 +823,9 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 		}
 
 		if modificationDefinition.listOp != listOpDelete {
-			log.DEBUG("%s: inserting %d new elements to existing array at index %d", node, len(modificationDefinition.list), idx)
-			result = insertIntoList(result, idx, modificationDefinition.list)
+			list := modificationDefinition.list
+			log.DEBUG("%s: inserting %d new elements to existing array at index %d", node, len(list), idx)
+			result = insertIntoList(result, idx, list)
 		} else {
 			log.DEBUG("%s: deleting element at array index %d", node, idx)
 			result = deleteIndexFromList(result, idx)
@@ -849,7 +862,7 @@ func (m *Merger) mergeArrayDefault(orig, n []interface{}, at mergePath) []interf
 	}
 
 	if m.AppendByDefault {
-		return append(orig, n...)
+		return append(orig, withoutPruneEntries(n)...)
 	}
 	return m.mergeArrayInline(orig, n, at)
 }
@@ -898,9 +911,18 @@ func (m *Merger) mergeArrayInline(orig, n []interface{}, at mergePath) []interfa
 			}
 		}
 
-		// Add any additional elements from the new array that are beyond the original array's length
+		// Add any additional elements from the new array that are
+		// beyond the original array's length. Such an entry prunes
+		// nothing, so only a whole (( prune )) call is dropped.
 		for i := len(orig); i < len(n); i++ {
-			if !prunedIndices[i] {
+			switch {
+			case isPruneEntry(n[i]):
+			case prunedIndices[i]:
+				// More text follows the call, so the entry
+				// is a plain string, which mergeObj would
+				// take for a prune call.
+				merged = append(merged, n[i])
+			default:
 				mergedItem := m.mergeObj(nil, n[i], at.index(i))
 				merged = append(merged, mergedItem)
 			}
@@ -1153,6 +1175,37 @@ func getArrayModifications(obj []interface{}, simpleList bool) []ModificationDef
 	}
 
 	return result
+}
+
+// isPruneEntry reports whether the list entry e is a (( prune )) call.
+// An entry with more text after the call is a plain string.
+func isPruneEntry(e interface{}) bool {
+	s, ok := e.(string)
+	return ok && pruneEntryRx.MatchString(s)
+}
+
+// withoutPruneEntries returns list without its (( prune )) entries. A
+// list a merge adds to another, rather than merging entry by entry,
+// drops them this way, so each one goes and every other entry stays,
+// however many the list holds. list is returned as it is when it holds
+// none.
+func withoutPruneEntries(list []interface{}) []interface{} {
+	var out []interface{}
+	for i, e := range list {
+		if isPruneEntry(e) {
+			if out == nil {
+				out = append(make([]interface{}, 0, len(list)), list[:i]...)
+			}
+			continue
+		}
+		if out != nil {
+			out = append(out, e)
+		}
+	}
+	if out == nil {
+		return list
+	}
+	return out
 }
 
 // containsMapEntry reports whether list has any map[string]interface{}

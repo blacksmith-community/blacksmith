@@ -104,11 +104,8 @@ func (ev *Evaluator) exprReadsLiteral(e *Expr) bool {
 		if e.Reference == nil {
 			return false
 		}
-		if strings.Contains(e.Reference.String(), "$") {
-			// The path holds an environment variable that is expanded
-			// when the operator runs, so it can point anywhere.
-			return true
-		}
+		// A $NAME node took its value when the reference was parsed, so
+		// the path is the one the operator reads.
 		return ev.pathReadsLiteral(e.Reference)
 	case Literal:
 		s, ok := e.Literal.(string)

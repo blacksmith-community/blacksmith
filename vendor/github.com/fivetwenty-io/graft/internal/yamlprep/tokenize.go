@@ -26,10 +26,13 @@ import (
 // tabs stay as they are.
 //
 // A plain << key with a tab before or after its colon is a merge key, as
-// it is with a space there, as mergeKeysBeforeTabs describes.
+// it is with a space there, as mergeKeysBeforeTabs describes, and a <<
+// key tagged !!merge or !!str reads as YAML 1.1 reads it, as
+// taggedMergeKeys describes.
 func Tokenize(src string) token.Tokens {
 	toks := tokenize(src)
 	mergeKeysBeforeTabs(src, toks)
+	taggedMergeKeys(toks)
 	return toks
 }
 
@@ -106,6 +109,55 @@ func mayHoldTabbedMergeKey(src string) bool {
 			return false
 		}
 		i += 2 + next
+	}
+	return false
+}
+
+// taggedMergeKeys makes the << of "? !!merge <<" a merge key and the <<
+// of "!!str <<" a plain string, as YAML 1.1 reads them. Both tags stay
+// in toks, and no token moves.
+//
+// goccy reads the << of "? !!merge <<" as a string, so the tag finds no
+// merge key to go with and the parse fails, and it reads the << of
+// "!!str <<:" as a merge key, which a !!str tag cannot hold. A << counts
+// when it is plain and sits right after its tag on the tag's line. A
+// !!merge tag counts only right after a "?", since goccy already reads
+// "!!merge <<:" in a block or flow mapping as a merge key, and a !!str
+// tag counts there too or when its << ends at a colon. Any other tag on
+// << stays as goccy reads it.
+func taggedMergeKeys(toks token.Tokens) {
+	for i := range toks {
+		if !isTaggedMergeKey(toks, i) {
+			continue
+		}
+		key := toks[i+1]
+		if toks[i].Value == "!!str" {
+			key.Type, key.CharacterType, key.Indicator = token.StringType, token.CharacterTypeMiscellaneous, token.NotIndicator
+			continue
+		}
+		merge := token.MergeKey(key.Origin, key.Position)
+		key.Type, key.CharacterType, key.Indicator = merge.Type, merge.CharacterType, merge.Indicator
+	}
+}
+
+// isTaggedMergeKey reports whether toks[i] is a !!merge or !!str tag
+// whose << taggedMergeKeys changes, as it describes.
+func isTaggedMergeKey(toks token.Tokens, i int) bool {
+	tag := toks[i]
+	if tag.Type != token.TagType || i+1 >= len(toks) {
+		return false
+	}
+	key := toks[i+1]
+	if key.Value != "<<" || (key.Type != token.MergeKeyType && key.Type != token.StringType) ||
+		key.Position.Line != tag.Position.Line {
+		return false
+	}
+	explicit := i > 0 && toks[i-1].Type == token.MappingKeyType
+	switch tag.Value {
+	case "!!merge":
+		return explicit
+	case "!!str":
+		return explicit || (i+2 < len(toks) && toks[i+2].Type == token.MappingValueType)
 	}
 	return false
 }

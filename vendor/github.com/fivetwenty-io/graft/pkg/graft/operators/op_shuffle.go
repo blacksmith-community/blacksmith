@@ -21,9 +21,16 @@ func (ShuffleOperator) Phase() OperatorPhase {
 	return EvalPhase
 }
 
-// Dependencies returns what keys the operator depends on.
-func (ShuffleOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor, auto []*tree.Cursor) []*tree.Cursor {
-	return auto
+// Dependencies returns what the operator depends on. shuffle reads its
+// whole argument, so it waits for every operator under the path it
+// reads, on either side of a ||, as flatten does.
+func (ShuffleOperator) Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cursor, auto []*tree.Cursor) []*tree.Cursor {
+	deps := make([]*tree.Cursor, 0, len(auto))
+	deps = append(deps, auto...)
+	for _, arg := range args {
+		deps = append(deps, readDeps(ev, arg, locs, true)...)
+	}
+	return deps
 }
 
 // Run executes the shuffle operator.

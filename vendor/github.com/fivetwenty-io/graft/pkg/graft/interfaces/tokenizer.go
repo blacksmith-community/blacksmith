@@ -320,12 +320,13 @@ func matchReferencePath(runes []rune, leadingSlash bool) (bool, int) {
 			// as it does after a '.', so "x/b+c" is one key while "x/b+1"
 			// still adds. A '$' name after the '/' stays in the path too,
 			// as it does after a '.', so "a/$X" is the one key "a/$X".
-			// That segment does not start with '$', so ResolveEnv leaves
-			// it literal, which is how spruce reads it. A '+' name after
-			// the '$' name continues the segment the same way, so
-			// "a/$X+y" is one key. A segment that starts with a digit
-			// keeps an exponent's '+', so "x/1e+5" is one key, and a '+'
-			// name after it, as before, so "pg/0+meta" is one key.
+			// That segment does not start with '$', so the substitution
+			// made when the reference is parsed leaves it literal, which
+			// is how spruce reads it. A '+' name after the '$' name
+			// continues the segment the same way, so "a/$X+y" is one
+			// key. A segment that starts with a digit keeps an
+			// exponent's '+', so "x/1e+5" is one key, and a '+' name
+			// after it, as before, so "pg/0+meta" is one key.
 			sawSlash = true
 			pos++ // consume '/'
 			switch {
@@ -397,15 +398,15 @@ func matchReferencePath(runes []rune, leadingSlash bool) (bool, int) {
 				// "X.$ENV.field" - spruce substitutes $VAR anywhere in a
 				// dotted reference path, not only as the reference's
 				// leading segment (the case == '$' branch above, which
-				// this mirrors). ResolveEnv (operators/types.go) already
-				// substitutes every "$..."-prefixed Reference.Nodes entry
-				// wherever it appears, not just the first, so matching the
-				// run as part of this one reference token is the only
-				// change needed. An invalid name (no identifier
-				// immediately after '$') leaves pos unadvanced, falling
-				// through the outer loop's default case below and
-				// stopping the match at the dot, same as any other
-				// invalid continuation.
+				// this mirrors). The parser substitutes every
+				// "$..."-prefixed Reference.Nodes entry when it parses the
+				// reference, wherever the entry appears, not just the
+				// first, so matching the run as part of this one reference
+				// token is the only change needed. An invalid name (no
+				// identifier immediately after '$') leaves pos
+				// unadvanced, falling through the outer loop's default
+				// case below and stopping the match at the dot, same as
+				// any other invalid continuation.
 				if pos+1 < len(runes) && isIdentifierStart(runes[pos+1]) {
 					pos++ // consume '$'
 					for pos < len(runes) && isIdentifierContinue(runes[pos]) {

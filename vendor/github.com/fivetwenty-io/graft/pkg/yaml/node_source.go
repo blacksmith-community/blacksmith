@@ -15,9 +15,12 @@ import (
 // tokenOwners records, for the syntax tree Decode builds from a Node
 // tree, the Node each token came from, so the decode can hand an
 // Unmarshaler the very node that holds its value. A node reached through
-// an alias is recorded as the node that holds the anchor.
+// an alias is recorded as the node that holds the anchor. written holds
+// the pairs the text wrote in each mapping that OnDuplicateKey folded,
+// which the tree holds in place of the fold, as writtenPairs describes.
 type tokenOwners struct {
 	byToken map[*token.Token]*Node
+	written writtenPairs
 }
 
 // add records tk as a token of n.
@@ -68,9 +71,13 @@ func (n *Node) trackedSource(owners *tokenOwners) source {
 // So Decode parses the document again, once for the whole tree, to learn
 // how Unmarshal read each scalar. The tree's lines count from the start
 // of the stream, which is lineOffset lines before the start of doc.
+// With dups set, a document that repeats a key is parsed too, as the
+// hooked decode needs, since Unmarshal reads such a document when
+// OnDuplicateKey is set.
 type readText struct {
 	doc        []byte
 	lineOffset int
+	dups       bool
 	once       sync.Once
 	scalars    map[[2]int][]*parsedScalar
 }
@@ -139,7 +146,8 @@ func (r *readText) scalar(line, col int, value string, block, collection bool) *
 // block scalar that the document's last line ends, whose value the added
 // line break can change, so it takes the value Unmarshal reads for it
 // from the document as it is. A document the parser refuses records
-// nothing, so Decode falls back on the tree.
+// nothing, so Decode falls back on the tree. The parser refuses a
+// document that repeats a key unless dups is set.
 func (r *readText) parse() {
 	r.scalars = make(map[[2]int][]*parsedScalar)
 	prepared, _ := yamlprep.Prepare(r.doc)
@@ -147,12 +155,12 @@ func (r *readText) parse() {
 	if !bytes.HasSuffix(prepared, []byte("\n")) {
 		text = append(prepared[:len(prepared):len(prepared)], '\n')
 	}
-	read, ok := scalarsOf(text)
+	read, ok := scalarsOf(text, r.dups)
 	if !ok {
 		return
 	}
 	if len(text) != len(prepared) {
-		readLastBlockAsIs(read, prepared)
+		readLastBlockAsIs(read, prepared, r.dups)
 	}
 	for _, s := range read {
 		r.scalars[s.pos] = append(r.scalars[s.pos], s.scalar)
@@ -165,13 +173,13 @@ func (r *readText) parse() {
 // of a block changes its value when the block keeps its final line
 // breaks, or when that line holds only blanks but more of them than the
 // block's indentation. The value stays when the parser refuses doc or
-// places its last block scalar elsewhere.
-func readLastBlockAsIs(read []placedScalar, doc []byte) {
+// places its last block scalar elsewhere. dups is as scalarsOf takes it.
+func readLastBlockAsIs(read []placedScalar, doc []byte, dups bool) {
 	last := len(read) - 1
 	if last < 0 || !read[last].scalar.block {
 		return
 	}
-	asIs, ok := scalarsOf(doc)
+	asIs, ok := scalarsOf(doc, dups)
 	if !ok || len(asIs) == 0 {
 		return
 	}
@@ -188,9 +196,13 @@ type placedScalar struct {
 
 // scalarsOf parses doc and returns its first document's scalars in the
 // order the syntax tree holds them, and false when the parser refuses
-// doc.
-func scalarsOf(doc []byte) ([]placedScalar, bool) {
-	file, err := yamlnode.ParseBytes(doc, 0)
+// doc. With dups set, the parser takes a document that repeats a key.
+func scalarsOf(doc []byte, dups bool) ([]placedScalar, bool) {
+	parse := yamlnode.ParseBytes
+	if dups {
+		parse = yamlnode.ParseBytesWithDuplicates
+	}
+	file, err := parse(doc, 0)
 	if err != nil {
 		return nil, false
 	}

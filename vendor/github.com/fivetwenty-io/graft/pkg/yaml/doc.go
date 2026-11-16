@@ -115,7 +115,11 @@ Node reads the values a decode of the text reads.
 yaml.v2 agrees with graft about the order of a list and about a key written
 before or after the <<. yaml.v3 also lets an earlier map in the list win,
 but a key written in the mapping always wins over a merged value there,
-wherever the << sits.
+wherever the << sits. goccy's own decoder lets a later map in the list win
+when it decodes to an interface value, and it refuses the list for a typed
+map or a struct, so a program that moves to this package from goccy keeps
+the value of the first map that holds a key, as spruce and the YAML merge
+key specification do.
 
 A time.Time target accepts a quoted date such as "2001-12-14". yaml.v2 and
 yaml.v3 refuse a quoted date that is not RFC 3339.
@@ -234,6 +238,33 @@ on it returns the method's own error, so errors.Is and errors.As reach it.
 Error never prints that cause. If goccy's own decode of the document fails
 first, no method runs, and that error comes back even when a method would
 also have failed.
+
+# Editing a file in place
+
+A Document, from ParseDocument, holds a file as the bytes it was read from,
+and Set and Delete change only the bytes they name. Comments, blank lines,
+quoting, and line breaks everywhere else stay as written, so a program can
+change a value in a file that people maintain by hand without reformatting
+it. A path names a node as graft's cursor paths do, such as "jobs.name=web",
+and Get returns the Node it names. Set replaces one scalar, and Delete
+removes one mapping entry or sequence item with its own comment lines. Both
+parse the edited text again and refuse unless nothing else in the document
+changed. A refusal wraps ErrUnsupportedEdit, ErrPathNotFound,
+ErrInvalidPath, or ErrAmbiguousPath, and it leaves the bytes as they were.
+A Document never adds a key. Set refuses a tagged or anchored value, and
+Delete refuses an anchor that an alias still needs. Both methods refuse an
+input that holds a carriage return or a tab on a line the edit touches.
+This Document is not pkg/graft's Document, which holds decoded values.
+
+# Comparing two inputs
+
+Diff compares two YAML or JSON inputs, each of which may hold several
+documents, and returns the report that graft diff prints. Changes lists
+each difference with a path in the cursor syntax, a kind, and the nodes on
+either side, and Write prints the report in the layout graft diff uses.
+Comments and scalar styles do not count as differences. A failure to
+parse comes back as a *DecodeError, and inputs that Diff can't compare
+come back as a *DiffError.
 
 # Known limitations
 

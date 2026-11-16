@@ -35,21 +35,20 @@ func (StringifyOperator) Dependencies(ev *Evaluator, args []*Expr, locs []*tree.
 	deps = append(deps, auto...)
 
 	for _, arg := range args {
-		if arg == nil || arg.Type != Reference || arg.Reference == nil {
+		if arg == nil || arg.Type != Reference {
 			continue
 		}
-		canon, err := arg.Reference.Canonical(ev.Tree)
-		if err != nil {
-			continue
-		}
-		for _, other := range locs {
-			if other.Under(canon) {
-				deps = append(deps, other)
-			}
-		}
+		deps = append(deps, locsUnder(ev, arg.Reference, locs)...)
 	}
 
 	return deps
+}
+
+// SoftDependencies returns the operators above a key that will be
+// pruned, so stringify finds the key in the map that holds it and leaves it
+// out. See prunedKeyHolders.
+func (StringifyOperator) SoftDependencies(ev *Evaluator, _ []*Expr, locs []*tree.Cursor) []*tree.Cursor {
+	return prunedKeyHolders(ev, locs)
 }
 
 // Run ...
@@ -105,6 +104,13 @@ func (StringifyOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			Type:  Replace,
 			Value: n,
 		}, nil
+	}
+
+	// A key that will be pruned is not in the output, so it is left out
+	// here too, as grab and join leave it out. An environment value is
+	// left as it is, since no prune can reach it.
+	if !fromEnv {
+		val = withoutPrunedKeys(ev, val)
 	}
 
 	// For complex types, use the shared YAML marshal so stringified

@@ -440,36 +440,12 @@ func (m *mergeBuilderImpl) Execute() (Document, error) {
 
 		if useArrayOperators || hasArraysWithMaps || hasPruneOps {
 			// Process through merger for validation and/or array operators
-			mergerInstance := &merger.Merger{
-				AppendByDefault: m.fallbackAppend,
-			}
-
-			// Set memory tracker if available from the engine. Routed
-			// through GetMemoryTracker() (which returns a true nil, not an
-			// interface wrapping a nil *DocumentMemory) rather than a
-			// *DefaultEngine type assertion, so this matches the two other
-			// tracker-discovery sites in this file (prepareFirstDocument,
-			// performLegacyMerge) instead of duplicating the lookup.
+			var tracker interfaces.MemoryTracker
 			if m.engine != nil {
-				if tracker := m.engine.GetMemoryTracker(); tracker != nil && tracker.IsEnabled() {
-					mergerInstance.SetMemoryTracker(tracker)
-				}
+				tracker = m.engine.GetMemoryTracker()
 			}
-
-			// Create an empty base and merge our document into it
-			// This triggers the array validation logic
-			base := make(map[string]interface{})
-			err := mergerInstance.Merge(base, data)
+			base, err := mergeLoneDocument(data, m.fallbackAppend, tracker)
 			if err != nil {
-				// Convert merger.MultiError to graft.MultiError for consistent error formatting
-				var mergerMultiErr merger.MultiError
-				if errors.As(err, &mergerMultiErr) {
-					graftMultiErr := &MultiError{}
-					for _, e := range mergerMultiErr.Errors {
-						graftMultiErr.Append(e)
-					}
-					return nil, graftMultiErr
-				}
 				return nil, err
 			}
 
@@ -993,6 +969,40 @@ func (m *mergeBuilderImpl) recordPriorCalcValue(path []string, value interface{}
 	m.priorCalcValues[strings.Join(path, ".")] = value
 }
 
+// mergeLoneDocument merges data onto an empty map with the merger, the
+// step a merge of one document takes, which resolves its array markers,
+// drops its (( prune )) list entries, and checks its lists. tracker,
+// when it is enabled, records what the merger changes.
+func mergeLoneDocument(data map[string]interface{}, appendByDefault bool, tracker interfaces.MemoryTracker) (map[string]interface{}, error) {
+	mergerInstance := &merger.Merger{AppendByDefault: appendByDefault}
+	if tracker != nil && tracker.IsEnabled() {
+		mergerInstance.SetMemoryTracker(tracker)
+	}
+	base := make(map[string]interface{})
+	if err := mergerInstance.Merge(base, data); err != nil {
+		// Convert merger.MultiError to graft.MultiError for consistent
+		// error formatting.
+		var mergerMultiErr merger.MultiError
+		if errors.As(err, &mergerMultiErr) {
+			graftMultiErr := &MultiError{}
+			for _, e := range mergerMultiErr.Errors {
+				graftMultiErr.Append(e)
+			}
+			return nil, graftMultiErr
+		}
+		return nil, err
+	}
+	return base, nil
+}
+
+// holdsListWork reports whether a merge of data alone would run it
+// through the merger for its lists, because a list holds an array
+// marker or a map. A (( prune )) entry alone does not count here.
+func holdsListWork(data map[string]interface{}) bool {
+	var m mergeBuilderImpl
+	return m.hasArrayOperators(data) || m.hasArraysWithMaps(data)
+}
+
 // hasArrayOperators checks if a map contains arrays with merge operators.
 func (m *mergeBuilderImpl) hasArrayOperators(data map[string]interface{}) bool {
 	for _, value := range data {
@@ -1090,32 +1100,32 @@ func (m *mergeBuilderImpl) hasArraysWithMaps(data map[string]interface{}) bool {
 	return false
 }
 
-// hasPruneOperators checks if a map contains prune operators.
+// hasPruneOperators checks if a map contains prune operators, at any
+// depth and in any list, spelled the way the merger matches them.
 func (m *mergeBuilderImpl) hasPruneOperators(data map[string]interface{}) bool {
 	for _, value := range data {
-		switch v := value.(type) {
-		case string:
-			// Check if it's a prune operator
-			if strings.TrimSpace(v) == "(( prune ))" {
+		if hasPruneValue(value) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasPruneValue reports whether v is a (( prune )) call or holds one.
+func hasPruneValue(v interface{}) bool {
+	switch t := v.(type) {
+	case string:
+		return isPruneCall(t)
+	case map[string]interface{}:
+		for _, e := range t {
+			if hasPruneValue(e) {
 				return true
 			}
-		case map[string]interface{}:
-			// Recursively check nested maps
-			if m.hasPruneOperators(v) {
+		}
+	case []interface{}:
+		for _, e := range t {
+			if hasPruneValue(e) {
 				return true
-			}
-		case []interface{}:
-			// Check arrays for prune operators
-			for _, item := range v {
-				if str, ok := item.(string); ok && strings.TrimSpace(str) == "(( prune ))" {
-					return true
-				}
-				// Also check if array contains maps with prune operators
-				if mapItem, ok := item.(map[string]interface{}); ok {
-					if m.hasPruneOperators(mapItem) {
-						return true
-					}
-				}
 			}
 		}
 	}
@@ -1647,7 +1657,9 @@ func (m *mergeBuilderImpl) applyCherryPicking(doc Document) (Document, error) {
 func (m *mergeBuilderImpl) applyEvaluation(doc Document) (Document, error) {
 	// Use the engine's evaluate method if available
 	if m.engine != nil {
-		evalCtx := m.ctx
+		// The merge has already handled the (( prune )) entries in
+		// the result's lists.
+		evalCtx := withMerged(m.ctx)
 		// Continue this merge's run (see applyPostProcessing). Only this
 		// context, which never leaves Evaluate, carries the run state.
 		if m.runState != nil {
@@ -1662,6 +1674,12 @@ func (m *mergeBuilderImpl) applyEvaluation(doc Document) (Document, error) {
 		if len(m.priorCalcValues) > 0 {
 			evalCtx = WithPriorCalcValues(evalCtx, m.priorCalcValues)
 		}
+		// The --prune keys, which applyPruning removes only
+		// after evaluation, so join can leave them out of a map
+		// as grab does.
+		if len(m.pruneKeys) > 0 {
+			evalCtx = withCallerPrunes(evalCtx, m.pruneKeys)
+		}
 		return m.engine.Evaluate(evalCtx, doc)
 	}
 
@@ -1673,9 +1691,11 @@ func (m *mergeBuilderImpl) applyEvaluation(doc Document) (Document, error) {
 
 	// Create evaluator
 	evaluator := &Evaluator{
-		Tree:        data,
-		PriorValues: m.priorCalcValues,
-		Sources:     GetSourceRefs(m.ctx),
+		Tree:         data,
+		PriorValues:  m.priorCalcValues,
+		Sources:      GetSourceRefs(m.ctx),
+		ctx:          m.ctx,
+		callerPrunes: m.pruneKeys,
 	}
 
 	// Run evaluation - pass cherry-pick keys as the "picks" parameter

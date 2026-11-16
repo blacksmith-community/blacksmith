@@ -118,6 +118,9 @@ func (w *textWalk) node(n ast.Node, t reflect.Type) ast.Node {
 		}
 		return n
 	}
+	if k := t.Kind(); k == reflect.Struct || k == reflect.Map {
+		n = untagMapping(n)
+	}
 	switch t.Kind() {
 	case reflect.String:
 		return scalarText(n)
@@ -130,6 +133,29 @@ func (w *textWalk) node(n ast.Node, t reflect.Type) ast.Node {
 			return w.sequence(seq, t.Elem())
 		}
 	default:
+	}
+	return n
+}
+
+// untagMapping returns the mapping under a tag, or under an anchor that
+// wraps a tag, since goccy fills a struct or a map from a mapping and
+// refuses a tag node in its place. It returns any other node as it is.
+// An anchor comes back as a copy that holds the mapping, so the caller's
+// tree stays as it was.
+func untagMapping(n ast.Node) ast.Node {
+	switch v := n.(type) {
+	case *ast.TagNode:
+		if m, ok := v.Value.(*ast.MappingNode); ok {
+			return m
+		}
+	case *ast.AnchorNode:
+		if t, ok := v.Value.(*ast.TagNode); ok {
+			if m, ok := t.Value.(*ast.MappingNode); ok {
+				c := *v
+				c.Value = m
+				return &c
+			}
+		}
 	}
 	return n
 }
@@ -313,7 +339,7 @@ func (w *textWalk) structKeys(t reflect.Type) *structKeys {
 			continue
 		}
 		name, opts, _ := strings.Cut(fieldTag(f), ",")
-		if hasOption(opts, "inline") {
+		if inlineOption(opts) {
 			w.addInline(got, i, f.Type)
 			continue
 		}
@@ -372,13 +398,13 @@ func (w *textWalk) addInline(keys *structKeys, i int, ft reflect.Type) {
 	}
 }
 
-// hasOption reports whether the comma-separated tag options opts hold
-// want.
-func hasOption(opts, want string) bool {
+// inlineOption reports whether the comma-separated tag options opts
+// hold inline.
+func inlineOption(opts string) bool {
 	for opts != "" {
 		var opt string
 		opt, opts, _ = strings.Cut(opts, ",")
-		if opt == want {
+		if opt == "inline" {
 			return true
 		}
 	}

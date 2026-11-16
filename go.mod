@@ -7,7 +7,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/fivetwenty-io/boshapi v0.283.10
 	github.com/fivetwenty-io/capi/v3 v3.236.1
-	github.com/fivetwenty-io/graft v1.47.0
+	github.com/fivetwenty-io/graft v1.49.1
 	github.com/fivetwenty-io/osbapi/v2 v2.0.5
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
@@ -66,6 +66,7 @@ require (
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/jhunt/go-querytron v0.0.0-20190121150331-d03b28210bbc // indirect
 	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect
 	github.com/nats-io/nats.go v1.55.0 // indirect
@@ -74,6 +75,7 @@ require (
 	github.com/nxadm/tail v1.4.11 // indirect
 	github.com/pborman/uuid v1.2.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
+	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect

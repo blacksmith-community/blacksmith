@@ -103,14 +103,22 @@ type Layout struct {
 	// IndentSequence writes a sequence under a mapping key Indent columns
 	// past the key, and a root sequence Indent columns in.
 	IndentSequence bool
+	// DocumentStart writes a "---" line before the document.
+	DocumentStart bool
 }
 
 // indent is the indent the layout asks for, with the zero value read as 2.
 func (l Layout) indent() int {
-	if l.Indent == 0 {
+	return effectiveIndent(l.Indent)
+}
+
+// effectiveIndent returns the indent a layout asks for, with 0 meaning
+// the default of two spaces.
+func effectiveIndent(indent int) int {
+	if indent == 0 {
 		return scalarBestIndent
 	}
-	return l.Indent
+	return indent
 }
 
 // MarshalYAMLTypedLayout is MarshalYAMLTyped with the indentation layout
@@ -146,6 +154,9 @@ func marshalYAML(v interface{}, comments []YAMLHeadComment, less func(a, b strin
 	}
 
 	var buf bytes.Buffer
+	if layout.DocumentStart {
+		buf.WriteString("---\n")
+	}
 	ye := yaml.NewEncoder(&buf, opts...)
 	if err := ye.Encode(prepared); err != nil {
 		return nil, err
@@ -502,6 +513,12 @@ func (e *scalarEncoder) prepareKey(k string, m int, value interface{}) (interfac
 		return k, e.layout.mapValuePosition(m, len(k)), true
 	}
 	style := timestampStyle(k, e.quoteTimestamps, true)
+	if k == "<<" {
+		// Genuine merge keys are resolved on read, so a "<<" key that
+		// reaches the encoder is a string. Bare, the next read would
+		// take it for a merge key, so it keeps its quotes.
+		style = doubleQuotedScalarStyle
+	}
 	text, simple := renderSimpleKeyAs(k, style, m, e.layout.indent())
 	if !simple && e.quoteTimestamps && fitsQuotedKey(k) {
 		// goccy's parser misreads some explicit "? key" forms, such as a

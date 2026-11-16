@@ -106,34 +106,38 @@ var publicKinds = [...]Kind{
 // of data with graft's YAML reader and copies it into out. Empty input,
 // or input that holds only comments, leaves out unchanged. data starts
 // lineOffset lines into its stream, so each Node's Line, each error, and
-// each duplicate key reported count from the start of that stream.
-func decodeNode(data []byte, out *Node, opts DecodeOptions, lineOffset int) error {
+// each duplicate key reported count from the start of that stream. When
+// last is set, it moves each pair that OnDuplicateKey keeps to the place
+// of its last repeat and returns the pairs the text wrote in each
+// mapping it folded, as collapseDuplicates describes.
+func decodeNode(data []byte, out *Node, opts DecodeOptions, lineOffset int, last bool) (writtenPairs, error) {
 	doc, err := yamlcodec.FirstMergeDocument(data)
 	if err != nil {
-		return shiftError(translate(err), lineOffset)
+		return nil, shiftError(translate(err), lineOffset)
 	}
 	docs, err := yamlnode.Parse(doc)
 	if err != nil {
-		return shiftError(translate(err), lineOffset)
+		return nil, shiftError(translate(err), lineOffset)
 	}
 	if len(docs) == 0 {
-		return nil
+		return nil, nil
 	}
 	lines := bytes.Split(doc, []byte("\n"))
 	c := &converter{
 		seen: make(map[*yamlnode.Node]*Node), opts: opts, lines: lines, lineOffset: lineOffset,
-		text: &readText{doc: doc, lineOffset: lineOffset},
+		text: &readText{doc: doc, lineOffset: lineOffset, dups: last},
 	}
 	var root Node
 	c.fill(&root, docs[0])
+	var written writtenPairs
 	if opts.OnDuplicateKey != nil {
-		collapseDuplicates(&root, opts.OnDuplicateKey)
+		written = collapseDuplicates(&root, opts.OnDuplicateKey, last)
 	}
 	if line := documentLine(data); line > 0 {
 		root.Line, root.Column = line+lineOffset, 1
 	}
 	*out = root
-	return nil
+	return written, nil
 }
 
 // documentLine returns the line of the first document's "---" marker or
@@ -387,7 +391,7 @@ func (n *Node) Decode(v any) error {
 		return err
 	}
 	if reachesUnmarshaler(reflect.TypeOf(v).Elem()) {
-		return n.decodeHooked(v)
+		return n.decodeHooked(v, nil)
 	}
 	return decodeFrom(n.source(), v, n.opts, nil)
 }

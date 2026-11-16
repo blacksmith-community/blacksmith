@@ -10,6 +10,16 @@ type Target struct {
 	Token      string `yaml:"token"`
 	Namespace  string `yaml:"namespace"`
 	SkipVerify bool   `yaml:"skip_verify"`
+	// CACert is a PEM file of CA certificates and CAPath a directory of
+	// them. Either one replaces the system roots, with CACert winning
+	// when both are set; see graft.VaultConfig.CACert.
+	CACert string `yaml:"ca_cert"`
+	CAPath string `yaml:"ca_path"`
+
+	// caCertField and caPathField name CACert and CAPath in error
+	// messages, such as "VAULT_PROD_CACERT"; empty means the field name.
+	caCertField string
+	caPathField string
 }
 
 // SkipVerify checks whether the given environment variable value indicates

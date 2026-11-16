@@ -9,6 +9,7 @@ import (
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/internal/pending"
+	"github.com/fivetwenty-io/graft/internal/vaultkv"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -629,7 +630,7 @@ func (o VaultOperator) performVaultLookup(ev *graft.Evaluator, engine graft.Engi
 				// contract's not-found detection - "starts with `secret
 				// `, ends with ` not found`" - keeps working for custom
 				// backends.
-				return "", graft.WithCode(secretNotFound(key), graft.CodeSecretNotFound)
+				return "", graft.WithCode(secretNotFound(key, fetchErr), graft.CodeSecretNotFound)
 			}
 			return "", wrapBackendError("vault", target, key, fetchErr)
 		}
@@ -664,7 +665,7 @@ func (o VaultOperator) performVaultLookup(ev *graft.Evaluator, engine graft.Engi
 			// Normalize the error messages
 			var notFoundErr *vault.ErrNotFound
 			if errors.As(secretErr, &notFoundErr) {
-				secretErr = graft.WithCode(secretNotFound(key), graft.CodeSecretNotFound)
+				secretErr = graft.WithCode(secretNotFound(key, secretErr), graft.CodeSecretNotFound)
 			} else {
 				// The Vault client's errors quote the request URL,
 				// which holds the secret path.
@@ -869,7 +870,18 @@ func resolveVaultTryPath(ev *Evaluator, pathExpr *Expr, i int) (path string, usa
 // secretNotFound is the vault operator's error for a secret or key that
 // does not exist. Error() keeps the "secret ... not found" shape without
 // the path, and the detailed text names the path as the CLI always has.
-func secretNotFound(key string) error {
+//
+// When cause shows the secret was read as KV v1 only because its mount's
+// KV version could not be detected, both texts say so between the key
+// and "not found", so the Genesis check for a line that starts with
+// "secret " and ends with " not found" still matches.
+func secretNotFound(key string, cause error) error {
+	var undetected *vaultkv.UndetectedError
+	if errors.As(cause, &undetected) {
+		return errtext.WithPlain(
+			fmt.Errorf("secret %s (mount %q: %s) not found", key, undetected.Mount, vaultkv.UndetectedClause),
+			"secret ("+vaultkv.UndetectedClause+") not found")
+	}
 	return errtext.WithPlain(fmt.Errorf("secret %s not found", key), "secret not found")
 }
 

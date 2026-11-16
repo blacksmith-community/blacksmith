@@ -35,11 +35,7 @@ func (CartesianProductOperator) Dependencies(ev *Evaluator, args []*Expr, locs [
 			if arg.Reference == nil {
 				continue
 			}
-			for _, other := range locs {
-				if other.Under(arg.Reference) {
-					l = append(l, other)
-				}
-			}
+			l = append(l, locsUnder(ev, arg.Reference, locs)...)
 		case graft.OperatorCall:
 			// Get dependencies from nested operator, preferring ev's
 			// engine-local registry (see evaluateNestedOperator).

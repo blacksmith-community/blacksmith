@@ -1,7 +1,6 @@
 package operators
 
 import (
-	"os"
 	"sync"
 
 	"github.com/fivetwenty-io/graft/pkg/graft"
@@ -86,17 +85,12 @@ func OperatorForEngine(e Engine, name string) Operator {
 }
 
 // ResolveEnv replaces each $NAME node with the value of the environment
-// variable NAME, whatever the length of the name. A node whose variable is
-// unset or empty, and a lone "$", stay as written.
+// variable NAME, whatever the length of the name, writing the result back
+// into nodes. A node whose variable is unset or empty, and a lone "$",
+// stay as written. The parser already does this for every reference it
+// reads, so operators do not call it.
 func ResolveEnv(nodes []string) []string {
-	// Phase 1: Simple implementation
-	for i, node := range nodes {
-		if len(node) > 1 && node[0] == '$' {
-			if val := os.Getenv(node[1:]); val != "" {
-				nodes[i] = val
-			}
-		}
-	}
+	copy(nodes, graft.SubstituteEnvNodes(nodes))
 	return nodes
 }
 

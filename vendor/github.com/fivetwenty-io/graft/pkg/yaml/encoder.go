@@ -42,12 +42,9 @@ func (e *Encoder) Encode(v any) error {
 	if e.closed {
 		return errors.New("yaml: Encode called after Close")
 	}
-	doc, err := MarshalWith(v, e.opts)
+	doc, err := marshalWith(v, e.opts, e.wrote)
 	if err != nil {
 		return err
-	}
-	if e.wrote {
-		doc = append([]byte("---\n"), doc...)
 	}
 	if _, err := e.w.Write(doc); err != nil {
 		return err

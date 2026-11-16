@@ -214,7 +214,11 @@ func (b *astBuilder) scan(x *Node, depth int) *DecodeError {
 	}
 	b.open[t] = true
 	defer delete(b.open, t)
-	for i, child := range t.Content {
+	children := t.Content
+	if t.Kind == MappingNode {
+		children, _ = b.content(t)
+	}
+	for i, child := range children {
 		if child == nil {
 			return treeError(t, nodeNilMessage)
 		}
@@ -537,22 +541,26 @@ func (b *astBuilder) sequence(t *Node) ast.Node {
 
 // mapping builds the mapping t in flow style. A key that appears twice
 // is an error, as goccy's parser makes it, except where the parser lets
-// it through, which is a key with no colon after it in a flow mapping.
+// it through, which is a key with no colon after it in a flow mapping,
+// and where OnDuplicateKey folded the repeats of a scalar key in t on
+// the way to a decode into Go values, as content describes.
 func (b *astBuilder) mapping(t *Node) ast.Node {
 	pos := tokenPosition(t)
 	n := ast.Mapping(b.tok(token.MappingStart(" {", pos)), true)
 	var keys yamlnode.KeySet[*token.Position]
-	for i := 0; i < len(t.Content); i += 2 {
+	content, written := b.content(t)
+	for i := 0; i < len(content); i += 2 {
 		var entry *token.Token
 		if i > 0 {
 			entry = b.tok(token.CollectEntry(",", pos))
 		}
-		key := mapKey(b.value(t.Content[i], true), explicitKey(t.Content[i]))
-		if !bareKey(t, i) {
-			b.checkKey(&keys, key, t.Content[i].Kind == AliasNode)
+		alias := content[i].Kind == AliasNode
+		key := mapKey(b.value(content[i], true), explicitKey(content[i]))
+		if !bareKey(t, content, i) {
+			b.checkKey(&keys, key, alias, written && !alias)
 		}
-		colon := b.tok(token.MappingValue(position(t.Content[i])))
-		pair := ast.MappingValue(colon, key, b.value(t.Content[i+1], false))
+		colon := b.tok(token.MappingValue(position(content[i])))
+		pair := ast.MappingValue(colon, key, b.value(content[i+1], false))
 		pair.CollectEntry = entry
 		n.Values = append(n.Values, pair)
 	}
@@ -583,16 +591,34 @@ func explicitKey(k *Node) bool {
 	return read != nil && read.explicit
 }
 
-// bareKey reports whether the pair at i in the mapping t was read from a
-// flow mapping entry with no colon, such as each a in {a, a}. The parser
-// gives such an entry an empty null right after the first character of
-// its key, where a colon would put it later. The places compared are the
-// parser's own, which count a tab as one column, as Column does not.
-func bareKey(t *Node, i int) bool {
-	k, v := t.Content[i], t.Content[i+1]
+// bareKey reports whether the pair at i in content, the pairs of the
+// mapping t, was read from a flow mapping entry with no colon, such as
+// each a in {a, a}. The parser gives such an entry an empty null right
+// after the first character of its key, where a colon would put it
+// later. The places compared are the parser's own, which count a tab as
+// one column, as Column does not.
+func bareKey(t *Node, content []*Node, i int) bool {
+	k, v := content[i], content[i+1]
 	return t.read && t.style&yamlnode.StyleFlow != 0 && k.read && v.read &&
 		v.Kind == ScalarNode && v.Value == "" && v.Tag == v.readTag && v.style == 0 &&
 		k.tokenLine > 0 && v.tokenLine == k.tokenLine && v.tokenColumn == k.tokenColumn+1
+}
+
+// content returns the pairs of the mapping t that the tree holds. They
+// are the pairs the text wrote when OnDuplicateKey folded repeats in t
+// on the way to a decode into Go values, and t's own Content otherwise.
+// written says they are the pairs the text wrote. goccy then reads the
+// pairs in turn, as it reads the text, so keys that the fold took for
+// one key but that decode to different Go keys, such as a null and the
+// string null in a map with interface keys, each keep their entry, as
+// they do when the text decodes straight into the map.
+func (b *astBuilder) content(t *Node) ([]*Node, bool) {
+	if b.owners != nil {
+		if pairs, ok := b.owners.written[t]; ok {
+			return pairs, true
+		}
+	}
+	return t.Content, false
 }
 
 // checkKey records key among keys, the keys of one mapping so far, and
@@ -602,8 +628,10 @@ func bareKey(t *Node, i int) bool {
 // parser compares an alias, even where the alias's anchor lies outside
 // the tree and key holds the value written in its place. A << merge key
 // repeats no key, since a second one is a second merge, as the text
-// route reads it.
-func (b *astBuilder) checkKey(keys *yamlnode.KeySet[*token.Position], key ast.MapKeyNode, alias bool) {
+// route reads it. folded says the key is a scalar in a mapping whose
+// repeats OnDuplicateKey reported and let through, so a repeat of it is
+// let through here too, as the text route lets it through.
+func (b *astBuilder) checkKey(keys *yamlnode.KeySet[*token.Position], key ast.MapKeyNode, alias, folded bool) {
 	if !alias && yamlnode.IsMergeKey(key) {
 		return
 	}
@@ -612,7 +640,7 @@ func (b *astBuilder) checkKey(keys *yamlnode.KeySet[*token.Position], key ast.Ma
 		id = yamlnode.KeyID{}
 	}
 	first, repeat := keys.Add(id, key.GetToken().Position)
-	if !repeat || b.err != nil {
+	if !repeat || folded || b.err != nil {
 		return
 	}
 	at := key.GetToken().Position

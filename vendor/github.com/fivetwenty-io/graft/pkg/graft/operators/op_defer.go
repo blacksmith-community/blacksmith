@@ -86,10 +86,7 @@ func reconstructExpr(e *Expr) string {
 		return fmt.Sprintf("%v", e.Literal)
 
 	case Reference:
-		if e.Reference != nil {
-			return e.Reference.String()
-		}
-		return ""
+		return e.WrittenPath()
 
 	case EnvVar:
 		return fmt.Sprintf("$%s", e.Name)

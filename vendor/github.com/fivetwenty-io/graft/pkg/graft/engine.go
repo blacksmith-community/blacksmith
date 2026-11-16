@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -216,11 +217,12 @@ func (e *DefaultEngine) evaluate(ctx context.Context, ev *Evaluator, forceParall
 	// sees a wrapper that answers with the run's state.
 	ev.engine = run
 
-	// Check context cancellation
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
+	// The evaluator checks ctx before each operator it starts, so a
+	// canceled ctx stops the run between operators.
+	ev.ctx = ctx
+
+	if err := canceled(ctx, phaseStep(MergePhase)); err != nil {
+		return err
 	}
 
 	// A non-empty REDACT environment variable forces vault, AWS, and NATS
@@ -259,13 +261,13 @@ func (e *DefaultEngine) evaluate(ctx context.Context, ev *Evaluator, forceParall
 	// matching spruce: once a required param is unresolved, downstream
 	// EvalPhase operators can't be trusted to evaluate meaningfully, so
 	// spruce doesn't bother combining prior merge errors into that report.
+	//
+	// A canceled ctx ends the run with the cancellation alone, dropping
+	// the errors gathered so far, whichever phase it stops.
 	var mergeErrs MultiError
 	for _, phase := range []OperatorPhase{MergePhase, ParamPhase, EvalPhase} {
-		// Check context cancellation before each phase
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if err := canceled(ctx, phaseStep(phase)); err != nil {
+			return err
 		}
 
 		var phaseErr error
@@ -273,6 +275,9 @@ func (e *DefaultEngine) evaluate(ctx context.Context, ev *Evaluator, forceParall
 			phaseErr = ev.RunPhaseParallel(phase)
 		} else {
 			phaseErr = ev.RunPhase(phase)
+		}
+		if isCancel(ctx, phaseErr) {
+			return phaseErr
 		}
 		if phaseErr != nil {
 			// Record failure metric if enabled
@@ -316,19 +321,18 @@ func (e *DefaultEngine) evaluate(ctx context.Context, ev *Evaluator, forceParall
 	prunePaths := rs.GetKeysToPrune()
 	log.DEBUG("Engine: Found %d prune paths to process: %v", len(prunePaths), prunePaths)
 	if len(prunePaths) > 0 {
-		// Convert tree paths to Document paths and remove them
-		doc := NewDocument(ev.Tree)
+		// Remove each path from the tree itself, as spruce does,
+		// rather than from a copy. A grab hands back the map it
+		// reads, not a copy, so a key pruned from that map also
+		// leaves every place that grabbed it, at any depth.
+		doc := &document{data: ev.Tree}
 		cleanedPaths := make([]string, 0, len(prunePaths))
 		for _, path := range prunePaths {
 			// Remove the "$." prefix if present
 			cleanPath := strings.TrimPrefix(path, "$.")
 			log.DEBUG("Engine: Pruning path '%s' (cleaned: '%s')", path, cleanPath)
-			doc = doc.Prune(cleanPath)
+			doc.pruneKeyInPlace(cleanPath)
 			cleanedPaths = append(cleanedPaths, cleanPath)
-		}
-		// Update the evaluator tree with the pruned document
-		if pruned, ok := treeOf(doc).(map[string]interface{}); ok {
-			ev.Tree = pruned
 		}
 
 		// Stash the paths this run actually pruned, in the same "$."-free
@@ -365,8 +369,8 @@ func (e *DefaultEngine) evaluate(ctx context.Context, ev *Evaluator, forceParall
 
 // Implement Engine interface methods
 
-// ParseYAML parses YAML data into a Document.
-func (e *DefaultEngine) ParseYAML(data []byte) (Document, error) {
+// parseYAML is the body of ParseYAML and ParseYAMLContext.
+func (e *DefaultEngine) parseYAML(data []byte) (Document, error) {
 	// Handle empty data
 	if len(data) == 0 {
 		return nil, nil
@@ -486,8 +490,8 @@ func (e *DefaultEngine) ParseMultiDocYAML(data []byte) ([]Document, error) {
 	return docs, nil
 }
 
-// ParseJSON parses JSON data into a Document.
-func (e *DefaultEngine) ParseJSON(data []byte) (Document, error) {
+// parseJSON is the body of ParseJSON and ParseJSONContext.
+func (e *DefaultEngine) parseJSON(data []byte) (Document, error) {
 	// Handle empty data
 	if len(data) == 0 {
 		return nil, nil
@@ -594,7 +598,8 @@ func (e *DefaultEngine) logDebugf(format string, args ...interface{}) {
 }
 
 // Evaluate processes operators in a document. It resolves them in doc
-// itself, so doc must not be used by another call while Evaluate runs.
+// itself, and removes the keys they prune from it, so doc must not be
+// used by another call while Evaluate runs.
 // Each call works on an operator state of its own, so concurrent calls on
 // one engine do not disturb one another, and when the call finishes its
 // vault references, vault placeholders, deferred paths, and pruned paths
@@ -610,6 +615,16 @@ func (e *DefaultEngine) Evaluate(ctx context.Context, doc Document) (Document, e
 	data, ok := treeOf(doc).(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("document data is not a map")
+	}
+
+	// A merge of one document runs it through the merger before any
+	// operator reads it, which resolves its array markers and drops its
+	// (( prune )) list entries. A document evaluated with no merge gets
+	// the same treatment here, so both paths give the same result.
+	if !fromMerge(ctx) {
+		if err := e.prepareLists(data); err != nil {
+			return nil, err
+		}
 	}
 
 	// Create evaluator
@@ -632,6 +647,9 @@ func (e *DefaultEngine) Evaluate(ctx context.Context, doc Document) (Document, e
 		ev.PriorValues = priorValues
 	}
 
+	// The paths the caller prunes after this call returns.
+	ev.callerPrunes = callerPrunesFrom(ctx)
+
 	// Run evaluation
 	err := e.evaluate(ctx, ev, false)
 	if err != nil {
@@ -650,25 +668,43 @@ func (e *DefaultEngine) Evaluate(ctx context.Context, doc Document) (Document, e
 	return NewDocument(ev.Tree), nil
 }
 
+// prepareLists gives data, a document no merge has handled, what a
+// merge of it alone does to its lists. A document whose lists hold an
+// array marker or a map goes through the merger, as in a merge, and the
+// result takes data's place in data itself. The merger's errors come
+// back as a merge returns them. Any other document only loses its
+// (( prune )) list entries, which is all the merger would do to it. A
+// document that holds itself gets the cycle error a merge of it gives.
+func (e *DefaultEngine) prepareLists(data map[string]interface{}) error {
+	if err := detectCyclicValue(data); err != nil {
+		return err
+	}
+	if !holdsListWork(data) {
+		dropPruneEntries(data)
+		return nil
+	}
+	merged, err := mergeLoneDocument(data, false, e.GetMemoryTracker())
+	if err != nil {
+		return err
+	}
+	clear(data)
+	maps.Copy(data, merged)
+	return nil
+}
+
 // Diff computes the differences between a and b using
 // DefaultDiffOptions(). See DiffWithOptions.
 func (e *DefaultEngine) Diff(a, b Document) DiffResult {
 	return e.DiffWithOptions(a, b, DefaultDiffOptions())
 }
 
-// DiffWithOptions computes the differences between a and b using opts
-// (nil selects DefaultDiffOptions()), via the package-level DiffDocuments
-// (diff_changes.go). a and b are always graft Documents, whose RawData()
-// is always a map[string]interface{}, so DiffDocuments' error return
-// (surfaced only by Diff's own "diff not implemented for this type"
-// default branch and a nil-document guard, diff.go/diff_changes.go) is
-// unreachable for two non-nil Documents; the Engine method signatures
-// (api.go) match the plan's target library API and stay error-free. A nil
-// a or b -- a caller error, not a comparison result -- degrades to an
-// empty DiffResult rather than panicking, consistent with this method
-// having no error return to report it through.
+// DiffWithOptions computes the differences between a and b using opts,
+// where nil selects DefaultDiffOptions(). It has no error return, so a
+// nil a or b gives an empty DiffResult rather than a panic. Two non-nil
+// Documents always compare, since each holds a map. DiffContext returns
+// an error for a nil document instead.
 func (e *DefaultEngine) DiffWithOptions(a, b Document, opts *DiffOptions) DiffResult {
-	result, err := DiffDocuments(a, b, opts)
+	result, err := e.DiffContext(context.Background(), a, b, opts)
 	if err != nil {
 		return &diffResult{}
 	}
@@ -691,14 +727,7 @@ func (e *DefaultEngine) DiffWithOptions(a, b Document, opts *DiffOptions) DiffRe
 // keep the original alongside the evaluated form - should pass
 // doc.Clone() (a genuine deep copy) instead of doc.
 func (e *DefaultEngine) ToYAML(doc Document) ([]byte, error) {
-	if doc == nil {
-		return nil, NewValidationError("ToYAML: document must be non-nil")
-	}
-	evaluated, err := e.Evaluate(context.Background(), doc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate document: %w", err)
-	}
-	return evaluated.ToYAML()
+	return e.ToYAMLContext(context.Background(), doc)
 }
 
 // ToJSON evaluates doc's operators (see Evaluate) and converts the
@@ -707,14 +736,7 @@ func (e *DefaultEngine) ToYAML(doc Document) ([]byte, error) {
 // the doc-mutation caveat (pass doc.Clone() to avoid it) this shares with
 // ToJSON/ToJSONIndent.
 func (e *DefaultEngine) ToJSON(doc Document) ([]byte, error) {
-	if doc == nil {
-		return nil, NewValidationError("ToJSON: document must be non-nil")
-	}
-	evaluated, err := e.Evaluate(context.Background(), doc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate document: %w", err)
-	}
-	return evaluated.ToJSON()
+	return e.ToJSONContext(context.Background(), doc)
 }
 
 // ToJSONIndent evaluates doc's operators (see Evaluate) and converts the
@@ -724,14 +746,7 @@ func (e *DefaultEngine) ToJSON(doc Document) ([]byte, error) {
 // the doc-mutation caveat (pass doc.Clone() to avoid it) this shares with
 // ToYAML/ToJSON.
 func (e *DefaultEngine) ToJSONIndent(doc Document, indent string) ([]byte, error) {
-	if doc == nil {
-		return nil, NewValidationError("ToJSONIndent: document must be non-nil")
-	}
-	evaluated, err := e.Evaluate(context.Background(), doc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate document: %w", err)
-	}
-	return evaluated.ToJSONIndent(indent)
+	return e.ToJSONIndentContext(context.Background(), doc, indent)
 }
 
 // UnregisterOperator removes an operator from the engine's registry clone.

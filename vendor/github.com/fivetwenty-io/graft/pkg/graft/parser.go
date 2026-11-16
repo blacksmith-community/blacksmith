@@ -10,6 +10,7 @@ import (
 
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/exprlex"
+	"github.com/fivetwenty-io/graft/internal/oploc"
 	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/pkg/graft/interfaces"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -1100,13 +1101,16 @@ func (p *Parser) parseArgument() (*Expr, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid reference path in an operator argument")
 	}
+	bracketed := tree.BracketsOf(path)
+	written := substituteReferenceEnv(cursor, bracketed)
 	for p.pos <= idx {
 		p.advance()
 	}
 	return &Expr{
 		Type:           Reference,
 		Reference:      cursor,
-		BracketedNodes: tree.BracketsOf(path),
+		BracketedNodes: bracketed,
+		writtenNodes:   written,
 	}, nil
 }
 
@@ -1247,10 +1251,12 @@ func (p *Parser) parseReferencePath(start string) (*Expr, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid reference path: %s", path)
 	}
+	written := substituteReferenceEnv(cursor, nil)
 
 	return &Expr{
-		Type:      Reference,
-		Reference: cursor,
+		Type:         Reference,
+		Reference:    cursor,
+		writtenNodes: written,
 	}, nil
 }
 
@@ -1321,11 +1327,14 @@ func (p *Parser) parseReference() (*Expr, error) {
 	if strings.HasPrefix(tok.Literal, "$") && len(cursor.Nodes) == 0 {
 		return nil, fmt.Errorf("a reference that starts with $ needs a path after it")
 	}
+	bracketed := tree.BracketsOf(tok.Literal)
+	written := substituteReferenceEnv(cursor, bracketed)
 
 	return &Expr{
 		Type:           Reference,
 		Reference:      cursor,
-		BracketedNodes: tree.BracketsOf(tok.Literal),
+		BracketedNodes: bracketed,
+		writtenNodes:   written,
 	}, nil
 }
 
@@ -1688,12 +1697,19 @@ func (e *exprOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 // does, except that a reference, on its own or as a side of ||, keeps a
 // LiteralValue it reads as a LiteralValue. That matches (( grab x || y )),
 // so the value a bare (( x || y )) copies out of a literal is replaced
-// whole by a later merge. Every other kind of expression goes through
-// Evaluate unchanged.
+// whole by a later merge. Such a reference is also refused, as grab
+// refuses it, when it names a path that holds the expression itself, so
+// the other side of || is tried instead. Every other kind of expression
+// goes through Evaluate unchanged.
 func evaluateKeepingLiteral(e *Expr, treeData interface{}) (interface{}, error) {
 	switch e.Type {
 	case Reference:
 		if e.Reference != nil {
+			if e.evaluator != nil {
+				if err := oploc.RefuseAncestor(e.evaluator.Here, e.Reference, treeData); err != nil {
+					return nil, err
+				}
+			}
 			return e.Reference.ResolveLiteral(treeData)
 		}
 	case LogicalOr:
@@ -1701,13 +1717,18 @@ func evaluateKeepingLiteral(e *Expr, treeData interface{}) (interface{}, error) 
 			if e.evaluator != nil && e.Left.evaluator == nil {
 				e.Left.SetEvaluator(e.evaluator)
 			}
-			left, err := evaluateKeepingLiteral(e.Left, treeData)
+			left, err := orOperand(e.Left, func(x *Expr) (interface{}, error) {
+				return evaluateKeepingLiteral(x, treeData)
+			})
 			if err == nil {
 				return left, nil
 			}
 			if pending.StopsFallback(err) {
 				return nil, err
 			}
+		}
+		if pruneFallback(e.Right, e.evaluator) {
+			return nil, nil
 		}
 		if e.Right != nil {
 			if e.evaluator != nil && e.Right.evaluator == nil {

@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fivetwenty-io/graft/internal/cursorpath"
 	"github.com/fivetwenty-io/graft/internal/utils/ansi"
 )
 
 // NameFields is a slice of common field names used for object identification.
-var NameFields = []string{"name", "key", "id"}
+var NameFields = cursorpath.NameFields
 
 // Canonical sentinels for errors.Is comparisons against this package's error
 // types. They live here, rather than in pkg/graft, because the Is methods

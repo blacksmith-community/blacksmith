@@ -1,6 +1,7 @@
 package graft
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -83,6 +84,11 @@ type Evaluator struct {
 	// operator from one it writes to the tree.
 	outerCall *Opcall
 
+	// callerPrunes holds the paths the caller will prune once evaluation
+	// is done, such as graft merge --prune, so an operator that prints a
+	// map, as join does, can leave those keys out while it runs.
+	callerPrunes []string
+
 	// Reference to the engine (for accessing registries and state)
 	engine Engine
 
@@ -127,6 +133,12 @@ type Evaluator struct {
 
 	// Memory tracker for recording evaluation changes
 	memory interfaces.MemoryTracker
+
+	// ctx is the context the evaluation runs under, which the engine
+	// sets before a run. RunOps and the parallel scheduler check it
+	// before each operator and stop once it is done. Nil means
+	// context.Background; read it through context().
+	ctx context.Context
 }
 
 // SetEngine sets the engine for the evaluator.
@@ -1117,13 +1129,20 @@ func (ev *Evaluator) newCycleError(g [][]*Opcall, all map[string]*Opcall) error 
 }
 
 // RunOps executes a list of operators in order, collecting any errors.
+// Before each operator it checks the evaluator's context, and once that
+// is done it returns the cancellation alone, without the errors from the
+// operators that already ran.
 func (ev *Evaluator) RunOps(ops []*Opcall) error {
 	log.DEBUG("patching up YAML by evaluating outstanding operators\n")
 
 	defer ev.startPending(ops)()
 
+	ctx := ev.context()
 	errors := MultiError{Errors: []error{}}
 	for _, op := range ops {
+		if err := opCanceled(ctx, op); err != nil {
+			return err
+		}
 		err := ev.RunOp(op)
 		if err != nil {
 			errors.Append(err)
@@ -1425,6 +1444,13 @@ func (ev *Evaluator) computeOp(op *Opcall) (resp *Response, oldValue interface{}
 		return resp, oldValue, ev.scrubLiteralError(op, err)
 	}
 	ev.guardLiteralResponse(op, resp)
+	if resp != nil && resp.Type == Replace {
+		// No operator may write the map or list that holds it into
+		// itself, whatever path its value came by.
+		if err := oploc.RefuseSelfHolding(op.where, resp.Value, ev.Tree); err != nil {
+			return nil, oldValue, &PathError{Path: op.where.String(), Cause: err}
+		}
+	}
 	return resp, oldValue, nil
 }
 
@@ -1589,6 +1615,9 @@ func (ev *Evaluator) Run(prune, picks []string) error {
 
 	eng := GetEngine(ev)
 	state := eng.GetOperatorState()
+	if len(prune) > 0 {
+		ev.callerPrunes = append(slices.Clip(ev.callerPrunes), prune...)
+	}
 
 	if os.Getenv("REDACT") != "" {
 		log.DEBUG("Setting vault & aws & nats operators to redact keys")
@@ -1600,13 +1629,27 @@ func (ev *Evaluator) Run(prune, picks []string) error {
 
 	if !ev.SkipEval {
 		ev.Only = picks
-		errors.Append(ev.RunPhase(MergePhase))
-		paramErrs.Append(ev.RunPhase(ParamPhase))
-		if len(paramErrs.Errors) > 0 {
-			return paramErrs
+		// The evaluator's context is checked before each phase as well
+		// as before each operator, and a cancellation in any phase is
+		// returned alone.
+		ctx := ev.context()
+		for _, phase := range []OperatorPhase{MergePhase, ParamPhase, EvalPhase} {
+			if err := canceled(ctx, phaseStep(phase)); err != nil {
+				return err
+			}
+			err := ev.RunPhase(phase)
+			if isCancel(ctx, err) {
+				return err
+			}
+			if phase != ParamPhase {
+				errors.Append(err)
+				continue
+			}
+			paramErrs.Append(err)
+			if len(paramErrs.Errors) > 0 {
+				return paramErrs
+			}
 		}
-
-		errors.Append(ev.RunPhase(EvalPhase))
 	}
 
 	// this is a big failure...

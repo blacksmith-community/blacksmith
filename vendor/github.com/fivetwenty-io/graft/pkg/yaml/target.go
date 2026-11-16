@@ -150,5 +150,5 @@ func pointee(t reflect.Type) reflect.Type {
 // struct that embeds it, so its own method runs for that struct.
 func namedInline(f reflect.StructField) bool {
 	_, opts, _ := strings.Cut(fieldTag(f), ",")
-	return !f.Anonymous && decodesField(f) && hasOption(opts, "inline")
+	return !f.Anonymous && decodesField(f) && inlineOption(opts)
 }

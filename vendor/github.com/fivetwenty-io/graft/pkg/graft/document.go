@@ -70,12 +70,19 @@ func (d *document) plainData() map[string]interface{} {
 	return plainMap(d.data)
 }
 
-// NewDocument creates a new document from a map.
+// NewDocument creates a new document from a map. Typed slices and
+// string-keyed maps inside it, such as []string or map[string]int, are
+// converted to the plain []interface{} and map[string]interface{}
+// forms the operators read. When nothing in the map needs converting,
+// the document uses the caller's map itself, so later changes to it
+// show up in the document. When something does, the document gets a
+// converted copy of the map and later top-level changes to the
+// caller's map are not seen.
 func NewDocument(data map[string]interface{}) Document {
 	if data == nil {
 		data = make(map[string]interface{})
 	}
-	return &document{data: data}
+	return &document{data: plainGoMap(data)}
 }
 
 // NewDocumentFromInterface creates a document from any interface{}.
@@ -86,6 +93,9 @@ func NewDocumentFromInterface(data interface{}) (Document, error) {
 	case nil:
 		return NewDocument(nil), nil
 	default:
+		if m, ok := plainGoValue(data).(map[string]interface{}); ok {
+			return NewDocument(m), nil
+		}
 		return nil, NewValidationError(fmt.Sprintf("cannot create document from type %T", data))
 	}
 }
@@ -114,6 +124,7 @@ func (d *document) Get(path string) (interface{}, error) {
 
 // Set sets a value at the given path.
 func (d *document) Set(path string, value interface{}) error {
+	value = plainGoValue(value)
 	if path == "" || path == "$" {
 		if mapValue, ok := value.(map[string]interface{}); ok {
 			d.data = mapValue
@@ -448,9 +459,12 @@ func (d *document) Prune(keys ...string) Document {
 	return cloned
 }
 
-// pruneKeyInPlace removes a single key from d's own data in place. Callers
-// must only invoke this on a document that is already an isolated clone
-// (see Prune); it mutates d.data directly rather than copying first.
+// pruneKeyInPlace removes a single key from d's own data in place,
+// without copying first. It has two callers. Prune calls it on a clone
+// it has just made, so the document Prune was called on is unchanged.
+// The engine's prune step calls it on the evaluated tree itself, on
+// purpose, so a key pruned from a map leaves every place that grabbed
+// that map, and the Document a caller passed to Evaluate loses the key.
 func (d *document) pruneKeyInPlace(key string) {
 	// Split on dots, keeping a bracketed dotted node (as the (( prune ))
 	// operator queues one) whole

@@ -185,7 +185,7 @@ github.com/fivetwenty-io/capi/v3/internal/constants
 github.com/fivetwenty-io/capi/v3/internal/http
 github.com/fivetwenty-io/capi/v3/pkg/capi
 github.com/fivetwenty-io/capi/v3/pkg/cfclient
-# github.com/fivetwenty-io/graft v1.47.0
+# github.com/fivetwenty-io/graft v1.49.1
 ## explicit; go 1.27.3
 github.com/fivetwenty-io/graft/internal/backends/aws
 github.com/fivetwenty-io/graft/internal/backends/nats
@@ -193,9 +193,11 @@ github.com/fivetwenty-io/graft/internal/backends/reqdedup
 github.com/fivetwenty-io/graft/internal/backends/vault
 github.com/fivetwenty-io/graft/internal/cache
 github.com/fivetwenty-io/graft/internal/config
+github.com/fivetwenty-io/graft/internal/cursorpath
 github.com/fivetwenty-io/graft/internal/errtext
 github.com/fivetwenty-io/graft/internal/exprlex
 github.com/fivetwenty-io/graft/internal/features
+github.com/fivetwenty-io/graft/internal/humanreport
 github.com/fivetwenty-io/graft/internal/keyorder
 github.com/fivetwenty-io/graft/internal/literal
 github.com/fivetwenty-io/graft/internal/logfilter
@@ -204,11 +206,16 @@ github.com/fivetwenty-io/graft/internal/metrics
 github.com/fivetwenty-io/graft/internal/oploc
 github.com/fivetwenty-io/graft/internal/parallel
 github.com/fivetwenty-io/graft/internal/pending
+github.com/fivetwenty-io/graft/internal/prunekeys
 github.com/fivetwenty-io/graft/internal/srcpos
+github.com/fivetwenty-io/graft/internal/termstyle
 github.com/fivetwenty-io/graft/internal/utils/ansi
 github.com/fivetwenty-io/graft/internal/utils/mfa
 github.com/fivetwenty-io/graft/internal/utils/netutil
+github.com/fivetwenty-io/graft/internal/vaultca
+github.com/fivetwenty-io/graft/internal/vaultkv
 github.com/fivetwenty-io/graft/internal/yamlcodec
+github.com/fivetwenty-io/graft/internal/yamldiff
 github.com/fivetwenty-io/graft/internal/yamlerr
 github.com/fivetwenty-io/graft/internal/yamlnode
 github.com/fivetwenty-io/graft/internal/yamlprep
@@ -318,6 +325,9 @@ github.com/jhunt/go-querytron
 github.com/klauspost/compress/flate
 github.com/klauspost/compress/internal/le
 github.com/klauspost/compress/internal/regmask
+# github.com/mattn/go-isatty v0.0.24
+## explicit; go 1.20
+github.com/mattn/go-isatty
 # github.com/mitchellh/go-homedir v1.1.0
 ## explicit
 github.com/mitchellh/go-homedir
@@ -403,6 +413,9 @@ github.com/redis/go-redis/v9/push
 # github.com/ryanuber/go-glob v1.0.0
 ## explicit
 github.com/ryanuber/go-glob
+# github.com/sergi/go-diff v1.4.0
+## explicit; go 1.13
+github.com/sergi/go-diff/diffmatchpatch
 # github.com/shieldproject/shield v8.7.0+incompatible
 ## explicit
 github.com/shieldproject/shield/client/v2/shield

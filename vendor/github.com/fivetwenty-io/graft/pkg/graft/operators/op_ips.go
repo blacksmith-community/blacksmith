@@ -36,11 +36,7 @@ func (IpsOperator) Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cursor
 			if arg.Reference == nil {
 				continue
 			}
-			for _, other := range locs {
-				if other.Under(arg.Reference) {
-					l = append(l, other)
-				}
-			}
+			l = append(l, locsUnder(ev, arg.Reference, locs)...)
 		case OperatorCall:
 			// Get dependencies from nested operator, preferring ev's
 			// engine-local registry (see evaluateNestedOperator).

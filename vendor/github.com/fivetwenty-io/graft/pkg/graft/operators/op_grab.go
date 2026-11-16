@@ -6,6 +6,7 @@ import (
 
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/oploc"
 	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -103,16 +104,7 @@ func resolveGrabArgValue(ev *Evaluator, arg *Expr, read grabRead) (interface{}, 
 	}
 
 	if arg.Type == Reference {
-		// Direct reference, resolve it normally. ResolveLiteral keeps a
-		// value that sits inside a literal opaque at its new place.
-		resolved, err := arg.Reference.ResolveLiteral(ev.Tree)
-		if err != nil {
-			return nil, fmt.Errorf("unable to resolve `%s`: %w", arg.Reference, err)
-		}
-		if err := checkPending(ev, arg.Reference, resolved, read); err != nil {
-			return nil, err
-		}
-		return resolved, nil
+		return resolveGrabReference(ev, arg.Reference, read)
 	}
 
 	if pathStr, ok := val.(string); ok && !valueIsFinal(arg) {
@@ -121,6 +113,23 @@ func resolveGrabArgValue(ev *Evaluator, arg *Expr, read grabRead) (interface{}, 
 
 	// For literals and other non-string values, use them directly.
 	return val, nil
+}
+
+// resolveGrabReference resolves a direct reference argument against the
+// tree. ResolveLiteral keeps a value that sits inside a literal opaque
+// at its new place.
+func resolveGrabReference(ev *Evaluator, ref *tree.Cursor, read grabRead) (interface{}, error) {
+	if err := refuseAncestorGrab(ev, ref); err != nil {
+		return nil, err
+	}
+	resolved, err := ref.ResolveLiteral(ev.Tree)
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve `%s`: %w", ref, err)
+	}
+	if err := checkPending(ev, ref, resolved, read); err != nil {
+		return nil, err
+	}
+	return resolved, nil
 }
 
 // computedFromLiteral reports whether val is a path that grab would
@@ -188,6 +197,9 @@ func resolveComputedPath(ev *Evaluator, pathStr string, read grabRead) (interfac
 	if err != nil {
 		return pathStr, nil //nolint:nilerr // a non-path string is a legitimate grab result
 	}
+	if err := refuseAncestorGrab(ev, cursor); err != nil {
+		return nil, err
+	}
 
 	resolved, err := cursor.ResolveLiteral(ev.Tree)
 	if err != nil {
@@ -197,6 +209,16 @@ func resolveComputedPath(ev *Evaluator, pathStr string, read grabRead) (interfac
 		return nil, err
 	}
 	return resolved, nil
+}
+
+// refuseAncestorGrab returns an error when the operator at ev.Here sits
+// under target, because the grab would then read its own unresolved
+// call and never settle: the value it hands on is the container that
+// holds the grab, so the document would end up containing itself. The
+// refusal is an ordinary operator error, so a || fallback still applies.
+// oploc.RefuseAncestor says how the two paths are compared.
+func refuseAncestorGrab(ev *Evaluator, target *tree.Cursor) error {
+	return oploc.RefuseAncestor(ev.Here, target, ev.Tree)
 }
 
 // grabRead says how the value a grab reads reaches its reader, which

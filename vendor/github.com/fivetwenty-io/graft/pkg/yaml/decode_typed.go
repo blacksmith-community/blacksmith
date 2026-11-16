@@ -22,7 +22,13 @@ var boolType = reflect.TypeFor[bool]()
 // and every place in v that an Unmarshaler fills is a hole that goccy
 // leaves alone. Once goccy and the fixer are done, each of those places
 // has its method called in document order, with the Node that holds its
-// value, and the first failure ends the decode.
+// value, and the first failure ends the decode. A key that more than one
+// struct field reads, past those that goccy shadows, is refused before
+// goccy decodes anything when one of them can reach an Unmarshaler,
+// since goccy would fill that field natively and its method would never
+// run. The refusal comes from a walk in document order, so it is the
+// same on every run and needs none of the search for the earliest error
+// that a goccy error inside an ,inline map gets.
 //
 // The document comes with every alias expanded, as a merge parses it,
 // and goccy decodes it into v natively. In YAML 1.1 mode a hook reads
@@ -49,12 +55,19 @@ func decodeTyped(src source, v any, opts DecodeOptions, owners *tokenOwners) err
 		return nil
 	}
 
-	var sites []hookSite
+	var plan hookPlan
 	if owners != nil {
-		if body, sites = hookSites(body, target.Elem(), owners, opts); body == nil {
-			// The root itself is a hook site, so goccy has nothing to do.
-			return runHookSites(reflect.ValueOf(v).Elem(), sites)
+		body, plan, err = hookSites(body, target.Elem(), owners, opts)
+		if err != nil {
+			return err
 		}
+		if body == nil {
+			// The root itself is a hook site, so goccy has nothing to do.
+			return runHookSites(reflect.ValueOf(v).Elem(), plan.sites)
+		}
+		// Each entry a stand-in key holds moves to its NaN key on every
+		// way out, once the hooks have run or the decode has failed.
+		defer moveKeys(reflect.ValueOf(v).Elem(), plan.moves)
 	}
 	body, own := asWritten(body, target.Elem())
 	err = decodeBody(body, v, opts)
@@ -70,12 +83,19 @@ func decodeTyped(src source, v any, opts DecodeOptions, owners *tokenOwners) err
 		f.fix(reflect.ValueOf(v))
 	}
 	if err != nil {
-		return translate(own.locate(locate(err, body, target), target.Elem()))
+		de := translate(own.locate(locate(err, body, target), target.Elem()))
+		if de.Kind == ErrorKindType && de.Line > 0 && reachesInlineMap(target) {
+			// goccy fills an ,inline map in Go map order, so the value
+			// its error names varies from run to run. The earliest bad
+			// value is the same on every run.
+			de = earliestTypeError(body, v, opts, own, de)
+		}
+		return de
 	}
 	if err := own.badTime(); err != nil {
 		return err
 	}
-	return runHookSites(reflect.ValueOf(v).Elem(), sites)
+	return runHookSites(reflect.ValueOf(v).Elem(), plan.sites)
 }
 
 // decodeBody decodes body into v with goccy, and returns a decoder panic
@@ -252,6 +272,11 @@ func (f *genericFixer) fixInterface(v reflect.Value) {
 
 // fixMap fixes each value of the map v, through a copy, since a map's
 // values cannot be set in place.
+//
+// A NaN key finds no entry, so storing a value under it adds an entry,
+// which a walk of the map can then meet again. The values under NaN keys
+// are set aside instead, and when there are any, the map is emptied and
+// filled again, with each entry it held once.
 func (f *genericFixer) fixMap(v reflect.Value) {
 	if v.IsNil() {
 		return
@@ -260,12 +285,32 @@ func (f *genericFixer) fixMap(v reflect.Value) {
 	if !f.reaches(elem) {
 		return
 	}
+	var nans []reflect.Value
 	iter := v.MapRange()
 	for iter.Next() {
 		item := reflect.New(elem).Elem()
 		item.Set(iter.Value())
 		f.fix(item)
+		if valueNaN(iter.Key()) {
+			nans = append(nans, iter.Key(), item)
+			continue
+		}
 		v.SetMapIndex(iter.Key(), item)
+	}
+	if len(nans) == 0 {
+		return
+	}
+	pairs := make([]reflect.Value, 0, 2*v.Len())
+	for it := v.MapRange(); it.Next(); {
+		if !valueNaN(it.Key()) {
+			pairs = append(pairs, it.Key(), it.Value())
+		}
+	}
+	v.Clear()
+	for _, set := range [][]reflect.Value{pairs, nans} {
+		for i := 0; i+1 < len(set); i += 2 {
+			v.SetMapIndex(set[i], set[i+1])
+		}
 	}
 }
 

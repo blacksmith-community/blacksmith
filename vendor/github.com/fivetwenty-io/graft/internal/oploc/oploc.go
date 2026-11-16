@@ -5,11 +5,17 @@
 // builds the index for the operator paths it hands to Dependencies. The
 // operators package reads it through a hook that pkg/graft installs, so
 // the evaluator exports no field for it.
+//
+// The package also holds the cycle guards in ancestor.go. RefuseAncestor
+// refuses an operator that reads a path holding it, and
+// RefuseSelfHolding refuses a value that would make an ancestor of the
+// operator hold itself.
 package oploc
 
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -21,6 +27,9 @@ type Index struct {
 	canon []string
 	at    map[string]bool
 	under map[string][]int
+
+	holdersOnce sync.Once
+	holders     []*tree.Cursor
 }
 
 // New indexes locs, each canonicalized against root. A path that does
@@ -54,6 +63,11 @@ func (idx *Index) Covers(locs []*tree.Cursor) bool {
 	return len(locs) == 0 || &idx.locs[0] == &locs[0]
 }
 
+// At reports whether an operator sits at the canonical path nodes.
+func (idx *Index) At(nodes []string) bool {
+	return idx != nil && idx.at[key(nodes)]
+}
+
 // AtOrAbove reports whether an operator sits at the canonical path nodes
 // or at a path above it, other than the document root.
 func (idx *Index) AtOrAbove(nodes []string) bool {
@@ -85,6 +99,18 @@ func (idx *Index) Under(nodes, self []string) []*tree.Cursor {
 		out = append(out, idx.locs[i])
 	}
 	return out
+}
+
+// Holders returns what find returns, calling find once for idx. Every
+// operator that leaves pruned keys out of what it reads asks for the
+// same operator paths above those keys, so the phase finds them once
+// rather than once per reader. A nil idx calls find each time.
+func (idx *Index) Holders(find func() []*tree.Cursor) []*tree.Cursor {
+	if idx == nil {
+		return find()
+	}
+	idx.holdersOnce.Do(func() { idx.holders = find() })
+	return idx.holders
 }
 
 // Canonical returns c with list entries named by index, the form the

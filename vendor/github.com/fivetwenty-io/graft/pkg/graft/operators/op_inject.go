@@ -5,6 +5,7 @@ import (
 
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/oploc"
 	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -35,17 +36,22 @@ func (InjectOperator) Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cur
 			// operator_helpers.go's ResolveOperatorArgument doc comment on
 			// the same condition). It contributes no dependency; Run will
 			// report the error when it tries to resolve the argument.
-			if arg.Reference == nil {
+			if arg.Reference == nil || len(locs) == 0 {
 				continue
 			}
-			for _, other := range locs {
-				canon, err := arg.Reference.Canonical(ev.Tree)
-				if err != nil {
-					return []*tree.Cursor{}
-				}
-				if other.Under(canon) {
-					l = append(l, other)
-				}
+			// A reference that does not resolve gives no
+			// dependencies at all, as it always has.
+			canon, err := arg.Reference.Canonical(ev.Tree)
+			if err != nil {
+				return []*tree.Cursor{}
+			}
+			// The operators strictly under the map, from the
+			// index the evaluator builds for the phase, so the
+			// cost is the paths returned rather than every
+			// operator's path.
+			if len(canon.Nodes) > 0 {
+				idx := oploc.For(ev, locs, ev.Tree)
+				l = append(l, idx.Under(canon.Nodes, canon.Nodes)...)
 			}
 		case OperatorCall:
 			// Get dependencies from nested operator, preferring ev's
@@ -96,7 +102,6 @@ func resolveInjectArg(ev *Evaluator, arg *Expr, viaOr bool) (interface{}, error)
 		if arg.Reference == nil {
 			return nil, fmt.Errorf("unable to resolve reference: @%s is a target, not a value", arg.Name)
 		}
-		arg.Reference.Nodes = ResolveEnv(arg.Reference.Nodes)
 		val, err := arg.Reference.ResolveLiteral(ev.Tree)
 		if err != nil && viaOr {
 			return nil, fmt.Errorf("unable to resolve `%s`: %w", arg.Reference.String(), err)

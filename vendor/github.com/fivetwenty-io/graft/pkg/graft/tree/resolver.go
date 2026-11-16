@@ -3,30 +3,18 @@ package tree
 import (
 	"fmt"
 	"reflect"
-	"regexp"
 	"strconv"
 
+	"github.com/fivetwenty-io/graft/internal/cursorpath"
 	"github.com/fivetwenty-io/graft/internal/errtext"
 
 	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
-// predicateSegmentPattern matches a list-predicate path segment such as
-// "name=primary": a field name, "=", and the value
-// to match against that field on each map element of a list. Both the
-// bracketed form ("servers[name=primary]") and the dotted form
-// ("servers.name=primary") produce this exact segment string via
-// ParseCursor/the tokenizer, so one regex and one search serves both.
-var predicateSegmentPattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$`)
-
 // parsePredicateSegment reports whether node is a list-predicate segment
 // ("field=value") and, if so, returns the field and value to match.
 func parsePredicateSegment(node string) (field, value string, ok bool) {
-	m := predicateSegmentPattern.FindStringSubmatch(node)
-	if m == nil {
-		return "", "", false
-	}
-	return m[1], m[2], true
+	return cursorpath.Predicate(node)
 }
 
 // IsPredicateSegment reports whether node has the "field=value" shape

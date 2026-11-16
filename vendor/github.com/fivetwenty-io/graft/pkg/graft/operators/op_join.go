@@ -2,11 +2,15 @@ package operators
 
 import (
 	"fmt"
+	"maps"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/prunekeys"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -23,8 +27,12 @@ func (JoinOperator) Phase() OperatorPhase {
 	return EvalPhase
 }
 
-// Dependencies returns the nodes that (( join ... )) requires to be resolved.
-func (JoinOperator) Dependencies(ev *Evaluator, args []*Expr, _ []*tree.Cursor, auto []*tree.Cursor) []*tree.Cursor {
+// Dependencies returns the nodes that (( join ... )) requires to be
+// resolved. A reference argument also waits for every operator under
+// the path it names, the way stringify does, and so does a reference on
+// either side of a ||, so join never reads an operator's text and a
+// read of its own ancestor is a cycle.
+func (JoinOperator) Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cursor, auto []*tree.Cursor) []*tree.Cursor {
 	deps := make([]*tree.Cursor, 0, len(auto))
 	deps = append(deps, auto...)
 
@@ -35,9 +43,16 @@ func (JoinOperator) Dependencies(ev *Evaluator, args []*Expr, _ []*tree.Cursor, 
 			continue
 		}
 
+		if arg.Type == LogicalOr {
+			deps = append(deps, readDeps(ev, arg, locs, true)...)
+			continue
+		}
+
 		// For reference arguments, we need to check if they point to lists
 		// and expand them to individual element dependencies
 		if arg.Type == Reference && arg.Reference != nil {
+			deps = append(deps, locsUnder(ev, arg.Reference, locs)...)
+
 			// Try to resolve to see if it's a list
 			val, err := arg.Reference.Resolve(ev.Tree)
 			val = literal.Strip(val)
@@ -62,6 +77,13 @@ func (JoinOperator) Dependencies(ev *Evaluator, args []*Expr, _ []*tree.Cursor, 
 	}
 
 	return deps
+}
+
+// SoftDependencies returns the operators above a key that will be
+// pruned, so join finds the key in the map that holds it and leaves it
+// out. See prunedKeyHolders.
+func (JoinOperator) SoftDependencies(ev *Evaluator, _ []*Expr, locs []*tree.Cursor) []*tree.Cursor {
+	return prunedKeyHolders(ev, locs)
 }
 
 // Run ...
@@ -95,7 +117,7 @@ func (JoinOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			separator = fmt.Sprintf("%v", arg.Literal)
 		} else { // argument #1..n: list, literal, or expression
 			// Use ResolveOperatorArgument to handle nested expressions
-			val, fromEnv, err := resolveNotingEnv(ev, arg)
+			val, leaf, err := resolveNotingLeaf(ev, arg)
 			if err != nil {
 				DEBUG("     [%d]: resolution failed\n    error: %s", i, err)
 				// ResolveOperatorArgument already formats reference resolution
@@ -103,6 +125,10 @@ func (JoinOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 				return nil, err
 			}
 
+			fromEnv := leaf != nil && leaf.Type == EnvVar
+			if _, ok := val.(map[string]interface{}); ok && !fromEnv {
+				val = withoutPrunedKeys(ev, val)
+			}
 			parts, err := joinParts(i, val, fromEnv)
 			if err != nil {
 				return nil, err
@@ -172,6 +198,148 @@ func joinParts(i int, val interface{}, fromEnv bool) ([]string, error) {
 	}
 	DEBUG("     [%d]: resolved to a literal value", i)
 	return []string{fmt.Sprintf("%v", val)}, nil
+}
+
+// withoutPrunedKeys returns val without the map keys that will be
+// pruned, at any depth, since they will not be in the output. A pruned
+// entry of a list is gone from the list before join or stringify reads
+// it, and a pruned key of a map is left out the same way. A grab hands
+// back the map it reads, not a copy, so a key is matched by the map that
+// holds it in the tree, whether the operator reached that map through a
+// reference or a nested call. val is returned as it is when no key in
+// it will be pruned, and without a look at the paths to prune when it
+// holds no map, so a reader of a list pays nothing for them.
+func withoutPrunedKeys(ev *Evaluator, val interface{}) interface{} {
+	if !holdsMap(val) {
+		return val
+	}
+	pruned := prunedKeysByMap(ev)
+	if len(pruned) == 0 {
+		return val
+	}
+	out, _ := dropPrunedKeys(val, pruned, map[uintptr]bool{})
+	return out
+}
+
+// holdsMap reports whether val is a map or a list that holds one at
+// any depth.
+func holdsMap(val interface{}) bool {
+	switch v := val.(type) {
+	case map[string]interface{}:
+		return true
+	case []interface{}:
+		for _, e := range v {
+			if holdsMap(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// prunedKeysByMap returns, for each map in the tree that holds a key
+// that will be pruned, the set of those keys, keyed by the map's
+// address. A key will be pruned when an operator has queued it, or when
+// the caller prunes it after evaluation, as graft merge --prune does.
+func prunedKeysByMap(ev *Evaluator) map[uintptr]map[string]bool {
+	if ev == nil || ev.Tree == nil {
+		return nil
+	}
+	var out map[uintptr]map[string]bool
+	for _, path := range prunekeys.For(ev) {
+		c, err := tree.ParseCursor(path)
+		if err != nil || len(c.Nodes) == 0 {
+			continue
+		}
+		key := c.Pop()
+		pm, ok := prunedKeyParent(ev, c)
+		if !ok {
+			continue
+		}
+		if _, ok := pm[key]; !ok {
+			continue
+		}
+		if out == nil {
+			out = map[uintptr]map[string]bool{}
+		}
+		p := reflect.ValueOf(pm).Pointer()
+		if out[p] == nil {
+			out[p] = map[string]bool{}
+		}
+		out[p][key] = true
+	}
+	return out
+}
+
+// prunedKeyParent returns the map at the path c, which holds a key that
+// will be pruned. A grab on the way that has not run yet is read
+// through, as resolvePastGrabs says.
+func prunedKeyParent(ev *Evaluator, c *tree.Cursor) (map[string]interface{}, bool) {
+	parent, err := c.Resolve(ev.Tree)
+	if pm, ok := parent.(map[string]interface{}); err == nil && ok {
+		return pm, pm != nil
+	}
+	parent, found := resolvePastGrabs(ev, c.Nodes)
+	if found != pastFound {
+		return nil, false
+	}
+	pm, ok := parent.(map[string]interface{})
+	return pm, ok && pm != nil
+}
+
+// dropPrunedKeys returns val with every key in pruned left out of the
+// maps it holds, at any depth, and reports whether anything changed. A
+// map or list that changes is copied, and the tree is left as it is.
+// seen holds the maps on the current path, so a map that holds itself
+// is not walked again.
+func dropPrunedKeys(val interface{}, pruned map[uintptr]map[string]bool, seen map[uintptr]bool) (interface{}, bool) {
+	switch v := val.(type) {
+	case map[string]interface{}:
+		if v == nil {
+			return val, false
+		}
+		p := reflect.ValueOf(v).Pointer()
+		if seen[p] {
+			return val, false
+		}
+		seen[p] = true
+		defer delete(seen, p)
+		var out map[string]interface{}
+		for k, e := range v {
+			if pruned[p][k] {
+				if out == nil {
+					out = maps.Clone(v)
+				}
+				delete(out, k)
+				continue
+			}
+			if ne, changed := dropPrunedKeys(e, pruned, seen); changed {
+				if out == nil {
+					out = maps.Clone(v)
+				}
+				out[k] = ne
+			}
+		}
+		if out == nil {
+			return val, false
+		}
+		return out, true
+	case []interface{}:
+		var out []interface{}
+		for i, e := range v {
+			if ne, changed := dropPrunedKeys(e, pruned, seen); changed {
+				if out == nil {
+					out = slices.Clone(v)
+				}
+				out[i] = ne
+			}
+		}
+		if out == nil {
+			return val, false
+		}
+		return out, true
+	}
+	return val, false
 }
 
 //nolint:gochecknoinits // Operator registration must happen at package load time

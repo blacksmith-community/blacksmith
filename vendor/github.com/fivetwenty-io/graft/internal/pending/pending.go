@@ -268,9 +268,24 @@ func (e *NotEvaluatedError) Is(target error) bool {
 	return target == ErrNotEvaluated
 }
 
+// ErrUnknownOperator is matched by the error for a call to an operator
+// that is not registered. Its text is "unknown operator", and the error
+// that wraps it adds the operator's name.
+var ErrUnknownOperator = errors.New("unknown operator")
+
+// UnknownOperator returns the error for a call to the operator name,
+// which is not registered. It reads "unknown operator: <name>" and
+// matches ErrUnknownOperator.
+func UnknownOperator(name string) error {
+	return fmt.Errorf("%w: %s", ErrUnknownOperator, name)
+}
+
 // StopsFallback reports whether err must not be answered by trying the
-// other side of a || fallback: a refused literal, or a grab of an
-// operator that has not run, whose fallback would hide a wrong order.
+// other side of a || fallback: a refused literal, a grab of an
+// operator that has not run, whose fallback would hide a wrong order,
+// or a call to an operator that does not exist, whose fallback would
+// hide a mistake in the template.
 func StopsFallback(err error) bool {
-	return literal.IsRefusal(err) || errors.Is(err, ErrNotEvaluated)
+	return literal.IsRefusal(err) || errors.Is(err, ErrNotEvaluated) ||
+		errors.Is(err, ErrUnknownOperator)
 }

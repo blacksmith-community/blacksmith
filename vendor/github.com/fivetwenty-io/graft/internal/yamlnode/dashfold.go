@@ -53,10 +53,13 @@ func readDashContinuations(toks token.Tokens) {
 	}
 }
 
-// hasDashContinuation reports whether a line of origin after its first
-// starts with "-" once its indentation is set aside.
+// hasDashContinuation reports whether a line of origin after the
+// scalar's first line starts with "-" once its indentation is set aside.
+// An Origin starts with the blanks and line breaks before the scalar,
+// so a scalar on a line of its own, such as the value -1 under its key,
+// has its first line after them, and that line is no continuation.
 func hasDashContinuation(origin string) bool {
-	_, rest, ok := strings.Cut(origin, "\n")
+	_, rest, ok := strings.Cut(strings.TrimLeft(origin, " \t\r\n"), "\n")
 	for ok {
 		var line string
 		line, rest, ok = strings.Cut(rest, "\n")

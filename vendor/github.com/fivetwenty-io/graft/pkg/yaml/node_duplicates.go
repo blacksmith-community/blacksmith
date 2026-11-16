@@ -1,6 +1,7 @@
 package yaml
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/fivetwenty-io/graft/internal/yamlnode"
@@ -14,17 +15,45 @@ import (
 // mapping become one, as mapping describes. Keys that are aliases or
 // collections are left alone. A node reached a second time, through an
 // alias, is not walked again.
-func collapseDuplicates(root *Node, report func(DuplicateKey)) {
-	w := nodeDupWalker{report: report, seen: make(map[*Node]bool)}
+//
+// When last is set, the last repeat's pair is kept at its own place, and
+// every earlier pair with the same slot is dropped instead. A decode
+// into a map reads keys such as 1 and +1 as one key, and the last pair
+// that gives a key wins, so a pair written between two repeats must
+// still lose to the later one. The pairs with the same slot hold keys
+// that a map with string keys holds as one, such as ~ and null, which
+// the later repeat writes over in any case. A Node keeps the first
+// place, and only a decode that goes on into Go values sets last. A
+// mapping with a merge key keeps the first place either way, since the
+// merge fold of the text route keeps each key where it was first
+// written, as yamlcodec's mergeExpander does.
+//
+// When last is set, it returns the pairs each mapping it changed held
+// before, or nil when it changed none. The decode into Go values reads
+// those pairs, as writtenPairs describes.
+func collapseDuplicates(root *Node, report func(DuplicateKey), last bool) writtenPairs {
+	w := &nodeDupWalker{report: report, seen: make(map[*Node]bool), last: last}
 	w.walk(root, "")
+	return w.written
 }
 
 type nodeDupWalker struct {
-	report func(DuplicateKey)
-	seen   map[*Node]bool
+	report  func(DuplicateKey)
+	seen    map[*Node]bool
+	written writtenPairs
+	last    bool
 }
 
-func (w nodeDupWalker) walk(n *Node, path string) {
+// writtenPairs holds, for each mapping whose pairs OnDuplicateKey's fold
+// changed on the way to a decode into Go values, the Content it held
+// before the fold, with every pair the text wrote. The fold reads a key
+// as its text, so it takes keys such as a null and the string null, or
+// 1 and "1", for one key, though a map with interface keys holds them
+// as two. The decode reads these pairs in turn, as it reads the text,
+// and the Nodes that methods receive keep the fold.
+type writtenPairs map[*Node][]*Node
+
+func (w *nodeDupWalker) walk(n *Node, path string) {
 	if n == nil || w.seen[n] {
 		return
 	}
@@ -67,12 +96,13 @@ func (w nodeDupWalker) walk(n *Node, path string) {
 // refusedMerge describes, the merge keys stay as they are, so that a
 // decode fails at the merge key the text route fails at, and not at a
 // sequence that hides an alias to a list.
-func (w nodeDupWalker) mapping(n *Node, path string) {
+func (w *nodeDupWalker) mapping(n *Node, path string) {
 	var keys yamlnode.KeySet[*Node]
 	lastAt := make(map[string]int, len(n.Content)/2)
 	var kept []keptPair
 	var m merges
 	combine := !refusedMerge(n)
+	move := w.last && !holdsMergeKey(n)
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i], n.Content[i+1]
 		if isMergeKey(key) {
@@ -97,31 +127,70 @@ func (w nodeDupWalker) mapping(n *Node, path string) {
 			child += key.Value
 			id := yamlnode.KeyID{Text: key.Value, Null: yamlnode.ShortTag(key.Tag) == yamlnode.TagNull}
 			pair.slot, pair.scalar = id.Slot(), true
-			if first, repeat := keys.Add(id, key); repeat {
+			first, repeat := keys.Add(id, key)
+			if repeat {
 				w.report(DuplicateKey{Path: child, Line: key.Line, Column: key.Column, FirstLine: first.Line, FirstColumn: first.Column})
+			}
+			at, held := lastAt[id.Slot()]
+			switch {
+			case repeat && !move:
 				w.walk(val, child)
-				at := lastAt[id.Slot()]
 				kept[at].val, kept[at].last = val, i
 				continue
+			case repeat:
+				dropSlot(kept, at)
+			case held:
+				pair.prev = at + 1
 			}
 			lastAt[id.Slot()] = len(kept)
 		}
 		w.walk(val, child)
 		kept = append(kept, pair)
 	}
-	out := make([]*Node, 0, len(n.Content))
-	for _, pair := range m.arrange(kept) {
-		out = append(out, pair.key, pair.val)
+	w.replace(n, contentOf(m.arrange(kept), n.Content))
+}
+
+// replace sets the Content of the mapping n to pairs. When last is set
+// and pairs differ from what n held, it keeps what n held in written.
+func (w *nodeDupWalker) replace(n *Node, pairs []*Node) {
+	if w.last && !slices.Equal(pairs, n.Content) {
+		if w.written == nil {
+			w.written = make(writtenPairs)
+		}
+		w.written[n] = n.Content
 	}
-	if len(n.Content)%2 == 1 {
-		out = append(out, n.Content[len(n.Content)-1])
+	n.Content = pairs
+}
+
+// contentOf returns the Content of a mapping that holds pairs, leaving
+// out the pairs a later repeat dropped. A lone key at the end of old,
+// the mapping's Content before, stays at the end.
+func contentOf(pairs []keptPair, old []*Node) []*Node {
+	out := make([]*Node, 0, len(old))
+	for _, pair := range pairs {
+		if !pair.dropped {
+			out = append(out, pair.key, pair.val)
+		}
 	}
-	n.Content = out
+	if len(old)%2 == 1 {
+		out = append(out, old[len(old)-1])
+	}
+	return out
 }
 
 // isMergeKey reports whether key is a << merge key.
 func isMergeKey(key *Node) bool {
 	return key != nil && key.Kind == ScalarNode && key.Tag == yamlnode.TagMerge
+}
+
+// holdsMergeKey reports whether the mapping n holds a << merge key.
+func holdsMergeKey(n *Node) bool {
+	for i := 0; i < len(n.Content); i += 2 {
+		if isMergeKey(n.Content[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // refusedMerge reports whether the mapping n holds a merge key whose
@@ -164,12 +233,29 @@ func refusedMerge(n *Node) bool {
 
 // keptPair is a pair mapping keeps. last is the index in Content of the
 // last pair whose value it holds, slot is the key a map holds for its
-// key, and scalar says its key is a scalar, and so has a slot.
+// key, and scalar says its key is a scalar, and so has a slot. dropped
+// says a later repeat's pair takes its place, and prev, when not 0, is
+// one more than the index among the kept pairs of the pair before it
+// with the same slot, which a repeat drops as well.
 type keptPair struct {
 	key, val *Node
 	last     int
 	slot     string
 	scalar   bool
+	dropped  bool
+	prev     int
+}
+
+// dropSlot drops the kept pair at index at and every pair before it
+// with the same slot.
+func dropSlot(kept []keptPair, at int) {
+	for {
+		kept[at].dropped = true
+		if kept[at].prev == 0 {
+			return
+		}
+		at = kept[at].prev - 1
+	}
 }
 
 // merges gathers the merge keys of one mapping. at is the index among

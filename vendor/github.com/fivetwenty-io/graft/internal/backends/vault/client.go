@@ -16,6 +16,7 @@ import (
 	api "github.com/hashicorp/vault/api"
 
 	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/vaultca"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 )
 
@@ -115,9 +116,13 @@ func (vcp *ClientPool) getTargetConfig(targetName string, engine graft.Engine) (
 	envPrefix := fmt.Sprintf("VAULT_%s_", strings.ToUpper(targetName))
 
 	config := &Target{
-		URL:       os.Getenv(envPrefix + "ADDR"),
-		Token:     os.Getenv(envPrefix + "TOKEN"),
-		Namespace: os.Getenv(envPrefix + "NAMESPACE"),
+		URL:         os.Getenv(envPrefix + "ADDR"),
+		Token:       os.Getenv(envPrefix + "TOKEN"),
+		Namespace:   os.Getenv(envPrefix + "NAMESPACE"),
+		CACert:      os.Getenv(envPrefix + "CACERT"),
+		CAPath:      os.Getenv(envPrefix + "CAPATH"),
+		caCertField: envPrefix + "CACERT",
+		caPathField: envPrefix + "CAPATH",
 	}
 
 	// Check for skip verify
@@ -134,8 +139,10 @@ func (vcp *ClientPool) getTargetConfig(targetName string, engine graft.Engine) (
 	return config, nil
 }
 
-// newAPIClient creates a hashicorp/vault/api Client with the given parameters.
-func newAPIClient(addr string, token string, namespace string, skip bool) (*api.Client, error) {
+// newAPIClient creates a hashicorp/vault/api Client with the given
+// parameters. When ca names a CA source, only its certificates are
+// trusted; otherwise the system roots are.
+func newAPIClient(addr string, token string, namespace string, skip bool, ca vaultca.Source) (*api.Client, error) {
 	parsedURL, err := url.Parse(addr)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse Vault URL `%s': %w", addr, err)
@@ -150,10 +157,18 @@ func newAPIClient(addr string, token string, namespace string, skip bool) (*api.
 		}
 	}
 
-	// TLS configuration
-	roots, err := x509.SystemCertPool()
+	// TLS configuration. A CA problem fails here, before any request,
+	// and never falls back to the system roots.
+	roots, err := vaultca.Load(ca)
 	if err != nil {
-		return nil, fmt.Errorf("unable to retrieve system root certificate authorities: %w", err)
+		return nil, err
+	}
+
+	if roots == nil {
+		roots, err = x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("unable to retrieve system root certificate authorities: %w", err)
+		}
 	}
 
 	httpClient := &http.Client{
@@ -198,7 +213,20 @@ func CreateClientFromConfig(config *Target) (Reader, error) {
 	token := os.ExpandEnv(config.Token)
 	namespace := os.ExpandEnv(config.Namespace)
 
-	client, err := newAPIClient(addr, token, namespace, config.SkipVerify)
+	ca := vaultca.Source{
+		CACert:      os.ExpandEnv(config.CACert),
+		CAPath:      os.ExpandEnv(config.CAPath),
+		CACertField: config.caCertField,
+		CAPathField: config.caPathField,
+	}
+	if ca.CACertField == "" {
+		ca.CACertField = "Target.CACert"
+	}
+	if ca.CAPathField == "" {
+		ca.CAPathField = "Target.CAPath"
+	}
+
+	client, err := newAPIClient(addr, token, namespace, config.SkipVerify, ca)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +279,15 @@ func InitializeClient() error {
 		return fmt.Errorf("failed to determine Vault URL / token, and the $REDACT environment variable is not set")
 	}
 
-	client, err := newAPIClient(addr, token, namespace, skip)
+	// The Vault CLI's CA variables; set-but-empty counts as unset.
+	ca := vaultca.Source{
+		CACert:      os.Getenv("VAULT_CACERT"),
+		CAPath:      os.Getenv("VAULT_CAPATH"),
+		CACertField: "VAULT_CACERT",
+		CAPathField: "VAULT_CAPATH",
+	}
+
+	client, err := newAPIClient(addr, token, namespace, skip, ca)
 	if err != nil {
 		return err
 	}

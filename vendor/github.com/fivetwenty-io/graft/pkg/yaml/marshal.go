@@ -63,7 +63,13 @@ func Marshal(v any) ([]byte, error) {
 // and no output for a KeyOrder other than the zero value, which means
 // sortkeys.Spruce, and sortkeys.Lexical, or for an Indent outside 0 and
 // 2 through 9.
-func MarshalWith(v any, opts EncodeOptions) (out []byte, err error) {
+func MarshalWith(v any, opts EncodeOptions) ([]byte, error) {
+	return marshalWith(v, opts, false)
+}
+
+// marshalWith is MarshalWith, and with documentStart it puts a "---" line
+// before the document in the same buffer.
+func marshalWith(v any, opts EncodeOptions, documentStart bool) (out []byte, err error) {
 	mode := opts.KeyOrder
 	switch mode {
 	case "":
@@ -96,7 +102,7 @@ func MarshalWith(v any, opts EncodeOptions) (out []byte, err error) {
 			return nil, werr
 		}
 	}
-	out, err = yamlcodec.MarshalYAMLTypedLayout(generic, less, yamlcodec.Layout{Indent: opts.Indent, IndentSequence: opts.IndentSequence})
+	out, err = yamlcodec.MarshalYAMLTypedLayout(generic, less, yamlcodec.Layout{Indent: opts.Indent, IndentSequence: opts.IndentSequence, DocumentStart: documentStart})
 	if err != nil {
 		return nil, &encodeError{msg: "cannot encode Go value of type " + typeName(v)}
 	}

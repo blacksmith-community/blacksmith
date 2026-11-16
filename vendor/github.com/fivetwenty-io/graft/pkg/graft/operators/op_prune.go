@@ -29,7 +29,7 @@ func isIncluded(list []string, name string) bool {
 
 // PruneOperator marks the current path for deletion
 // Uses engine state: AddKeyToPrune()
-// Returns current value (allows references before deletion)
+// Gives nil to any reader before the deletion
 // Actual deletion happens in post-processing.
 type PruneOperator struct{}
 
@@ -53,30 +53,20 @@ func (PruneOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	DEBUG("running (( prune ... )) operation at $.%s", ev.Here)
 	defer DEBUG("done with (( prune ... )) operation at $.%s\n", ev.Here)
 
+	if ev.Here == nil {
+		// With no path there is no key to prune or value to keep.
+		return &Response{Type: Replace, Value: nil}, nil
+	}
+
 	engine := graft.GetEngine(ev)
 	// Quoted keeps a dotted node, such as a Genesis network name, whole
 	// when the prune step splits this path again
 	addToPruneListIfNecessary(engine, ev.Here.Quoted())
 
-	// Get the current value at this location
-	val, err := ev.Here.Resolve(ev.Tree)
-	if err != nil {
-		DEBUG("  failed to resolve current value: %s", err)
-		// If we can't resolve the current value, just return a nil replacement
-		return &Response{
-			Type:  Replace,
-			Value: nil,
-		}, nil
-	}
-
-	DEBUG("  current value at %s: %T(%v)", ev.Here, val, val)
-
-	// Return the current value unchanged - just mark it for pruning at the end
-	// This allows other operators to still reference the value
-	return &Response{
-		Type:  Replace,
-		Value: val,
-	}, nil
+	// The value at this path is the call itself, so an operator that
+	// reads the key before the prune step removes it gets nil, as in
+	// spruce, and never the call's text.
+	return &Response{Type: Replace, Value: nil}, nil
 }
 
 //nolint:gochecknoinits // Operator registration must happen at package load time

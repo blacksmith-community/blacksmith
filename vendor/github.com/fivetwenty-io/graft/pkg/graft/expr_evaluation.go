@@ -12,8 +12,6 @@ import (
 const literalTrue = "true"
 
 // EvaluateExpr evaluates an expression, including nested operator calls.
-//
-//nolint:gocyclo // expression evaluation requires handling all expression types
 func EvaluateExpr(e *Expr, ev *Evaluator) (*Response, error) {
 	if e == nil {
 		return nil, NewExprEvaluationError("nil expression", Position{})
@@ -63,7 +61,9 @@ func EvaluateExpr(e *Expr, ev *Evaluator) (*Response, error) {
 		// LogicalOr implements fallback behavior in Graft:
 		// Try left side first, if it fails (error), try right side
 		// This is NOT boolean OR - it returns the actual value, not true/false
-		left, err := EvaluateExpr(e.Left, ev)
+		left, err := orOperand(e.Left, func(x *Expr) (*Response, error) {
+			return EvaluateExpr(x, ev)
+		})
 		if err == nil {
 			// Left side succeeded, use its value
 			return left, nil
@@ -73,14 +73,9 @@ func EvaluateExpr(e *Expr, ev *Evaluator) (*Response, error) {
 			// is never a reason to fall back.
 			return nil, err
 		}
-		// Left side failed, check if right side is prune
-		if e.Right != nil && e.Right.Type == OperatorCall && e.Right.Operator == "prune" {
-			// Mark the current path for pruning
-			engine := GetEngine(ev)
-			if engine != nil && engine.GetOperatorState() != nil {
-				engine.GetOperatorState().AddKeyToPrune(ev.Here.Quoted())
-			}
-			// Return a special prune response
+		// Left side failed, so a (( prune )) on the right prunes
+		// the key
+		if pruneFallback(e.Right, ev) {
 			return &Response{
 				Type:  Replace,
 				Value: nil, // This will be pruned later

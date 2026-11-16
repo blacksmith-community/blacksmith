@@ -159,15 +159,32 @@ type Engine interface {
 	ParseFile(path string) (Document, error)
 	ParseReader(reader io.Reader) (Document, error)
 
+	// Context variants stop with an error that wraps ctx.Err() once ctx
+	// is done, checking on entry and again after parsing. They return what
+	// the plain forms return while ctx is live.
+	ParseYAMLContext(ctx context.Context, data []byte) (Document, error)
+	ParseJSONContext(ctx context.Context, data []byte) (Document, error)
+	ParseFileContext(ctx context.Context, path string) (Document, error)
+	ParseReaderContext(ctx context.Context, r io.Reader) (Document, error)
+
 	// Merge operations with builder pattern options
 	Merge(ctx context.Context, docs ...Document) MergeBuilder
 	MergeFiles(ctx context.Context, paths ...string) MergeBuilder
 	MergeReaders(ctx context.Context, readers ...io.Reader) MergeBuilder
 
-	// Evaluate processes operators in a document. It resolves them in
-	// doc itself, so doc must not be used by another call while Evaluate
-	// runs. Concurrent Evaluate calls on one engine are safe; each keeps
-	// its own operator state (see the Engine doc comment).
+	// Evaluate processes operators in a document. It first does to
+	// doc's lists what a merge of doc alone does, so it resolves each
+	// array marker, such as (( append )), and removes each (( prune ))
+	// entry, and an index into a list counts only the entries that
+	// stay. It returns the merger's error for a marker a merge refuses,
+	// and the cycle error a merge gives for a document that holds
+	// itself.
+	// It resolves the operators in doc itself, and removes the keys
+	// they prune from doc itself, so doc must not be used by another
+	// call while Evaluate runs, and holds the evaluated result once it
+	// returns. A caller that needs the document as it was should pass
+	// doc.Clone(). Concurrent Evaluate calls on one engine are safe;
+	// each keeps its own operator state (see the Engine doc comment).
 	Evaluate(ctx context.Context, doc Document) (Document, error)
 
 	// Diff computes the differences between a and b using
@@ -182,6 +199,18 @@ type Engine interface {
 	ToYAML(doc Document) ([]byte, error)
 	ToJSON(doc Document) ([]byte, error)
 	ToJSONIndent(doc Document, indent string) ([]byte, error)
+
+	// DiffContext is DiffWithOptions under ctx. It returns a nil
+	// DiffResult and an error that wraps ctx.Err() once ctx is done. It
+	// also returns a nil DiffResult and an error for a nil document,
+	// where DiffWithOptions gives an empty result.
+	DiffContext(ctx context.Context, a, b Document, opts *DiffOptions) (DiffResult, error)
+	// ToYAMLContext, ToJSONContext, and ToJSONIndentContext are the
+	// output operations under ctx. ctx reaches the evaluation, so a
+	// cancel stops it between operators, and the error wraps ctx.Err().
+	ToYAMLContext(ctx context.Context, doc Document) ([]byte, error)
+	ToJSONContext(ctx context.Context, doc Document) ([]byte, error)
+	ToJSONIndentContext(ctx context.Context, doc Document, indent string) ([]byte, error)
 
 	// Operator management
 	RegisterOperator(name string, op Operator) error

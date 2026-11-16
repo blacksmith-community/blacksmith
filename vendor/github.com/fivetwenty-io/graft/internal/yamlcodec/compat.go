@@ -628,9 +628,10 @@ const maxExpandedNodes = 400_000
 // anchorWalk. Each alias takes the bound node itself rather than a deep
 // copy. That is safe because nothing changes the tree after expansion,
 // and goccy decodes a fresh value each time it meets a node. It fails a
-// document that expands past maxExpandedNodes with the recursion text.
-// CheckAnchors must pass first, since an alias inside its own anchor's
-// value is left in place.
+// document that expands past maxExpandedNodes with the recursion text,
+// and an alias to a name no anchor before it defines with goccy's own
+// error for it. CheckAnchors must pass first, since an alias inside its
+// own anchor's value is left in place.
 func ExpandAliases(body ast.Node) (ast.Node, error) {
 	x := &aliasExpander{bound: make(map[string]*expandedAnchor)}
 	n, _, err := x.expand(body)
@@ -662,7 +663,11 @@ func (x *aliasExpander) expand(n ast.Node) (ast.Node, int, error) {
 		}
 		return e.node, e.size, nil
 	case *ast.AliasNode:
-		if e := x.bound[v.Value.GetToken().Value]; e != nil && e.node != nil {
+		e := x.bound[v.Value.GetToken().Value]
+		if e == nil {
+			return nil, 0, unknownAlias(v)
+		}
+		if e.node != nil {
 			return e.node, e.size, nil
 		}
 		return n, 1, nil
@@ -672,6 +677,15 @@ func (x *aliasExpander) expand(n ast.Node) (ast.Node, int, error) {
 		return nil, 0, err
 	}
 	return n, c.size, nil
+}
+
+// unknownAlias is the error goccy's decoder gives for a, an alias to
+// an anchor the document has not defined before it. The expansion
+// gives it in place of the decoder, since the fold of the merge keys
+// can drop the alias before the decoder would meet it.
+func unknownAlias(a *ast.AliasNode) error {
+	tk := a.Value.GetToken()
+	return &yaml.SyntaxError{Message: fmt.Sprintf("could not find alias %q", tk.Value), Token: tk}
 }
 
 // expandCount expands one node's children and counts the node with

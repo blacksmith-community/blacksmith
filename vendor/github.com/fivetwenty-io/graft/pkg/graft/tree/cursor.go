@@ -3,71 +3,26 @@ package tree
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/fivetwenty-io/graft/internal/cursorpath"
 	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // ParseCursor parses a string path into a Cursor object.
 func ParseCursor(s string) (*Cursor, error) {
-	var nodes []string
-	node := bytes.NewBuffer([]byte{})
-	bracketed := false
-
-	push := func() {
-		if node.Len() == 0 {
-			return
+	nodes, err := cursorpath.Parse(s)
+	if err != nil {
+		var se cursorpath.SyntaxError
+		if errors.As(err, &se) {
+			return nil, SyntaxError{Problem: se.Problem, Position: se.Position}
 		}
-		nodeStr := node.String()
-		if len(nodes) == 0 && nodeStr == "$" {
-			node.Reset()
-			return
-		}
-
-		nodes = append(nodes, nodeStr)
-		node.Reset()
+		return nil, err
 	}
-
-	for pos, c := range s {
-		switch c {
-		case '.':
-			if bracketed {
-				node.WriteRune(c)
-			} else {
-				push()
-			}
-
-		case '[':
-			if bracketed {
-				return nil, SyntaxError{
-					Problem:  "unexpected '['",
-					Position: pos,
-				}
-			}
-			push()
-			bracketed = true
-
-		case ']':
-			if !bracketed {
-				return nil, SyntaxError{
-					Problem:  "unexpected ']'",
-					Position: pos,
-				}
-			}
-			push()
-			bracketed = false
-
-		default:
-			node.WriteRune(c)
-		}
-	}
-	push()
-
-	return &Cursor{
-		Nodes: nodes,
-	}, nil
+	return &Cursor{Nodes: nodes}, nil
 }
 
 // BracketsOf re-parses a path string and reports which of its resulting
@@ -183,12 +138,7 @@ func (c *Cursor) String() string {
 // brackets, because a bare '.' would split it into several nodes. Any
 // other node is returned unchanged, and so is a node that already holds a
 // '[' or ']', since no path spelling can carry such a node whole.
-func QuoteNode(node string) string {
-	if strings.Contains(node, ".") && !strings.ContainsAny(node, "[]") {
-		return "[" + node + "]"
-	}
-	return node
-}
+func QuoteNode(node string) string { return cursorpath.Quote(node) }
 
 // Quoted returns the cursor as a dot-separated string, like String, but
 // with each node spelled by QuoteNode, so that ParseCursor and SplitPath

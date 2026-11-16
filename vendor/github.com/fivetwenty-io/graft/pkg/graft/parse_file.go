@@ -1,6 +1,7 @@
 package graft
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -48,31 +49,19 @@ func isJSONPath(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".json")
 }
 
-// ParseFile parses a file into a Document, auto-detecting the format from
-// the path's extension: ".json" is parsed with ParseJSON, everything else
-// with ParseYAML (YAML is a superset of JSON, so a ".yml"/".yaml" file -
-// or one with no recognized extension - containing JSON still parses
-// correctly). A path of "-" reads from STDIN instead of disk, matching
-// graft's other file-consuming commands; STDIN that is not actually piped
-// is treated as empty input rather than blocking.
-//
-// A YAML document whose root is an array (rather than a map) is retried
-// as a go-patch operation list (see ParseGoPatch, NewGoPatchDocument):
-// ParseFile has no flag to opt into go-patch parsing the way
-// `graft merge --go-patch` does, so the document's own shape is the only
-// signal available to decide.
-//
-// File-read errors are returned exactly as os.ReadFile/os.Stdin.Stat
-// produce them (not wrapped), so callers can use os.IsNotExist to tell a
-// missing file apart from a parse failure.
-func (e *DefaultEngine) ParseFile(path string) (Document, error) {
+// parseFile is the body of ParseFile and ParseFileContext. It checks ctx
+// between reading and parsing, and the parse itself checks it again.
+func (e *DefaultEngine) parseFile(ctx context.Context, path string) (Document, error) {
+	if err := parseCanceled(ctx, "reading "+path); err != nil {
+		return nil, err
+	}
 	data, displayPath, err := readSource(path)
 	if err != nil {
 		return nil, err
 	}
 
 	if isJSONPath(path) {
-		doc, jsonErr := e.ParseJSON(data)
+		doc, jsonErr := e.ParseJSONContext(ctx, data)
 		if jsonErr != nil {
 			return nil, fmt.Errorf("%s: %w", displayPath, jsonErr)
 		}
@@ -84,29 +73,16 @@ func (e *DefaultEngine) ParseFile(path string) (Document, error) {
 		if patchErr != nil {
 			return nil, fmt.Errorf("%s: %w", displayPath, patchErr)
 		}
+		// This route skips ParseYAMLContext's check after parsing.
+		// ParseFileContext checks ctx once more before it returns.
 		return NewGoPatchDocument(ops), nil
 	}
 
-	doc, yamlErr := e.ParseYAML(data)
+	doc, yamlErr := e.ParseYAMLContext(ctx, data)
 	if yamlErr != nil {
 		return nil, fmt.Errorf("%s: %w", displayPath, yamlErr)
 	}
 	return doc, nil
-}
-
-// ParseReader parses YAML content (which is a superset of JSON, so plain
-// JSON content works too) read from reader into a Document. Unlike
-// ParseFile, there is no path/extension to dispatch on and no go-patch
-// fallback: a reader has no filename to signal go-patch intent from,
-// matching the documented contract (engine.md) that ParseReader always
-// treats its content as YAML.
-func (e *DefaultEngine) ParseReader(reader io.Reader) (Document, error) {
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("error reading input: %w", err)
-	}
-
-	return e.ParseYAML(data)
 }
 
 // ParseMultiDocFile reads path (or STDIN for "-", per ParseFile's
