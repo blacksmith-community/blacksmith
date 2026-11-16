@@ -10,7 +10,12 @@ import (
 	"blacksmith/internal/api"
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/mutation"
+	"blacksmith/pkg/testutil"
+	vaultPkg "blacksmith/pkg/vault"
 )
+
+// guardedInstance is the service instance the guard tests hold.
+const guardedInstance = "7a1b"
 
 func TestUpgradeManagerUsesDependenciesGuard(t *testing.T) {
 	t.Parallel()
@@ -35,7 +40,7 @@ func TestDeploymentActionsUseDependenciesGuard(t *testing.T) {
 
 	guard := mutation.NewGuard(time.Now)
 
-	release, err := guard.Acquire("7a1b", "redis-7a1b", mutation.Holder{
+	release, err := guard.Acquire(guardedInstance, "redis-7a1b", mutation.Holder{
 		Kind:        mutation.KindCertificates,
 		Description: "certificate rotation of redis-7a1b",
 	})
@@ -46,6 +51,10 @@ func TestDeploymentActionsUseDependenciesGuard(t *testing.T) {
 
 	deps := createTestDependencies(t)
 	deps.Guard = guard
+
+	deps.Vault = &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
+		guardedInstance: {ID: guardedInstance, PlanID: "redis", DeploymentName: "redis-7a1b"},
+	}}
 
 	apiHandler := api.NewInternalAPI(deps)
 	t.Cleanup(apiHandler.UpgradeHandler().Stop)

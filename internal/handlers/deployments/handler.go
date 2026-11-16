@@ -139,6 +139,11 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if changesDeployment(req.Method, pathParts) &&
+		!h.refuseUnmanaged(req.Context(), writer, h.logger.Named("deployment-ownership"), deploymentName) {
+		return
+	}
+
 	if len(pathParts) == 1 {
 		h.handleRootDeploymentOperations(writer, req, deploymentName)
 
@@ -805,7 +810,7 @@ func (h *Handler) handleSubpathOperations(writer http.ResponseWriter, req *http.
 	operation := pathParts[1]
 
 	switch operation {
-	case "manifest":
+	case routeManifest:
 		h.handleManifestOperations(writer, req, deploymentName)
 	case "manifest-details":
 		if req.Method == http.MethodGet {
@@ -817,7 +822,7 @@ func (h *Handler) handleSubpathOperations(writer http.ResponseWriter, req *http.
 		h.handleVMsOperations(writer, req, deploymentName)
 	case "instances":
 		h.handleInstancesOperations(writer, req, deploymentName)
-	case "errands":
+	case routeErrands:
 		h.handleErrandsOperations(writer, req, deploymentName, pathParts)
 	case "events":
 		if req.Method == http.MethodGet {
@@ -825,13 +830,13 @@ func (h *Handler) handleSubpathOperations(writer http.ResponseWriter, req *http.
 		} else {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 		}
-	case "recreate":
+	case routeRecreate:
 		h.handleLifecycleOperation(writer, req, deploymentName, h.RecreateDeployment)
-	case "restart":
+	case routeRestart:
 		h.handleLifecycleOperation(writer, req, deploymentName, h.RestartDeployment)
-	case "stop":
+	case routeStop:
 		h.handleLifecycleOperation(writer, req, deploymentName, h.StopDeployment)
-	case "start":
+	case routeStart:
 		h.handleLifecycleOperation(writer, req, deploymentName, h.StartDeployment)
 	default:
 		writer.WriteHeader(http.StatusNotFound)

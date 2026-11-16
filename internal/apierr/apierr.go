@@ -36,6 +36,7 @@ const (
 	CodeInventoryDisabled    = "inventory_disabled"
 	CodeCommandsDisabled     = "commands_disabled"
 	CodeRootDisabled         = "root_disabled"
+	CodeDeploymentNotManaged = "deployment_not_managed"
 
 	// 401.
 	CodeCommandCredentialRequired = "command_credential_required" //nolint:gosec // An error code, not a credential.

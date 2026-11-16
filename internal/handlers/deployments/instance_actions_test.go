@@ -89,7 +89,7 @@ func (d *instanceDirector) RestartDeployment(ctx context.Context, name string, o
 	d.restarts = append(d.restarts, opts)
 	d.mu.Unlock()
 
-	return d.task(ctx, "RestartDeployment", name)
+	return d.task(ctx, callRestart, name)
 }
 
 func (d *instanceDirector) RecreateDeployment(ctx context.Context, name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
@@ -211,7 +211,7 @@ func (l *auditLogger) audits() []string {
 
 func ownedVault() *testutil.InstanceVault {
 	return &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
-		ownedInstance: {ID: ownedInstance, ServiceID: "redis", PlanID: "redis-small", DeploymentName: ownedDeployment},
+		ownedInstance: {ID: ownedInstance, ServiceID: redisService, PlanID: "redis-small", DeploymentName: ownedDeployment},
 	}}
 }
 
@@ -300,7 +300,7 @@ func TestInstanceActionsRunOnTheOwnedDeployment(t *testing.T) {
 	t.Parallel()
 
 	for _, action := range []struct{ name, call string }{
-		{name: actionRestart, call: "RestartDeployment"},
+		{name: actionRestart, call: callRestart},
 		{name: actionRecreate, call: "RecreateDeployment"},
 	} {
 		t.Run(action.name, func(t *testing.T) {

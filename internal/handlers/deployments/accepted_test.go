@@ -93,7 +93,7 @@ func TestJobStateRouteWithForceLogsAWarningAndCarriesOn(t *testing.T) {
 
 	director := newAcceptingDirector()
 	log := &warningLogger{NoOpLogger: &logger.NoOpLogger{}}
-	handler := deployments.NewHandler(deployments.Dependencies{Logger: log, Director: director})
+	handler := deployments.NewHandler(deployments.Dependencies{Logger: log, Director: director, Vault: managingVault("dep-1")})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/dep-1/restart?force=true", nil)
 	recorder := httptest.NewRecorder()
@@ -129,7 +129,7 @@ func TestDeleteHandlerAnswersAcceptedWithTheTaskID(t *testing.T) {
 	t.Parallel()
 
 	director := newAcceptingDirector()
-	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director, Vault: managingVault("dep-1")})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/b/deployments/dep-1", nil)
 	recorder := httptest.NewRecorder()

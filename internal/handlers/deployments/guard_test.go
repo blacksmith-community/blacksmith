@@ -57,7 +57,7 @@ func (d *recordingDirector) RecreateDeployment(_ context.Context, name string, _
 }
 
 func (d *recordingDirector) RestartDeployment(_ context.Context, name string, _ bosh.RestartOpts) (*bosh.Task, error) {
-	return d.task("RestartDeployment", name)
+	return d.task(callRestart, name)
 }
 
 func (d *recordingDirector) StopDeployment(_ context.Context, name string, _ bosh.StopOpts) (*bosh.Task, error) {
@@ -126,7 +126,7 @@ func deploymentActions() []deploymentAction {
 	base := "/b/deployments/" + guardedDeployment
 
 	return []deploymentAction{
-		{name: "restart", method: http.MethodPost, path: base + "/restart", call: "RestartDeployment", accepted: http.StatusOK},
+		{name: "restart", method: http.MethodPost, path: base + "/restart", call: callRestart, accepted: http.StatusOK},
 		{name: "recreate", method: http.MethodPost, path: base + "/recreate", call: "RecreateDeployment", accepted: http.StatusOK},
 		{name: "stop", method: http.MethodPost, path: base + "/stop", call: "StopDeployment", accepted: http.StatusOK},
 		{name: "start", method: http.MethodPost, path: base + "/start", call: "StartDeployment", accepted: http.StatusOK},
@@ -179,6 +179,7 @@ func TestDeploymentActionsBlockedWhileRotating(t *testing.T) {
 			handler := deployments.NewHandler(deployments.Dependencies{
 				Logger:   logger.NewNoOpLogger(),
 				Director: director,
+				Vault:    managedVault(),
 				Guard:    guard,
 			})
 
@@ -238,6 +239,7 @@ func TestDeploymentActionsReleaseGuard(t *testing.T) {
 				handler := deployments.NewHandler(deployments.Dependencies{
 					Logger:   logger.NewNoOpLogger(),
 					Director: director,
+					Vault:    managedVault(),
 					Guard:    guard,
 				})
 
@@ -286,6 +288,7 @@ func TestDeploymentActionsWaitForLoadedTasks(t *testing.T) {
 			handler := deployments.NewHandler(deployments.Dependencies{
 				Logger:      logger.NewNoOpLogger(),
 				Director:    director,
+				Vault:       managedVault(),
 				Guard:       guard,
 				TasksLoaded: loaded,
 			})
@@ -361,6 +364,7 @@ func TestDeploymentActionsRefuseADeploymentAStoredTaskWaitsFor(t *testing.T) {
 			handler := deployments.NewHandler(deployments.Dependencies{
 				Logger:   logger.NewNoOpLogger(),
 				Director: director,
+				Vault:    managedVault(),
 				Guard:    guard,
 				TaskWaiters: storedWaiter{deployment: guardedDeployment, holder: mutation.Holder{
 					Kind:        mutation.KindCertificates,

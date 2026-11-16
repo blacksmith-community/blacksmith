@@ -377,7 +377,7 @@ func runErrandThroughHandler(t *testing.T, result *bosh.ErrandResult) map[string
 	t.Helper()
 
 	director := &errandDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), result: result}
-	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director, Vault: managingVault("valkey-1")})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/valkey-1/errands/smoke-tests?when_changed=true", nil)
 	recorder := httptest.NewRecorder()
@@ -417,7 +417,7 @@ func TestErrandsHandlerAnswersForRunFailures(t *testing.T) {
 			t.Parallel()
 
 			director := &errandDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), err: test.err}
-			handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+			handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director, Vault: managingVault("valkey-1")})
 
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/valkey-1/errands/smoke-tests", nil)
 			recorder := httptest.NewRecorder()
@@ -785,7 +785,7 @@ func TestUpdateManifestRefusesABodyThatIsNotAMapping(t *testing.T) {
 			t.Parallel()
 
 			director := &manifestDirector{MockBOSHDirector: testutil.NewMockBOSHDirector()}
-			handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+			handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director, Vault: managingVault(manifestDeployment)})
 
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/"+manifestDeployment+"/manifest", strings.NewReader(test.payload))
 			recorder := httptest.NewRecorder()
