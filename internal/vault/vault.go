@@ -2,13 +2,11 @@ package vault
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -84,7 +82,7 @@ const maxCACertPathLength = 256
 var ErrInvalidCACert = errors.New("vault cacert has no usable CA certificate")
 
 // SetCACert makes the client trust the CA in value, which is either the path
-// of a PEM file or PEM text, for the Vault server's certificate. It adds to
+// of a PEM file or PEM text, for the Vault server's certificate. It replaces
 // the system roots. A value that cannot be read, or that holds no
 // certificate, is an error, and the error never includes the value.
 func (vault *Vault) SetCACert(value string) error {
@@ -103,10 +101,8 @@ func (vault *Vault) SetCACert(value string) error {
 		pemBytes = data
 	}
 
-	pool, err := x509.SystemCertPool()
-	if err != nil || pool == nil {
-		pool = x509.NewCertPool()
-	}
+	// The configured CA replaces the system roots, as VAULT_CACERT does.
+	pool := x509.NewCertPool()
 
 	if !pool.AppendCertsFromPEM(pemBytes) {
 		return ErrInvalidCACert
@@ -172,63 +168,6 @@ func (vault *Vault) GetAPIClient() (*api.Client, error) {
 	}
 
 	return vault.client.Client, nil
-}
-
-// NewRequest creates a new HTTP request for vault operations.
-func (vault *Vault) NewRequest(method, url string, data interface{}) (*http.Request, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), vaultPkg.DefaultTimeout)
-	defer cancel()
-
-	var req *http.Request
-
-	if data == nil {
-		var err error
-
-		req, err = http.NewRequestWithContext(ctx, method, url, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create HTTP request: %w", err)
-		}
-	} else {
-		dataBytes, err := json.Marshal(data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal data: %w", err)
-		}
-
-		req, err = http.NewRequestWithContext(ctx, method, url, strings.NewReader(string(dataBytes)))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create HTTP request with data: %w", err)
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	req.Header.Set("X-Vault-Token", vault.Token)
-
-	return req, nil
-}
-
-// Do executes an HTTP request against vault.
-func (vault *Vault) Do(method, url string, data interface{}) (*http.Response, error) {
-	req, err := vault.NewRequest(method, fmt.Sprintf("%s%s", vault.URL, url), data)
-	if err != nil {
-		return nil, err
-	}
-
-	httpClient := &http.Client{}
-	if vault.Insecure {
-		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // #nosec G402 - This is configurable by user
-			},
-		}
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute HTTP request: %w", err)
-	}
-
-	return resp, nil
 }
 
 // Get retrieves data from vault at the specified path.
