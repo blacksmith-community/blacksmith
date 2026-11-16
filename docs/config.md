@@ -620,7 +620,7 @@ The loader reads a `false` here as unset and applies `true`, so the file cannot 
 #### `ui_terminal_enabled` (boolean)
 **Default:** `true`
 
-The loader reads a `false` here as unset and applies `true`, so a file setting does not hide the terminal. The rest of this entry describes what the setting does when it is on. Controls whether the SSH terminal UI functionality is available in the web interface. When set to `false`, SSH terminal buttons will be disabled and API endpoints will return 403 Forbidden. This setting does not affect backend SSH functionality, only the web UI access. Useful for security-conscious deployments that want to disable web-based terminal access while maintaining backend SSH capabilities.
+This setting controls whether the web interface offers the SSH terminal, and it only affects the web interface, never the backend SSH functionality. The loader reads a `false` here as unset and applies `true`, so the configuration file cannot turn the terminal off. The terminal is always available, and no other setting or runtime toggle hides it.
 
 #### `keep_alive` (integer)
 **Default:** `10`
@@ -681,7 +681,7 @@ The settings for the SSH terminal that the console opens over a WebSocket. When 
 | `ping_interval` | `5` | Seconds between pings |
 | `pong_timeout` | `10` | Seconds to wait for a pong |
 | `max_sessions` | `50` | Most WebSocket sessions at one time |
-| `session_timeout` | `1800` | Seconds before an idle session ends |
+| `session_timeout` | `1800` | Seconds an idle session may sit without activity before it is cleaned up, and also the longest a session can last in total |
 | `enable_compression` | `false` | Compress WebSocket messages |
 
 #### Host key verification

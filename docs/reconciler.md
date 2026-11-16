@@ -2,8 +2,7 @@
 
 ## Overview
 
-The Blacksmith Deployment Reconciler is a background service that automatically synchronizes service instance deployments information and state between Cloud Foundry (CF), BOSH Director, and Vault. It uses a CF-Query approach to ensure that
-previously deployed active in CF services remain visible and manageable in Blacksmith even after restarts, failures, or data corruption.
+The Blacksmith Deployment Reconciler is a background service that automatically synchronizes service instance deployments information and state between Cloud Foundry (CF), BOSH Director, and Vault. It uses a CF-Query approach to ensure that services already deployed and active in CF remain visible and manageable in Blacksmith even after restarts, failures, or data corruption.
 
 ## Purpose
 

@@ -1,7 +1,6 @@
 # Blacksmith Service Broker
 
-Blacksmith is a Cloud Foundry service broker that provisions and manages production-grade services using BOSH deployments.
-It provides a  platform for deploying, monitoring, and managing services with enterprise-grade features that can be used including shield backups, monitoring, and credential management.
+Blacksmith is a Cloud Foundry service broker that provisions and manages production-grade services using BOSH deployments. It provides a platform for deploying, monitoring, and managing services, with features that include SHIELD backups, monitoring, and credential management.
 
 ## Overview
 
@@ -174,7 +173,7 @@ ssh:
     ping_interval: 5                   # WebSocket ping interval (seconds)
     pong_timeout: 10                   # WebSocket pong timeout (seconds)
     max_sessions: 50                   # Maximum concurrent WebSocket sessions
-    session_timeout: 1800              # WebSocket session timeout (seconds)
+    session_timeout: 1800              # Idle limit and maximum lifetime of a session (seconds)
     enable_compression: false          # Enable WebSocket compression
 
 # Shield Backup Configuration
