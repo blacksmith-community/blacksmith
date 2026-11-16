@@ -25,6 +25,8 @@ type terminalConfig struct {
 
 func (terminalConfig) IsSSHUITerminalEnabled() bool { return true }
 
+func (terminalConfig) IsSSHEnabled() bool { return true }
+
 func (terminalConfig) GetEnvironment() string { return "lab" }
 
 type blacksmithManifestDirector struct {

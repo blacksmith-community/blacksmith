@@ -79,8 +79,8 @@ bosh:
     task_watch_max: 0
     director_workers: 0
 ssh:
-    enabled: false
-    ui_terminal_enabled: false
+    enabled: null
+    ui_terminal_enabled: null
     timeout: 0
     connect_timeout: 0
     session_init_timeout: 0

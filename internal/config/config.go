@@ -340,8 +340,8 @@ type BOSHConfig struct {
 
 // SSHConfig holds SSH-related configuration.
 type SSHConfig struct {
-	Enabled            bool            `yaml:"enabled"`
-	UITerminalEnabled  bool            `yaml:"ui_terminal_enabled"`  // Enable/disable SSH terminal UI functionality
+	Enabled            *bool           `yaml:"enabled"`              // Pointer so an explicit false differs from unset; nil means on
+	UITerminalEnabled  *bool           `yaml:"ui_terminal_enabled"`  // Pointer so an explicit false differs from unset; nil means on
 	Timeout            int             `yaml:"timeout"`              // Default timeout for SSH commands in seconds
 	ConnectTimeout     int             `yaml:"connect_timeout"`      // SSH connection timeout in seconds
 	SessionInitTimeout int             `yaml:"session_init_timeout"` // SSH session initialization timeout in seconds
@@ -725,9 +725,9 @@ func setSSHDefaults(config *Config) {
 // migrateSSHConfiguration migrates SSH configuration from old location to new location.
 func migrateSSHConfiguration(config *Config) {
 	// Support both bosh.ssh (deprecated) and top-level ssh
-	if config.BOSH.SSH.Enabled || config.BOSH.SSH.Timeout > 0 || config.BOSH.SSH.MaxConcurrent > 0 {
+	if boolSet(config.BOSH.SSH.Enabled) || config.BOSH.SSH.Timeout > 0 || config.BOSH.SSH.MaxConcurrent > 0 {
 		// Old configuration exists under bosh.ssh
-		if !config.SSH.Enabled && config.SSH.Timeout == 0 {
+		if !boolSet(config.SSH.Enabled) && config.SSH.Timeout == 0 {
 			// New location is empty, migrate from old location
 			config.SSH = config.BOSH.SSH
 
@@ -738,13 +738,15 @@ func migrateSSHConfiguration(config *Config) {
 
 // setSSHEnabledDefaults sets default enabled flags for SSH features.
 func setSSHEnabledDefaults(config *Config) {
-	// SSH is enabled by default
-	if !config.SSH.Enabled {
-		config.SSH.Enabled = true
+	// SSH is enabled by default, and an explicit false stays false.
+	if config.SSH.Enabled == nil {
+		enabled := true
+		config.SSH.Enabled = &enabled
 	}
-	// SSH UI Terminal is enabled by default
-	if !config.SSH.UITerminalEnabled {
-		config.SSH.UITerminalEnabled = true
+	// SSH UI Terminal is enabled by default, and an explicit false stays false.
+	if config.SSH.UITerminalEnabled == nil {
+		enabled := true
+		config.SSH.UITerminalEnabled = &enabled
 	}
 	// SSH WebSocket is enabled by default
 	if config.SSH.WebSocket.Enabled == nil {
@@ -803,9 +805,21 @@ func clearDeprecatedSSHConfig(config *Config) {
 	config.BOSH.SSH = SSHConfig{}
 }
 
-// IsSSHUITerminalEnabled returns whether SSH UI Terminal is enabled.
+// boolSet reports whether an optional bool is present and true.
+func boolSet(value *bool) bool {
+	return value != nil && *value
+}
+
+// IsSSHEnabled returns whether SSH-backed features may open sessions to VMs.
+// It is true unless ssh.enabled is explicitly false.
+func (c *Config) IsSSHEnabled() bool {
+	return c.SSH.Enabled == nil || *c.SSH.Enabled
+}
+
+// IsSSHUITerminalEnabled returns whether the SSH UI terminal is enabled. It
+// is true unless ssh.ui_terminal_enabled or ssh.enabled is explicitly false.
 func (c *Config) IsSSHUITerminalEnabled() bool {
-	return c.SSH.UITerminalEnabled
+	return c.IsSSHEnabled() && (c.SSH.UITerminalEnabled == nil || *c.SSH.UITerminalEnabled)
 }
 
 // GetEnvironment returns the configured environment label.

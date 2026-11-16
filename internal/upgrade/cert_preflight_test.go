@@ -176,6 +176,16 @@ func TestCertPreflightOrder(t *testing.T) {
 			status: http.StatusForbidden, code: apierr.CodePatchDisabled,
 		},
 		{
+			name: "ssh turned off for a patch task",
+			inject: func(t *testing.T, env *preflightEnv) {
+				t.Helper()
+
+				env.task.Certificates.Mode = RotationModePatch
+				env.configure(t, func(d *Deps) { d.SSHEnabled = func() bool { return false } })
+			},
+			status: http.StatusForbidden, code: apierr.CodeSSHDisabled,
+		},
+		{
 			name: "no CredHub",
 			inject: func(t *testing.T, env *preflightEnv) {
 				env.configure(t, func(d *Deps) { d.CredHub = nil })

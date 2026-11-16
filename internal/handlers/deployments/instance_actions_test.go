@@ -1023,6 +1023,7 @@ func assertRefusalAudited(t *testing.T, lines []string, deployment string, taskI
 type writeTimeoutConfig struct{ seconds int }
 
 func (writeTimeoutConfig) IsSSHUITerminalEnabled() bool       { return false }
+func (writeTimeoutConfig) IsSSHEnabled() bool                 { return true }
 func (writeTimeoutConfig) GetEnvironment() string             { return "test" }
 func (writeTimeoutConfig) GetBOSHConfig() config.BOSHConfig   { return config.BOSHConfig{} }
 func (writeTimeoutConfig) GetVaultConfig() config.VaultConfig { return config.VaultConfig{} }

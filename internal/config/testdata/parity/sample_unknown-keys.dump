@@ -73,8 +73,8 @@ $.BOSH.ConnectionTimeout	int	300
 $.BOSH.RequestTimeout	int	0
 $.BOSH.TaskWatchMax	int	21600
 $.BOSH.DirectorWorkers	int	0
-$.BOSH.SSH.Enabled	bool	false
-$.BOSH.SSH.UITerminalEnabled	bool	false
+$.BOSH.SSH.Enabled	*bool	null
+$.BOSH.SSH.UITerminalEnabled	*bool	null
 $.BOSH.SSH.Timeout	int	0
 $.BOSH.SSH.ConnectTimeout	int	0
 $.BOSH.SSH.SessionInitTimeout	int	0

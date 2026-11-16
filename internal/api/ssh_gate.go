@@ -1,0 +1,64 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"regexp"
+
+	"blacksmith/internal/apierr"
+	"blacksmith/internal/interfaces"
+	"blacksmith/internal/upgrade"
+	"blacksmith/pkg/http/response"
+)
+
+// errSSHDisabled is what a runner reports when ssh.enabled is false.
+var errSSHDisabled = errors.New("SSH is disabled in configuration (ssh.enabled is false)")
+
+// sshBackedRoutes are the routes served by handlers that open an SSH session
+// to a VM, or that belong to the SSH terminal. ssh.enabled false refuses each
+// of them with a 403. The upgrade routes that run commands, and the patch
+// mode of certificate tasks, are refused by the upgrade handler and manager.
+//
+//nolint:gochecknoglobals // a fixed table of compiled patterns
+var sshBackedRoutes = []*regexp.Regexp{
+	// The websocket terminal and its status.
+	regexp.MustCompile(`^/b/blacksmith/ssh/stream$`),
+	regexp.MustCompile(`^/b/ssh/status$`),
+	regexp.MustCompile(`^/b/[^/]+/ssh/(stream|execute)$`),
+	// RabbitMQ commands, which run over SSH.
+	regexp.MustCompile(`^/b/[^/]+/rabbitmq/ssh/.+$`),
+	regexp.MustCompile(`^/b/[^/]+/rabbitmq/(rabbitmqctl|plugins)/.+$`),
+	// The trusted certificate files, which are read and written over SSH.
+	regexp.MustCompile(`^/b/[^/]+/certificates/trusted(/file)?$`),
+}
+
+// isSSHBackedRoute reports whether the path is served by an SSH-backed
+// handler.
+func isSSHBackedRoute(path string) bool {
+	for _, route := range sshBackedRoutes {
+		if route.MatchString(path) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// refuseSSHDisabled answers 403 with the SSH-disabled code and message.
+func refuseSSHDisabled(writer http.ResponseWriter) {
+	response.WriteErrorCode(writer, http.StatusForbidden, apierr.CodeSSHDisabled, upgrade.SSHDisabledMessage)
+}
+
+// gateRunner makes a runner that opens SSH sessions refuse when ssh.enabled
+// is false, so a task that was created before the switch was turned off
+// opens no session either.
+func gateRunner(cfg interfaces.Config, runner func(ctx context.Context, deployment, group string, indices []int) (upgrade.PatchSession, error)) func(ctx context.Context, deployment, group string, indices []int) (upgrade.PatchSession, error) {
+	return func(ctx context.Context, deployment, group string, indices []int) (upgrade.PatchSession, error) {
+		if !cfg.IsSSHEnabled() {
+			return nil, errSSHDisabled
+		}
+
+		return runner(ctx, deployment, group, indices)
+	}
+}

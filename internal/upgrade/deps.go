@@ -41,6 +41,10 @@ type Deps struct {
 	ScanInstance func(ctx context.Context, instanceID string) (certinventory.InstanceScan, error)
 	// Switches returns the configuration switches as they stand now.
 	Switches func() config.CertificatesConfig
+	// SSHEnabled reports whether ssh.enabled allows sessions to VMs. Patch
+	// mode runs its scripts over SSH, so it is refused when this reports
+	// false. A nil SSHEnabled counts as on.
+	SSHEnabled func() bool
 	// Settings returns the certificate settings as they stand now.
 	Settings func() certinventory.Settings
 	// Now returns the current time. It defaults to time.Now.
@@ -139,6 +143,9 @@ func (m *Manager) certDeps() Deps {
 	return m.deps
 }
 
+// SSHDisabledMessage is what a refusal says when ssh.enabled is false.
+const SSHDisabledMessage = "SSH is disabled. Set ssh.enabled to true to allow features that open SSH sessions to VMs."
+
 // certWritesAllowed says whether a certificate task in this mode may change
 // anything now. It reads the switches at the moment of the call, so turning
 // one off stops the next write step. Following or settling a BOSH task that
@@ -172,6 +179,10 @@ func writesAllowed(deps Deps, mode RotationMode) error {
 
 	if mode == RotationModePatch && !switches.PatchInPlaceEnabled() {
 		return apierr.New(http.StatusForbidden, apierr.CodePatchDisabled, "Patching certificates in place is turned off. Set certificates.patch_in_place.enabled to true to allow it.")
+	}
+
+	if mode == RotationModePatch && deps.SSHEnabled != nil && !deps.SSHEnabled() {
+		return apierr.New(http.StatusForbidden, apierr.CodeSSHDisabled, SSHDisabledMessage) //nolint:wrapcheck // apierr carries its own status and code
 	}
 
 	if deps.CredHub == nil {

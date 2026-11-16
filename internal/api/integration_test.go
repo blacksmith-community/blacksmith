@@ -48,6 +48,10 @@ func (m *mockLogger) WithFields(fields map[string]interface{}) interfaces.Logger
 // mockConfig implements interfaces.Config for testing.
 type mockConfig struct{}
 
+func (m *mockConfig) IsSSHEnabled() bool {
+	return true
+}
+
 func (m *mockConfig) IsSSHUITerminalEnabled() bool {
 	return true
 }

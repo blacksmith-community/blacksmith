@@ -25,6 +25,7 @@ const (
 // Error variables for err113 compliance.
 var (
 	errSSHTerminalUIDisabled           = errors.New("SSH Terminal UI is disabled in configuration")
+	errSSHDisabled                     = errors.New("SSH is disabled in configuration")
 	errMethodNotAllowedWebSocket       = errors.New("method not allowed: use GET or CONNECT for WebSocket")
 	errWebSocketSSHServiceNotAvailable = errors.New("WebSocket SSH service not available")
 	errServiceInstanceNotFound         = errors.New("service instance not found")
@@ -145,12 +146,7 @@ func (h *Handler) handleBlacksmithSSH(writer http.ResponseWriter, req *http.Requ
 	logger := h.logger.Named("blacksmith-websocket-ssh")
 	logger.Debug("WebSocket SSH connection request for blacksmith deployment")
 
-	// Check if SSH UI Terminal is enabled in configuration
-	if !h.isSSHUIEnabled() {
-		logger.Info("SSH Terminal UI access denied - disabled in configuration")
-		writer.WriteHeader(http.StatusForbidden)
-		response.HandleJSON(writer, nil, errSSHTerminalUIDisabled)
-
+	if h.refuseWhenDisabled(writer, logger) {
 		return
 	}
 
@@ -503,12 +499,7 @@ func (h *Handler) handleInstanceSSH(writer http.ResponseWriter, req *http.Reques
 	logger := h.logger.Named("instance-websocket-ssh")
 	logger.Debug("WebSocket SSH connection request for instance %s", instanceID)
 
-	// Check if SSH UI Terminal is enabled
-	if !h.isSSHUIEnabled() {
-		logger.Info("SSH Terminal UI access denied for instance %s - disabled in configuration", instanceID)
-		writer.WriteHeader(http.StatusForbidden)
-		response.HandleJSON(writer, nil, errSSHTerminalUIDisabled)
-
+	if h.refuseWhenDisabled(writer, logger) {
 		return
 	}
 
@@ -566,6 +557,14 @@ func (h *Handler) handleSSHStatus(writer http.ResponseWriter, _ *http.Request) {
 	logger := h.logger.Named("websocket-ssh-status")
 	logger.Debug("WebSocket SSH status request")
 
+	if !h.config.IsSSHEnabled() {
+		logger.Info("SSH status denied - SSH is disabled in configuration")
+		writer.WriteHeader(http.StatusForbidden)
+		response.HandleJSON(writer, nil, errSSHDisabled)
+
+		return
+	}
+
 	// Return SSH status information
 	status := map[string]interface{}{
 		"enabled":           h.isSSHUIEnabled(),
@@ -578,6 +577,27 @@ func (h *Handler) handleSSHStatus(writer http.ResponseWriter, _ *http.Request) {
 	}
 
 	response.HandleJSON(writer, status, nil)
+}
+
+// refuseWhenDisabled answers 403 and reports true when ssh.enabled is false,
+// or when only the UI terminal is turned off.
+func (h *Handler) refuseWhenDisabled(writer http.ResponseWriter, logger interfaces.Logger) bool {
+	switch {
+	case !h.config.IsSSHEnabled():
+		logger.Info("SSH access denied - SSH is disabled in configuration")
+		writer.WriteHeader(http.StatusForbidden)
+		response.HandleJSON(writer, nil, errSSHDisabled)
+
+		return true
+	case !h.isSSHUIEnabled():
+		logger.Info("SSH Terminal UI access denied - disabled in configuration")
+		writer.WriteHeader(http.StatusForbidden)
+		response.HandleJSON(writer, nil, errSSHTerminalUIDisabled)
+
+		return true
+	}
+
+	return false
 }
 
 // isSSHUIEnabled checks if SSH UI Terminal is enabled.

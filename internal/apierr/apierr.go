@@ -30,6 +30,7 @@ const (
 	// 403.
 	CodeRotationDisabled     = "rotation_disabled"
 	CodePatchDisabled        = "patch_disabled"
+	CodeSSHDisabled          = "ssh_disabled"
 	CodeCredHubNotConfigured = "credhub_not_configured" //nolint:gosec // An error code, not a credential.
 	CodeDirectorUnsupported  = "director_unsupported"
 	CodeInventoryDisabled    = "inventory_disabled"

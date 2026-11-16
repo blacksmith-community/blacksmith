@@ -41,6 +41,7 @@ const (
 
 // InternalAPI represents the refactored internal API with proper separation of concerns.
 type InternalAPI struct {
+	sshEnabled               func() bool
 	router                   *routing.Router
 	certificateHandler       *certificates.Handler
 	cfHandler                *cf.Handler
@@ -317,6 +318,7 @@ func createUpgradeHandler(deps Dependencies, changes *audit.ChangeStore) *upgrad
 		Certificates:          deps.Certificates,
 		Switches:              deps.Switches,
 		Commands:              deps.Commands,
+		SSHEnabled:            deps.Config.IsSSHEnabled,
 		BOSH:                  deps.BOSH,
 		Previews:              upgrade.NewPreviewStore(time.Now),
 		UpgradePreviews:       upgrade.NewUpgradePreviewStore(time.Now),
@@ -326,10 +328,10 @@ func createUpgradeHandler(deps Dependencies, changes *audit.ChangeStore) *upgrad
 		Prober: certinventory.Prober{Timeout: certinventory.DefaultProbeTimeout},
 		// Patch mode runs its scripts through one SSH user per instance
 		// group, on the same director as the rest of the task.
-		PatchRunner: upgrade.NewPatchRunner(director, deps.Logger),
+		PatchRunner: gateRunner(deps.Config, upgrade.NewPatchRunner(director, deps.Logger)),
 		// Batch commands use the same director, and their runners keep
 		// what a command prints out of the logs.
-		CommandRunner: upgrade.NewCommandRunner(director, deps.Logger),
+		CommandRunner: gateRunner(deps.Config, upgrade.NewCommandRunner(director, deps.Logger)),
 	})
 }
 
@@ -482,6 +484,7 @@ func NewInternalAPI(deps Dependencies) *InternalAPI {
 	// Create and return the API instance
 	return &InternalAPI{
 		router:                   router,
+		sshEnabled:               deps.Config.IsSSHEnabled,
 		certificateHandler:       handlers.certificate,
 		cfHandler:                handlers.cf,
 		instanceHandler:          handlers.instance,
@@ -672,6 +675,12 @@ func (api *InternalAPI) Changes() *audit.ChangeStore {
 
 // ServeHTTP implements the http.Handler interface.
 func (api *InternalAPI) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
+	if api.sshEnabled != nil && !api.sshEnabled() && isSSHBackedRoute(req.URL.Path) {
+		refuseSSHDisabled(writer)
+
+		return
+	}
+
 	// Use the router to find and execute the appropriate handler
 	if handler := api.router.FindHandler(req.URL.Path); handler != nil {
 		handler.ServeHTTP(writer, req)

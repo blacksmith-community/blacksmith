@@ -32,6 +32,8 @@ type Handler struct {
 	tasks   taskManager
 	// commands reads the commands configuration, which may be nil.
 	commands func() config.CommandsConfig
+	// sshEnabled reads ssh.enabled. When nil, SSH counts as on.
+	sshEnabled func() bool
 	// changes keeps a record of every settings change. Nil records none.
 	changes *audit.ChangeStore
 	// saves serialises settings saves, so the old value each record
@@ -97,6 +99,10 @@ type Dependencies struct {
 	// which never log what a command prints. It may be nil, and then no
 	// command can run.
 	CommandRunner func(ctx context.Context, deployment, group string, indices []int) (upgrade.PatchSession, error)
+	// SSHEnabled reports whether ssh.enabled allows sessions to VMs. Batch
+	// commands and patch mode run over SSH, so both are refused when it
+	// reports false. A nil SSHEnabled counts as on.
+	SSHEnabled func() bool
 	// Commands returns the commands configuration as it stands now. When
 	// nil, commands count as off.
 	Commands func() config.CommandsConfig
@@ -132,8 +138,9 @@ func NewHandler(deps Dependencies) *Handler {
 		manager: manager,
 		tasks:   manager,
 
-		commands: deps.Commands,
-		changes:  deps.Changes,
+		commands:   deps.Commands,
+		sshEnabled: deps.SSHEnabled,
+		changes:    deps.Changes,
 	}
 }
 
@@ -152,6 +159,7 @@ func configureManager(manager *upgrade.Manager, deps Dependencies) {
 		CommandRunner:   deps.CommandRunner,
 		Commands:        deps.Commands,
 		BOSH:            deps.BOSH,
+		SSHEnabled:      deps.SSHEnabled,
 	}
 
 	if deps.Certificates != nil {
@@ -586,6 +594,10 @@ type commandAvailabilityAnswer struct {
 // authorizer needs run_as, and before any instance is read, so a caller with
 // no second credential learns nothing about the instances.
 func (h *Handler) PreviewCommand(w http.ResponseWriter, r *http.Request) {
+	if h.refuseWhenSSHIsOff(w) {
+		return
+	}
+
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
 	if err != nil {
 		writeInvalidRequest(w, "invalid command preview request: "+err.Error())
@@ -676,6 +688,10 @@ func (h *Handler) DiscardCommand(w http.ResponseWriter, r *http.Request) {
 // a command task always pauses after a failure. Nothing here logs the
 // command.
 func (h *Handler) createCommandTask(w http.ResponseWriter, r *http.Request, body []byte) {
+	if h.refuseWhenSSHIsOff(w) {
+		return
+	}
+
 	var req upgrade.CommandCreateRequest
 
 	err := json.Unmarshal(body, &req)
@@ -996,4 +1012,17 @@ func writeTaskActionError(w http.ResponseWriter, err error) {
 	default:
 		response.WriteErrorCode(w, http.StatusInternalServerError, apierr.CodeInternal, err.Error())
 	}
+}
+
+// refuseWhenSSHIsOff answers 403 and reports true when ssh.enabled is false,
+// because a command runs over SSH.
+func (h *Handler) refuseWhenSSHIsOff(writer http.ResponseWriter) bool {
+	if h.sshEnabled == nil || h.sshEnabled() {
+		return false
+	}
+
+	h.logger.Info("Refused a request that needs SSH, because ssh.enabled is false")
+	response.WriteErrorCode(writer, http.StatusForbidden, apierr.CodeSSHDisabled, upgrade.SSHDisabledMessage)
+
+	return true
 }

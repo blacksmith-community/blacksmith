@@ -38,6 +38,9 @@ type Vault interface {
 
 // Config interface for configuration access across all internal packages.
 type Config interface {
+	// IsSSHEnabled is false only when ssh.enabled is explicitly false, which
+	// turns off every feature that opens an SSH session to a VM.
+	IsSSHEnabled() bool
 	IsSSHUITerminalEnabled() bool
 	GetEnvironment() string
 	GetBOSHConfig() config.BOSHConfig
