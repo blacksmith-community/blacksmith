@@ -122,7 +122,7 @@ vm_monitoring:
   normal_interval: 3600 # Check healthy deployments every hour
   failed_interval: 300  # Check unhealthy deployments every 5 minutes
   timeout: 300          # Deadline for each check's VM listing (seconds)
-  max_concurrent: 3     # Number of VM monitor workers
+  max_concurrent: 3     # Most VM checks that run at once
 ```
 
 ### Optional Fields
@@ -143,7 +143,7 @@ Interval in seconds between VM health checks for deployments with all VMs runnin
 Interval in seconds between VM health checks for deployments with failing or unhealthy VMs. Faster checking enables quicker detection of recovery.
 
 #### `max_retries` (integer)
-**Deprecated.** The monitor no longer retries a failed BOSH call inside one check. It checks the instance again after `failed_interval` instead. A configuration that sets `max_retries` still loads, the broker logs a warning that names the setting, and the value has no effect. Remove it from the file.
+**Deprecated.** The monitor no longer retries a failed BOSH call inside one check. It checks the instance again after `failed_interval` instead. A configuration that sets `max_retries` still loads, and the value has no effect. The broker logs a warning that names the setting whenever the key is present, even when its value is 0. Remove it from the file.
 
 #### `timeout` (integer)
 **Default:** `300` (5 minutes)
@@ -153,7 +153,7 @@ The deadline, in seconds, that each check gives its VM listing. The director lis
 #### `max_concurrent` (integer)
 **Default:** `3`
 
-The number of workers the VM monitor runs. Each worker takes one deployment at a time, so this is also the most VM health checks that run at once, and it keeps the monitor from overwhelming the BOSH director with simultaneous API calls.
+The most VM health checks that run at once. A value that is absent or 0 means 3, and a negative value stops the broker from loading its configuration. A higher value puts more concurrent load on the BOSH director, so raise it only when the director has the capacity.
 
 ### VM Status Display
 
@@ -170,7 +170,7 @@ Status badges show VM health ratios (e.g., "3/4" indicating 3 healthy VMs out of
 
 - VM status data is cached in Vault to provide fast UI response times
 - Monitoring intervals can be adjusted based on environment needs and BOSH director capacity
-- The monitor's workers, counted by `max_concurrent`, limit how many checks run at once, so the director sees a bounded load
+- `max_concurrent` limits how many checks run at once, so the director sees a bounded load
 - Failed checks automatically use shorter intervals for faster recovery detection
 
 ## Broker Configuration (`broker`)
@@ -238,7 +238,7 @@ HTTP server idle timeout in seconds. Maximum time to wait for the next request w
 
 TLS/HTTPS configuration for secure connections. For detailed TLS configuration options, see [docs/tls.md](./tls.md).
 
-The `tls.reuse_after` setting is deprecated. A configuration that sets it still loads, the broker logs a warning that names the setting, and the value has no effect.
+The `tls.reuse_after` setting is deprecated. A configuration that sets it still loads, and the value has no effect. The broker logs a warning that names the setting whenever the key is present, even when its value is 0.
 
 #### `compression` (CompressionConfig)
 
