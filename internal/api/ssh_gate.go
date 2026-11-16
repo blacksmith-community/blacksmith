@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
@@ -33,9 +34,19 @@ var sshBackedRoutes = []*regexp.Regexp{
 	regexp.MustCompile(`^/b/[^/]+/certificates/trusted(/file)?$`),
 }
 
+// brokerCertificatesPrefix starts the broker's own certificate routes,
+// which read files on the broker VM and open no SSH session. The pattern
+// for an instance's trusted certificates would otherwise match them, since
+// internal fills the instance segment.
+const brokerCertificatesPrefix = "/b/internal/certificates/"
+
 // isSSHBackedRoute reports whether the path is served by an SSH-backed
 // handler.
 func isSSHBackedRoute(path string) bool {
+	if strings.HasPrefix(path, brokerCertificatesPrefix) {
+		return false
+	}
+
 	for _, route := range sshBackedRoutes {
 		if route.MatchString(path) {
 			return true

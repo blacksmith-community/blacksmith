@@ -91,6 +91,29 @@ func TestSSHBackedRoutesRefuseWhenSSHIsOff(t *testing.T) {
 	}
 }
 
+// The broker's own trusted-certificate routes read files on the broker VM
+// and open no SSH session, so SSH being off never refuses them.
+func TestBrokersOwnTrustedCertificateRoutesAreNotSSHBacked(t *testing.T) {
+	t.Parallel()
+
+	router := newSSHGateAPI(t, api.Dependencies{Config: &sshOffConfig{}})
+
+	for _, path := range []string{"/b/internal/certificates/trusted", "/b/internal/certificates/trusted/file"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+
+			router.ServeHTTP(rec, req)
+
+			if rec.Code == http.StatusForbidden || strings.Contains(rec.Body.String(), "ssh_disabled") {
+				t.Fatalf("got %d %s, want the route to answer on its own", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // A command task is an SSH-backed request too, so it is refused before the
 // body or the credential is looked at.
 func TestCommandTaskRefusedWhenSSHIsOff(t *testing.T) {
