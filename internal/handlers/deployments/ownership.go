@@ -119,8 +119,9 @@ func (h *Handler) refuseUnmanaged(ctx context.Context, writer http.ResponseWrite
 }
 
 // isManagedDeployment reports whether an entry of the broker's index
-// records deploymentName as its deployment. An entry whose data is nil is
-// an instance being deleted, and it owns nothing.
+// records deploymentName as its deployment. An entry whose data is nil, and
+// a tombstone marked deleted, is an instance that is gone, and it owns
+// nothing.
 func (h *Handler) isManagedDeployment(ctx context.Context, deploymentName string) (bool, error) {
 	var index map[string]*vaultPkg.Instance
 
@@ -134,7 +135,7 @@ func (h *Handler) isManagedDeployment(ctx context.Context, deploymentName string
 	}
 
 	for instanceID, instance := range index {
-		if instanceID == "" || instance == nil {
+		if instanceID == "" || instance == nil || instance.IsTombstone() {
 			continue
 		}
 

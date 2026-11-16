@@ -26,6 +26,7 @@ import (
 
 const (
 	ownedInstance   = "7a1b"
+	ownedPlan       = "redis-small"
 	ownedDeployment = "redis-small-7a1b"
 	instanceTaskID  = 4321
 	actionRestart   = "restart"
@@ -211,7 +212,7 @@ func (l *auditLogger) audits() []string {
 
 func ownedVault() *testutil.InstanceVault {
 	return &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
-		ownedInstance: {ID: ownedInstance, ServiceID: redisService, PlanID: "redis-small", DeploymentName: ownedDeployment},
+		ownedInstance: {ID: ownedInstance, ServiceID: redisService, PlanID: ownedPlan, DeploymentName: ownedDeployment},
 	}}
 }
 
@@ -1096,5 +1097,30 @@ func TestInstanceActionsTakeTheDeadlineFromTheWriteTimeout(t *testing.T) {
 				t.Errorf("the director got %v, want at least %v and under %v", left, test.least, test.most)
 			}
 		})
+	}
+}
+
+// A tombstone owns nothing, so an action on its instance answers 404 as an
+// unknown instance does, and nothing reaches the director.
+func TestInstanceActionsRefuseATombstonedInstance(t *testing.T) {
+	t.Parallel()
+
+	for _, entry := range []vaultPkg.Instance{
+		{ID: ownedInstance, PlanID: ownedPlan, Status: vaultPkg.StatusDeleted},
+		{ID: ownedInstance, PlanID: ownedPlan, Deleted: true},
+	} {
+		setup := newInstanceActionSetup(deployments.Dependencies{
+			Vault: &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{ownedInstance: entry}},
+		})
+
+		recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/recreate")
+
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404: %s", recorder.Code, recorder.Body.String())
+		}
+
+		if calls, _ := setup.director.recorded(); len(calls) != 0 {
+			t.Errorf("director calls = %v, want none", calls)
+		}
 	}
 }

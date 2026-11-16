@@ -16,6 +16,7 @@ import (
 	"blacksmith/internal/credhub"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/reconciler"
+	vaultPkg "blacksmith/pkg/vault"
 )
 
 const (
@@ -27,8 +28,6 @@ const (
 	credentialSweepMaxCandidates = 10
 	// guidLength is the length of an 8-4-4-4-12 GUID.
 	guidLength = 36
-	// indexStatusDeleted marks an index entry as a tombstone, not a live instance.
-	indexStatusDeleted = "deleted"
 )
 
 // ErrSweepDirectorMismatch means the director's /info name differs from the
@@ -489,16 +488,6 @@ func (p *sweepPass) handle(ctx context.Context, candidate sweepCandidate, reques
 // that is not a deleted tombstone.
 func indexHasLiveEntry(index map[string]interface{}, instanceID string) bool {
 	entry, found := index[instanceID]
-	if !found {
-		return false
-	}
 
-	fields, isMap := entry.(map[string]interface{})
-	if !isMap {
-		return true
-	}
-
-	status, _ := fields["status"].(string)
-
-	return status != indexStatusDeleted
+	return found && !vaultPkg.EntryIsTombstone(entry)
 }

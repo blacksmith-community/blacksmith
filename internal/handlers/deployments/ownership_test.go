@@ -33,7 +33,7 @@ func managedVault() *testutil.InstanceVault {
 // named one, so the broker manages that deployment and no other.
 func managingVault(deployment string) *testutil.InstanceVault {
 	return &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
-		"7a1b": {ID: "7a1b", ServiceID: redisService, PlanID: redisService, DeploymentName: deployment},
+		ownedInstance: {ID: ownedInstance, ServiceID: redisService, PlanID: redisService, DeploymentName: deployment},
 	}}
 }
 
@@ -479,5 +479,48 @@ func TestReadingIsRefusedWhenTheIndexIsUnreadable(t *testing.T) {
 
 	if ownRecorder.Code == http.StatusForbidden || ownRecorder.Code == http.StatusServiceUnavailable {
 		t.Errorf("own deployment status = %d, want the read to run", ownRecorder.Code)
+	}
+}
+
+// A tombstone the reconciler left in the index owns nothing. Its
+// deployment is refused for a read and for every change, as an
+// unindexed name is.
+func TestTombstonedEntriesManageNoDeployment(t *testing.T) {
+	t.Parallel()
+
+	marks := map[string]vaultPkg.Instance{
+		"status":  {ID: ownedInstance, ServiceID: redisService, PlanID: redisService, DeploymentName: guardedDeployment, Status: vaultPkg.StatusDeleted},
+		"deleted": {ID: ownedInstance, ServiceID: redisService, PlanID: redisService, DeploymentName: guardedDeployment, Deleted: true},
+	}
+
+	for mark, entry := range marks {
+		t.Run(mark, func(t *testing.T) {
+			t.Parallel()
+
+			for _, action := range deploymentActions() {
+				handler, director := ownershipHandler(&testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{ownedInstance: entry}})
+
+				recorder := serveAction(t, handler, action)
+
+				if recorder.Code != http.StatusForbidden {
+					t.Errorf("%s status = %d, want 403: %s", action.name, recorder.Code, recorder.Body.String())
+				}
+
+				if calls, _ := director.recorded(); len(calls) != 0 {
+					t.Errorf("%s director calls = %v, want none", action.name, calls)
+				}
+			}
+
+			handler, _ := ownershipHandler(&testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{ownedInstance: entry}})
+
+			read := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/"+guardedDeployment+"/manifest", nil)
+			readRecorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(readRecorder, read)
+
+			if readRecorder.Code != http.StatusForbidden {
+				t.Errorf("read status = %d, want 403: %s", readRecorder.Code, readRecorder.Body.String())
+			}
+		})
 	}
 }

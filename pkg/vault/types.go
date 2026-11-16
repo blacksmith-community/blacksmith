@@ -16,6 +16,38 @@ type Instance struct {
 	// recomputing the deployment name from it can point at a deployment that
 	// does not exist.
 	DeploymentName string `json:"deployment_name,omitempty"`
+	// Status and Deleted are the two marks the reconciler writes on an
+	// entry for an instance that is gone, which leaves a tombstone.
+	Status  string `json:"status,omitempty"`
+	Deleted bool   `json:"deleted,omitempty"`
+}
+
+// StatusDeleted is the status of a tombstone.
+const StatusDeleted = "deleted"
+
+// IsTombstone reports whether the entry is a tombstone, which is marked
+// deleted by its status or its deleted flag. A tombstone owns nothing.
+func (instance *Instance) IsTombstone() bool {
+	return isTombstone(instance.Status, instance.Deleted)
+}
+
+// EntryIsTombstone reports whether a raw index entry is a tombstone, by the
+// same two marks as Instance.IsTombstone. Anything that isn't a mapping
+// carries no mark.
+func EntryIsTombstone(entry interface{}) bool {
+	fields, isMap := entry.(map[string]interface{})
+	if !isMap {
+		return false
+	}
+
+	status, _ := fields["status"].(string)
+	deleted, _ := fields["deleted"].(bool)
+
+	return isTombstone(status, deleted)
+}
+
+func isTombstone(status string, deleted bool) bool {
+	return status == StatusDeleted || deleted
 }
 
 // DeploymentNameFor returns the deployment name the instance's entry

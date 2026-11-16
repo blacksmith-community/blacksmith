@@ -281,7 +281,7 @@ func (h *Handler) ownedDeployment(ctx context.Context, writer http.ResponseWrite
 		return "", false
 	}
 
-	if !found || inst == nil {
+	if !found || inst == nil || inst.IsTombstone() {
 		logger.Warning("Refusing an action on %q, which is not a service instance this broker owns", instanceID)
 		apierr.Write(writer, apierr.New(http.StatusNotFound, apierr.CodeInstanceNotFound,
 			"no service instance "+instanceID+" is provisioned by this broker"), http.StatusNotFound)
