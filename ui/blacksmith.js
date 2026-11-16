@@ -11299,7 +11299,7 @@
     try {
       const response = await fetch(endpoints[type], { cache: 'no-cache' });
       if (!response.ok) {
-        throw httpFailure(response);
+        throw type === 'credentials' ? await credentialsFailure(response) : httpFailure(response);
       }
 
       // Format based on type
@@ -11839,6 +11839,10 @@
   };
   const loadRetryHandlers = new Map();
   const loadRetryRunning = new Set();
+  // A broker message waits here, by panel key, until the panel is on the page.
+  // The sweep then writes it into the panel with textContent, so it is only
+  // ever text.
+  const loadFailureMessages = new Map();
   // A handler lives only as long as a panel that can press it. After any change
   // to the page, a pass drops the handlers whose Retry button is on neither the
   // page nor a view the page has set aside.
@@ -11852,6 +11856,12 @@
   const sweepLoadRetries = () => {
     loadRetrySweepQueued = false;
     for (const key of [...loadRetryHandlers.keys()]) if (!loadRetryShown(key)) loadRetryHandlers.delete(key);
+    for (const [key, message] of [...loadFailureMessages]) {
+      const button = document.querySelector(`[data-load-retry="${key.replace(/["\\]/g, '\\$&')}"]`);
+      const detail = button && button.closest('[data-load-error]')?.querySelector('.load-error-detail');
+      if (detail) detail.textContent = message;
+      if (detail || !loadRetryHandlers.has(key)) loadFailureMessages.delete(key);
+    }
   };
   const queueLoadRetrySweep = () => {
     if (loadRetrySweepQueued || !loadRetryHandlers.size) return;
@@ -11861,6 +11871,8 @@
   new MutationObserver(queueLoadRetrySweep).observe(document.documentElement, { childList: true, subtree: true });
   const loadFailureHtml = ({ what, error, key, retry, compact = false }) => {
     loadRetryHandlers.set(key, retry);
+    if (error && error.brokerMessage) loadFailureMessages.set(key, error.brokerMessage);
+    else loadFailureMessages.delete(key);
     queueLoadRetrySweep();
     return `<div class="load-error${compact ? ' load-error--compact' : ''}" data-load-error role="alert" data-variant="danger">
       <p class="load-error-title">Could not load ${escapeHtml(what)}.</p>
@@ -11907,6 +11919,18 @@
   const detailFailure = (scope, type, error, retry) => loadFailureHtml({ what: loadWhat(type), error, key: `${scope}:${type}`, retry });
   // An HTTP answer that was not a success, as an error that carries only its status.
   const httpFailure = (response) => Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
+  // The same for the credentials read, which also carries the broker's own
+  // message when the answer is JSON with an error string. The message says why
+  // the credentials are not available, and the panel shows it as text.
+  const credentialsFailure = async (response) => {
+    const error = httpFailure(response);
+    try {
+      const body = await response.json();
+      const message = body && typeof body.error === 'string' ? body.error.trim() : '';
+      if (message) error.brokerMessage = message.slice(0, 300);
+    } catch (_) { /* no body, so the status stands */ }
+    return error;
+  };
 
   // Recent changes. The Settings and Endpoints pages each show the latest
   // changes the broker recorded for them, newest first. The broker hides
@@ -13969,7 +13993,7 @@
       ]);
 
       if (!credsResponse.ok) {
-        return instanceDetailFailure(instanceId, 'testing', httpFailure(credsResponse));
+        return instanceDetailFailure(instanceId, 'testing', await credentialsFailure(credsResponse));
       }
 
       const creds = await credsResponse.json();
