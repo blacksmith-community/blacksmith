@@ -43,29 +43,37 @@ The main index at path `db` contains all active service instances, indexed by UU
 
 #### Status Endpoint: `/b/status`
 
-The primary endpoint for retrieving service instance data:
+`GET /b/status` is the primary read for service instance data. It answers with these fields.
 
-```go
-// internal_api.go:257-291
-idx, err := api.Vault.GetIndex("db")
-out := struct {
-    Env       string      `json:"env"`
-    Version   string      `json:"version"`
-    Instances interface{} `json:"instances"`  // Vault db index data
-    Plans     interface{} `json:"plans"`      // Broker plan configurations
-    Log       string      `json:"log"`
-}{
-    Instances: idx.Data,
-    Plans:     deinterface(api.Broker.Plans),
-}
-```
+- `healthy`, `bosh`, and `vault` report whether the broker is healthy and what it found when it checked the director and Vault.
+
+- `environment`, `env`, `version`, `commit`, and `timestamp` identify the broker and the time of the answer.
+
+- `instances` holds the Vault `db` index, keyed by instance ID.
+
+- `plans` holds the broker's plan configurations.
+
+The status answer has no reconciler section. The orphan state has its own route, which the next section lists.
 
 #### Additional Endpoints
 
-- `/v2/catalog` - Service catalog from Open Service Broker API
-- `/b/cleanup` - Reserved for a manual cleanup job, and it answers 501 Not Implemented today
-- `/b/deployments/{name}/events` - BOSH deployment events
-- `/b/deployments/{name}/vms` - VM information for deployments
+- `/v2/catalog` serves the service catalog from the Open Service Broker API.
+
+- `GET /b/orphans` lists the entries marked orphaned, with the time left before each removal, and the unclaimed BOSH deployments.
+
+- `POST /b/cleanup` is reserved for a manual cleanup job, and it answers 501 Not Implemented today. Any other method gets 405. The reconciler removes orphaned entries on its own.
+
+- `GET` and `POST /b/blacksmith/settings` read and change the broker settings, including the reconciler interval.
+
+- `GET /b/blacksmith/changes` lists the audited changes to settings, endpoints, and instances.
+
+- `GET /b/tasks` lists BOSH tasks. It takes `limit` and `offset` for paging, and `counts=1` adds the number of tasks in each state.
+
+- `/b/deployments/{name}/...` serves deployment details, which include events and VMs.
+
+- `/b/upgrade/...` runs the batch operations described under [Batch Operations](#8-batch-operations).
+
+[broker.md](broker.md) lists every route with its method.
 
 ### 3. Service Instance Lifecycle
 
@@ -121,10 +129,11 @@ Environment variables control reconciler behavior:
 |----------|---------|-------------|
 | `BLACKSMITH_RECONCILER_ENABLED` | `true` | Enable/disable reconciler |
 | `BLACKSMITH_RECONCILER_INTERVAL` | `5m` | Scan interval, overridden by an interval saved through the UI |
-| `BLACKSMITH_RECONCILER_MAX_CONCURRENCY` | `5` | Parallel operations |
+| `BLACKSMITH_RECONCILER_MAX_CONCURRENT` | `4` | Parallel operations |
 | `BLACKSMITH_RECONCILER_BATCH_SIZE` | `10` | Instances per batch |
 | `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `3` | Retry failed operations |
-| `BLACKSMITH_RECONCILER_CACHE_TTL` | `5m` | Cache duration |
+
+[reconciler.md](reconciler.md) lists the remaining settings and explains how the interval is chosen.
 
 #### Reconciliation Process
 
@@ -141,18 +150,35 @@ graph LR
 **Reconciliation adds:**
 - `reconciled: true` flag
 - `reconciled_at` timestamp
-- `last_synced_at` timestamp
 - Updated manifest if changed
 
 #### Orphan Detection
 
-The system identifies orphaned instances (Vault records without BOSH deployments):
+The reconciler marks and then sweeps orphans, and it does not remove an entry the first time it finds the deployment missing.
 
-1. Retrieves all BOSH deployments
-2. Checks each Vault instance for matching deployment
-3. Uses naming convention: `{plan_id}-{instance_id}`
-4. Removes orphaned instances from index
-5. Logs cleanup actions for audit
+1. It retrieves all BOSH deployments, and it stops marking when the scan comes back empty.
+
+2. It checks each Vault instance for a deployment named `{plan_id}-{instance_id}`.
+
+3. An entry with no deployment gets `orphaned`, `orphaned_at`, and an `orphaned_reason` of `no_bosh_deployment`, and each later run that still finds it missing adds one to `orphan_check_count`.
+
+4. A deployment that comes back clears the mark.
+
+5. The reconciler removes a marked entry when it is more than 24 hours old or has been missing on 24 runs, whichever comes first.
+
+6. A separate sweep removes an entry sooner when it is at least two hours old, the director answers 404 for the deployment, the director has no running task on it, and the instance's task record shows nothing in flight.
+
+Removal drops the index entry and keeps the secrets, as a normal deprovision does. A broker restart gives marked entries a fresh 24 hours.
+
+The reconciler also reports BOSH deployments that have no index entry and no Cloud Foundry instance. It reports these as unclaimed and does not adopt them. [reconciler.md](reconciler.md) has the full rules.
+
+#### Tombstones From the VM Monitor
+
+When the VM monitor cannot list a deployment's VMs and the director confirms the deployment does not exist, the monitor marks the instance's index entry `deleted` and stops monitoring it. The reconciler skips entries marked `deleted`, and the orphan sweep removes them once the same checks pass. A tombstone that names no deployment goes on age alone.
+
+#### CredHub Cleanup
+
+When `credhub.cleanup` is enabled, the broker also removes the CredHub credentials of a deployment that a deprovision or a sweep has removed. The cleanup runs only after the index save that removed the entry succeeds. The `sweep` setting chooses whether a separate pass over CredHub reports (`dry-run`) or deletes (`delete`) the credentials that no longer belong to an instance. [config.md](config.md) describes the settings.
 
 ### 5. UI Integration
 
@@ -170,7 +196,7 @@ graph TD
     G --> H[Show Instance Details on Click]
 ```
 
-#### UI Processing (blacksmith.js)
+#### UI Processing
 
 1. **Data Fetching**: Parallel requests to `/b/status` and `/v2/catalog`
 2. **Data Merging**: Combines catalog metadata with instance data
@@ -178,18 +204,21 @@ graph TD
 4. **Plan Enhancement**: Adds instance count and limit to each plan
 5. **Rendering**: Updates services panel with enriched data
 
+The Summary page also reads `GET /b/orphans` and shows the entries waiting for removal.
+
 ### 6. Status Progression
 
-Service instances progress through defined statuses:
+The index entry of a service instance carries the status the broker last wrote.
 
 | Status | Description |
 |--------|-------------|
 | `request_received` | Initial provision request recorded |
 | `validated` | Limits and parameters validated |
 | `provisioning_started` | BOSH deployment initiated |
-| `provisioning_completed` | Deployment successful |
 | `deprovision_requested` | Deletion requested |
-| `deprovisioning` | BOSH deletion in progress |
+| `deleted` | The VM monitor or the reconciler found the deployment gone and left a tombstone |
+
+The broker writes no status for a failed provision. The last-operation answer reports the failure to the platform, and a failure before the deployment starts removes the entry the broker created. A deprovision ends with the entry removed from the index. The broker keeps the progress of a running operation in its task record, and that record, not the index status, answers last-operation polls.
 
 ### 7. Data Consistency Strategies
 
@@ -199,7 +228,7 @@ Service instances progress through defined statuses:
 - Updates stale or missing metadata
 
 #### Failure Handling
-- Failed provisions: Deployment cleaned up, instance marked failed
+- Failed provisions: The platform sees the failure, and a failure before the deployment starts removes the entry the broker created
 - Failed deprovisions: Instance retained in index for investigation
 - Network failures: Retry logic with exponential backoff
 
@@ -207,6 +236,22 @@ Service instances progress through defined statuses:
 - All lifecycle events timestamped
 - Deleted instances keep vault data minus index entry
 - Reconciliation history maintained in metadata
+- Changes to settings, endpoints, and instances are recorded and served at `GET /b/blacksmith/changes`
+
+### 8. Batch Operations
+
+Operators run work across many instances from the console's Batch Operations page, and the same operations sit behind `/b/upgrade`. Each one is a task that lists its instances and works through them, and it can pause so an operator can look before it goes on. A command task always pauses after a failure, and the other kinds pause when the operator asks them to. The three kinds of task are these.
+
+- **Upgrade**
+  Redeploys instances against a newer release or stemcell. `POST /b/upgrade/preview` shows what would change.
+
+- **Certificates**
+  Rotates and redeploys certificates, or patches them in place when `certificates.patch_in_place` and rotation are both enabled. Inventory is on by default, and rotation is off until an operator enables it.
+
+- **Command**
+  Runs one command on every VM of the selected instances, as `vcap` or `root`. [run-command.md](run-command.md) describes the preview, the audit record, and the HTTP routes.
+
+A task is created with `POST /b/upgrade/tasks`, listed with `GET /b/upgrade/tasks`, and read with `GET /b/upgrade/tasks/{id}`. Operators steer it with `pause`, `resume`, and `cancel`, and the per-instance decisions that some tasks wait for go to `/b/upgrade/tasks/{id}/instances/{instance-id}/{action}`.
 
 ## Key Design Decisions
 
@@ -230,14 +275,12 @@ Service instances progress through defined statuses:
 - Read-only scanning of BOSH
 - Non-destructive Vault updates
 - Preserves manual changes while adding metadata
+- Orphans are marked first and removed only after a grace period or a director confirmation
 
 ## Monitoring and Observability
 
 ### Metrics Available
-- Total reconciliation runs
-- Successful vs failed runs
-- Instances found/synced/orphaned
-- Average reconciliation duration
+The reconciler keeps counters in memory for its runs, successes, failures, deployments scanned, instances found and synced, errors, and run durations. The broker does not serve them over HTTP, so the log lines that each run writes are the way to watch it. For orphans, call `GET /b/orphans`.
 
 ### Log Points
 - Instance lifecycle transitions
@@ -246,7 +289,7 @@ Service instances progress through defined statuses:
 - API request/response cycles
 
 ### Health Checks
-- Reconciler status endpoint
+- `/b/internal/health` for the broker
 - Vault connectivity
 - BOSH director availability
 - Index consistency validation
@@ -265,42 +308,45 @@ Service instances progress through defined statuses:
 
 #### Orphaned Instances
 - **Symptom**: Instances in UI with no backing deployment
-- **Solution**: Wait for the reconciler, which removes orphaned entries on its own. The Summary page lists them with the time left before removal
+- **Solution**: Wait for the reconciler, which removes orphaned entries on its own. The Summary page and `GET /b/orphans` list them with the time left before removal
 
 #### Stuck Provisioning
 - **Symptom**: Instance stays in `provisioning_started`
-- **Check**: BOSH task status via deployment events
+- **Check**: BOSH task status through `GET /b/tasks` or the deployment events
 - **Solution**: Check BOSH logs, may need manual intervention
 
 #### Missing Instance Data
 - **Symptom**: Incomplete instance information in UI
-- **Solution**: Force reconciliation to rebuild metadata
+- **Solution**: The next reconciler run rebuilds metadata. Lower the interval through `POST /b/blacksmith/settings` or restart the broker to get a run sooner
 
 #### Reconciler Not Running
-- **Check**: Reconciler status via adapter
+- **Check**: The log for `Deployment reconciler started successfully`, and `GET /b/blacksmith/settings` for the interval in force
 - **Solution**: Verify environment variables and restart
 
 ### Debugging Commands
 
+In these examples, `BROKER_USER` and `BROKER_PASS` hold the broker's basic-auth credentials.
+
 ```bash
-# Check reconciler status
-curl http://blacksmith/internal/reconciler/status
+# See what is marked orphaned and what is unclaimed
+curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/orphans
 
-# Force immediate reconciliation
-curl -X POST http://blacksmith/internal/reconciler/reconcile
+# Read the reconciler interval in force
+curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/blacksmith/settings
 
-# View instance in Vault
-vault read secret/blacksmith/instances/{instance-id}
+# See the latest audited settings changes
+curl -s -u "$BROKER_USER:$BROKER_PASS" "http://blacksmith/b/blacksmith/changes?scope=settings&limit=10"
 
-# Check the BOSH deployment through Blacksmith's API, with the broker's
-# basic-auth credentials in BROKER_USER and BROKER_PASS
+# Page through BOSH tasks, with counts per state
+curl -s -u "$BROKER_USER:$BROKER_PASS" "http://blacksmith/b/tasks?limit=50&offset=0&counts=1"
+
+# Check the BOSH deployment through Blacksmith's API
 curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/deployments/{plan-id}-{instance-id}/instances
 ```
 
 ## Future Enhancements
 
 1. **Real-time Updates**: WebSocket support for live instance status
-2. **Batch Operations**: Bulk provisioning/deprovisioning
-3. **Enhanced Metrics**: Prometheus/Grafana integration
-4. **Backup/Restore**: Full instance state backup capability
-5. **Multi-region**: Cross-region instance management
+2. **Enhanced Metrics**: Prometheus/Grafana integration
+3. **Backup/Restore**: Full instance state backup capability
+4. **Multi-region**: Cross-region instance management
