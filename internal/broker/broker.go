@@ -2757,7 +2757,7 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 			recorded.DeploymentName = tombstone.DeploymentName
 		}
 
-		if planID == "" {
+		if tombstone.PlanID != "" {
 			planID = tombstone.PlanID
 		}
 	}

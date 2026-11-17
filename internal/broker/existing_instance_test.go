@@ -803,7 +803,7 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 	// pollDeprovisionAsking polls a deprovision that names the plan, over a
 	// director that reports each deployment in exists, and returns the answer
 	// with the deployments the director was asked about.
-	pollDeprovisionAsking := func(exists map[string]bool) (osbapi.LastOperationResponse, []string) {
+	pollDeprovisionAsking := func(pollPlan string, exists map[string]bool) (osbapi.LastOperationResponse, []string) {
 		director := testutil.NewScriptedBOSHDirector()
 		brokerInstance.BOSH = director
 
@@ -819,7 +819,7 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 			return nil, bosh.ErrDeploymentNotFound
 		}
 
-		response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: outcomeDeprovision, PlanID: planID})
+		response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: outcomeDeprovision, PlanID: pollPlan})
 		Expect(err).ToNot(HaveOccurred())
 
 		return response, asked
@@ -835,11 +835,30 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 			Expect(vaultClient.Index(ctx, instanceID, tombstone)).To(Succeed())
 			brokerInstance.RecordTask(ctx, instanceID, "deprovision", "Deprovision request accepted", 0)
 
-			response, asked := pollDeprovisionAsking(map[string]bool{polled: true})
+			response, asked := pollDeprovisionAsking(planID, map[string]bool{polled: true})
 			Expect(response.State).To(Equal(osbapi.StateInProgress), "a deployment that exists was reported deleted")
 			Expect(asked).To(Equal([]string{polled}))
 
-			response, _ = pollDeprovisionAsking(map[string]bool{})
+			response, _ = pollDeprovisionAsking(planID, map[string]bool{})
+			Expect(response.State).To(Equal(osbapi.StateSucceeded))
+		})
+	}
+
+	for name, tombstone := range map[string]vaultPkg.Instance{
+		markCurrent: {ServiceID: "valkey", PlanID: "tomb-plan", Status: vaultPkg.StatusDeleted},
+		markLegacy:  {ServiceID: "valkey", PlanID: "tomb-plan", Deleted: true},
+	} {
+		It("a deprovision poll for a tombstone with the "+name+" and only a plan checks the tombstone's plan", func() {
+			named := "tomb-plan-" + instanceID
+
+			Expect(vaultClient.Index(ctx, instanceID, tombstone)).To(Succeed())
+			brokerInstance.RecordTask(ctx, instanceID, "deprovision", "Deprovision request accepted", 0)
+
+			response, asked := pollDeprovisionAsking("poll-plan", map[string]bool{named: true})
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a deployment that exists was reported deleted")
+			Expect(asked).To(Equal([]string{named}))
+
+			response, _ = pollDeprovisionAsking("poll-plan", map[string]bool{})
 			Expect(response.State).To(Equal(osbapi.StateSucceeded))
 		})
 	}
@@ -860,7 +879,7 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 		task[internalVault.TaskRecordDeploymentNameKey] = recordedDeployment
 		Expect(vaultClient.Put(ctx, instanceID+"/task", task)).To(Succeed())
 
-		response, asked := pollDeprovisionAsking(map[string]bool{recordedDeployment: true})
+		response, asked := pollDeprovisionAsking(planID, map[string]bool{recordedDeployment: true})
 		Expect(response.State).To(Equal(osbapi.StateInProgress))
 		Expect(asked).To(Equal([]string{recordedDeployment}))
 	})
