@@ -19,6 +19,7 @@ import (
 	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ownname"
 	"blacksmith/pkg/http/response"
 	"blacksmith/pkg/reconciler"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
@@ -76,6 +77,8 @@ type Handler struct {
 	director   interfaces.Director
 	reconciler ReconcilerInterface
 	changes    *audit.ChangeStore
+	// ownFile is the file that names the broker's own deployment.
+	ownFile string
 	// saves serialises settings saves, so the old value each record
 	// holds is the one its own save replaced.
 	saves sync.Mutex
@@ -90,11 +93,20 @@ type Dependencies struct {
 	Reconciler ReconcilerInterface
 	// Changes keeps a record of every settings change. Nil records none.
 	Changes *audit.ChangeStore
+	// OwnNameFile is the file that names the broker's own deployment. It
+	// defaults to the file BOSH writes on every instance.
+	OwnNameFile string
 }
 
 // NewHandler creates a new Blacksmith management handler.
 func NewHandler(deps Dependencies) *Handler {
+	ownFile := deps.OwnNameFile
+	if ownFile == "" {
+		ownFile = ownname.InstanceFile
+	}
+
 	return &Handler{
+		ownFile:    ownFile,
 		logger:     deps.Logger,
 		config:     deps.Config,
 		vault:      deps.Vault,
@@ -976,23 +988,27 @@ func (h *Handler) decodeResurrectionRequest(req *http.Request, logger interfaces
 
 func (h *Handler) resolveDeploymentName(req *http.Request, instanceID string, logger interfaces.Logger, responseWriter http.ResponseWriter) (string, bool) {
 	if instanceID == deploymentNameBlacksmith {
-		return h.getBlacksmithDeploymentNameForResurrection(logger), true
+		return h.getBlacksmithDeploymentNameForResurrection(logger, responseWriter)
 	}
 
 	return h.getServiceDeploymentName(req, instanceID, logger, responseWriter)
 }
 
-func (h *Handler) getBlacksmithDeploymentNameForResurrection(logger interfaces.Logger) string {
-	environment := h.config.GetEnvironment()
+func (h *Handler) getBlacksmithDeploymentNameForResurrection(logger interfaces.Logger, responseWriter http.ResponseWriter) (string, bool) {
+	deploymentName, ok := ownname.Resolve(h.ownFile, h.config.GetEnvironment())
+	if !ok {
+		logger.Error("The broker's own deployment name is unknown, so resurrection is not changed")
+		responseWriter.WriteHeader(http.StatusNotFound)
+		response.HandleJSON(responseWriter, map[string]interface{}{
+			"error": "the broker's own deployment is unknown",
+		}, nil)
 
-	deploymentName := environment + "-blacksmith"
-	if environment == "" {
-		deploymentName = deploymentNameBlacksmith
+		return "", false
 	}
 
 	logger.Debug("Using blacksmith deployment name: %s", deploymentName)
 
-	return deploymentName
+	return deploymentName, true
 }
 
 func (h *Handler) getServiceDeploymentName(req *http.Request, instanceID string, logger interfaces.Logger, responseWriter http.ResponseWriter) (string, bool) {
