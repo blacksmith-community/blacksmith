@@ -1010,8 +1010,10 @@ func TestResumeAfterARefusedLoadClearsTheRefusalFromAFailure(t *testing.T) {
 		task.Instances[0].Status = InstanceStatusRunning
 		task.Instances[0].Command.VMs[0].Phase = CommandPhaseSettled
 		task.Instances[0].Command.VMs[0].Status = CommandStatusSucceeded
+
+		// Set in the seed, before the manager starts, since a node reads it.
+		fix.exits["dep-0/1"] = 3
 	})
-	fix.exits["dep-0/1"] = 3
 
 	paused := fix.snapshot()
 	if paused.Status != TaskStatusPaused || !strings.HasPrefix(paused.Instances[0].Error, commandRefusedMessage) {
