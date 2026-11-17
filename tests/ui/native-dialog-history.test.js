@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,until}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const t=JSDOM?test:test.skip;
 
@@ -27,7 +27,7 @@ const start=async()=>{
  const {w,d}=env;
  w.eval(OAT);
  w.eval(ROUTES);
- await sleep(100);
+ await until(()=>w.blacksmithRouter?.current&&!w.blacksmithRouter.applying,'the router to settle its first route');
  expect(typeof w.blacksmithRouter?.inspect).toBe('function');
  const events=[];
  w.addEventListener('popstate',()=>events.push('popstate'));
@@ -37,7 +37,10 @@ const start=async()=>{
   inert:[...d.querySelectorAll('[inert]')].map(n=>n.id||n.tagName),
   hidden:[...d.querySelectorAll('[aria-hidden]')].filter(n=>!n.closest('dialog, #cert-fleet-drawer')).map(n=>(n.id||n.tagName)+'='+n.getAttribute('aria-hidden'))
  });
- const traverse=async(direction)=>{ events.length=0; w.history[direction](); await sleep(150); };
+ const traverse=async(direction)=>{
+  events.length=0; w.history[direction]();
+  await until(()=>events.length>0&&!w.blacksmithRouter.applying,'the '+direction+' traversal to reach the router');
+ };
  return {...env,events,snapshot,traverse};
 };
 
@@ -50,7 +53,7 @@ kinds.forEach(({name,id,hash,open})=>{
   const env=await start(); const {w,d,stubs,snapshot,traverse,events}=env;
   const dialog=()=>d.getElementById(id);
   const before=snapshot();
-  await open(w); await sleep(100);
+  await open(w); await until(()=>dialog().open&&w.location.hash.includes(hash)&&!w.blacksmithRouter.applying,'the '+name+' view to open');
   expect(dialog().open).toBe(true);
   expect(w.location.hash).toContain(hash);
   expect(w.blacksmithRouter.current.inspection).toBeTruthy();
@@ -82,11 +85,11 @@ kinds.forEach(({name,id,hash,open})=>{
   const env=await start(); const {w,d,stubs,snapshot,traverse}=env;
   const dialog=()=>d.getElementById(id);
   const before=snapshot();
-  await open(w); await sleep(100);
+  await open(w); await until(()=>dialog().open&&w.location.hash.includes(hash)&&!w.blacksmithRouter.applying,'the '+name+' view to open');
   await traverse('back'); await stubs.settle();
   expect(dialog().open).toBe(false);
   const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
-  await sleep(10);
+  await until(()=>d.getElementById('dialog-modal').open,'the confirmation to open');
   expect(d.getElementById('dialog-modal').open).toBe(true);
 
   await traverse('forward'); await stubs.settle();
@@ -110,7 +113,8 @@ t('Back closes the certificate inspector through the router, and Forward opens i
  const drawer=()=>d.getElementById('cert-fleet-drawer');
  const shown=()=>!!drawer()&&!drawer().hidden&&drawer().classList.contains('cert-fleet-drawer--open');
  const before=snapshot();
- await w.blacksmithRouter.inspect({kind:'certificate',id:'c1'}); await sleep(100);
+ await w.blacksmithRouter.inspect({kind:'certificate',id:'c1'});
+ await until(()=>shown()&&w.location.hash.includes('inspect=certificate&id=c1')&&!w.blacksmithRouter.applying,'the certificate inspector to open');
  expect(shown()).toBe(true);
  expect(w.location.hash).toContain('inspect=certificate&id=c1');
  expect(w.blacksmithRouter.current.inspection).toBeTruthy();
@@ -140,7 +144,8 @@ t('Back through the router closes the task details view but leaves the open term
  w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');}init(){return Promise.resolve(this);}focus(){}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(){this.readyState=0;}send(){}close(){}};
  const before=snapshot();
- await w.showTaskDetails(42); await sleep(100);
+ await w.showTaskDetails(42);
+ await until(()=>d.getElementById('task-details-modal').open&&!w.blacksmithRouter.applying,'the task details to open');
  expect(d.getElementById('task-details-modal').open).toBe(true);
  w.TerminalManager.openWithContext('blacksmith','broker','node/0','node','broker');
  const terminal=()=>d.getElementById('terminal-modal');
@@ -152,7 +157,7 @@ t('Back through the router closes the task details view but leaves the open term
  expect(terminal().open).toBe(true);
  expect(stubs.isModal(terminal())).toBe(true);
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await until(()=>d.getElementById('dialog-modal').open,'the confirmation to open');
  expect(d.getElementById('dialog-modal').open).toBe(true);
  expect(d.getElementById('dialog-modal').hasAttribute('inert')).toBe(false);
  d.querySelector('[data-dialog-role="cancel"]').click(); expect(await done).toBe(false);
