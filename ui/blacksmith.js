@@ -12499,6 +12499,8 @@
   // count of zero is the whole answer. Without server counts the chips count
   // the rows held, and a chip is dimmed only when those rows are the whole list.
   let tasksWindowComplete = true;
+  // The counts the chips showed at the last render, which a Load more carries forward instead of reading them again.
+  let tasksShownCounts = { stateCounts: null, capped: [], unknown: [] };
   const syncTaskStateChips = () => {
     document.querySelectorAll('#blacksmith .toolbar-chips input[type="checkbox"][data-count]').forEach((input) => {
       const idle = tasksWindowComplete && Number(input.dataset.count) === 0 && !input.checked;
@@ -12552,6 +12554,7 @@
     tableOriginalData.set(dataKey, tasks || []);
     // Counts from the broker are whole answers, and counts from held rows are whole only when every row is held.
     tasksWindowComplete = meta.stateCounts ? true : meta.exact !== false && meta.hasMore !== true;
+    tasksShownCounts = { stateCounts: meta.stateCounts || null, capped: meta.capped || [], unknown: meta.unknown || [] };
 
     const tableId = `tasks-table`;
 
@@ -19141,15 +19144,16 @@
   // by offset, from the rows already held, until the table holds the target
   // number of rows or the broker has no more or says it has hit its ceiling.
   // Only the first page of a read is asked for the state counts, because the
-  // counts do not change from page to page and only that page's are shown.
-  const readTaskPages = async ({ taskType, team, states, existing, target }) => {
+  // counts do not change from page to page and only that page's are shown. A
+  // read that adds to rows already shown does not ask for them at all.
+  const readTaskPages = async ({ taskType, team, states, existing, target, counts = true }) => {
     const rows = existing.slice();
     const seen = new Set(rows.map(task => task.id));
     let first = null;
     let last = null;
     let pages = 0;
     do {
-      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(team)}${pages === 0 ? '&counts=1' : ''}${states.length ? `&states=${encodeURIComponent(states.join(','))}` : ''}${rows.length ? `&offset=${rows.length}` : ''}`;
+      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(team)}${counts && pages === 0 ? '&counts=1' : ''}${states.length ? `&states=${encodeURIComponent(states.join(','))}` : ''}${rows.length ? `&offset=${rows.length}` : ''}`;
       const response = await fetch(url, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -19202,12 +19206,13 @@
         states,
         existing: more ? held : [],
         target: more ? held.length + 1 : (keep ? held.length : 1),
+        counts: !more,
       });
       let loaded = {
         tasks,
-        stateCounts: first.stateCounts,
-        capped: first.capped,
-        unknown: first.unknown,
+        stateCounts: more ? tasksShownCounts.stateCounts : first.stateCounts,
+        capped: more ? tasksShownCounts.capped : first.capped,
+        unknown: more ? tasksShownCounts.unknown : first.unknown,
         hasMore: last.hasMore,
         exact: first.exact && last.exact,
         ceiling: last.ceiling,

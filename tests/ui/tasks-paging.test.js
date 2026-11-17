@@ -94,12 +94,20 @@ t('Load more asks for the next page by offset and the table then holds every row
   const { w, d, calls } = await mount(history(450));
   try {
     expect(rows(d).length).toBe(200);
+    // The broker answers counts only when asked, as it does in life.
+    w.__routes.unshift(['/b/tasks?', (u, o, json) => {
+      const body = serve(history(450))(u);
+      if (!u.includes('counts=1')) { delete body.state_counts; delete body.state_counts_capped; }
+      json(200, body);
+    }]);
+    const shown = ['done', 'error', 'processing', 'queued', 'cancelled'].map((s) => count(d, s)).join('/');
     more(d).click();
     await sleep(200);
     const url = calls.filter((c) => c.includes('/b/tasks?')).pop();
     expect(url).toContain('offset=200');
     expect(url).toContain('limit=200');
-    expect(url).toContain('counts=1');
+    expect(url).not.toContain('counts=');
+    expect(['done', 'error', 'processing', 'queued', 'cancelled'].map((s) => count(d, s)).join('/')).toBe(shown);
     expect(url).not.toMatch(/[?&]states=/);
     expect(rows(d).length).toBe(400);
     expect(rows(d)[0].querySelector('.task-id').textContent).toBe('450');
