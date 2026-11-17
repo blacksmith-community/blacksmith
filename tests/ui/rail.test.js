@@ -108,11 +108,30 @@ t('a rail link navigates through the router and moves aria-current',async()=>{
 t('a modified or middle click is left to the browser',async()=>{
  const {w,d}=await start();
  const tasks=[...rail(d).querySelectorAll('a.rail-link')].find(a=>a.textContent.trim()==='Tasks');
- for(const init of [{ctrlKey:true},{metaKey:true},{shiftKey:true},{button:1}]){
-  const event=click(w,tasks,init);
-  expect(event.defaultPrevented).toBe(false);
- }
+ const hash=w.location.hash;
+ // A navigation is seen wherever it starts. The router is spied on, and every
+ // timer the rail sets during the clicks is held back and then run, so a
+ // navigation the rail defers by any delay still happens before the check.
+ const navigations=[];
+ const navigate=w.blacksmithRouter.navigate;
+ w.blacksmithRouter.navigate=(...args)=>{navigations.push(args);return navigate.apply(w.blacksmithRouter,args);};
+ const held=[];
+ const setTimeoutBefore=w.setTimeout;
+ w.setTimeout=(fn,...rest)=>{held.push(fn);return 0;};
+ const events=[];
+ try{
+  for(const init of [{ctrlKey:true},{metaKey:true},{shiftKey:true},{button:1}]){
+   events.push(click(w,tasks,init));
+  }
+ }finally{w.setTimeout=setTimeoutBefore;}
+ // Every click reached the rail and was left alone, which is the signal that
+ // the rail finished with it. Then each held timer runs.
+ expect(events.map(e=>e.defaultPrevented)).toEqual([false,false,false,false]);
+ held.forEach(fn=>{if(typeof fn==='function')fn();});
  await idle(w);
+ w.blacksmithRouter.navigate=navigate;
+ expect(navigations).toEqual([]);
+ expect(w.location.hash).toBe(hash);
  expect(w.blacksmithRouter.current).toMatchObject({screen:'blacksmith',section:'details'});
 });
 
