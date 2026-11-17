@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -118,7 +119,13 @@ func (api API) handleMissingAuth(writer http.ResponseWriter, req *http.Request) 
 }
 
 func (api API) validateCredentials(username, password string) bool {
-	return username == api.Username && password == api.Password
+	// Both fields are compared and the results combined with a bitwise and,
+	// so the check never stops early on a wrong username and a response
+	// time reveals nothing about which field was wrong or how much matched.
+	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(api.Username))
+	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(api.Password))
+
+	return userMatch&passMatch == 1
 }
 
 func (api API) handleInvalidAuth(writer http.ResponseWriter, req *http.Request, username string) {
