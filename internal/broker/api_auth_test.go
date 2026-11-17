@@ -36,6 +36,9 @@ func TestBasicAuthAcceptsOnlyTheExactPair(t *testing.T) {
 		{"password prefix", installUser, "s3c", http.StatusForbidden},
 		{"password with extra tail", installUser, authTestPassword + "!", http.StatusForbidden},
 		{"empty pair", "", "", http.StatusForbidden},
+		{"much longer username", strings.Repeat(installUser, 500), authTestPassword, http.StatusForbidden},
+		{"much longer password", installUser, strings.Repeat(authTestPassword, 500), http.StatusForbidden},
+		{"empty password", installUser, "", http.StatusForbidden},
 	}
 
 	for _, testCase := range tests {

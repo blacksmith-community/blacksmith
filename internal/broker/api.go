@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
@@ -119,11 +120,19 @@ func (api API) handleMissingAuth(writer http.ResponseWriter, req *http.Request) 
 }
 
 func (api API) validateCredentials(username, password string) bool {
-	// Both fields are compared and the results combined with a bitwise and,
-	// so the check never stops early on a wrong username and a response
-	// time reveals nothing about which field was wrong or how much matched.
-	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(api.Username))
-	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(api.Password))
+	// Each value is hashed first, so the comparison takes the same time
+	// whatever the lengths, because ConstantTimeCompare returns at once
+	// when its inputs differ in length. Both fields are always compared
+	// and the results combined with a bitwise and, so the check never
+	// stops early on a wrong username and a response time reveals nothing
+	// about which field was wrong or how much matched.
+	gotUser := sha256.Sum256([]byte(username))
+	wantUser := sha256.Sum256([]byte(api.Username))
+	gotPass := sha256.Sum256([]byte(password))
+	wantPass := sha256.Sum256([]byte(api.Password))
+
+	userMatch := subtle.ConstantTimeCompare(gotUser[:], wantUser[:])
+	passMatch := subtle.ConstantTimeCompare(gotPass[:], wantPass[:])
 
 	return userMatch&passMatch == 1
 }
