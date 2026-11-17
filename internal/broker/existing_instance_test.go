@@ -676,6 +676,8 @@ func sendOSBRequest(baseURL, method, path string, body interface{}) (int, string
 // a provision succeeded. Only the records that outlive the index entry, the
 // task record and the metadata, can show that the instance was deleted.
 var _ = Describe("A poll for an instance the index does not have", func() {
+	const planID = "standalone"
+
 	var (
 		ctx            context.Context
 		stopService    context.CancelFunc
@@ -729,6 +731,25 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 			Expect(response.Description).To(ContainSubstring("Delete the service instance"))
 		}
 	})
+
+	// A tombstone is an index entry for an instance that is gone, marked by
+	// its status or by the legacy deleted flag. A poll settles for it as it
+	// does for a removed entry, and never answers an error on every poll.
+	for name, tombstone := range map[string]vaultPkg.Instance{
+		"current mark": {ServiceID: "valkey", PlanID: planID, Status: vaultPkg.StatusDeleted},
+		"legacy flag":  {ServiceID: "valkey", PlanID: planID, Deleted: true},
+	} {
+		It("polls for a tombstoned entry marked by its "+name+" like a removed entry", func() {
+			Expect(vaultClient.Index(ctx, instanceID, tombstone)).To(Succeed())
+			brokerInstance.RecordTask(ctx, instanceID, "provision", "BOSH deployment in progress (task 77)", 77)
+
+			Expect(poll("provision").State).To(Equal(osbapi.StateFailed))
+
+			brokerInstance.RecordTask(ctx, instanceID, "deprovision", "BOSH delete in progress (task 78)", 78)
+
+			Expect(poll("deprovision").State).To(Equal(osbapi.StateSucceeded))
+		})
+	}
 
 	It("a poll for an instance with no records at all answers failed", func() {
 		Expect(poll("provision").State).To(Equal(osbapi.StateFailed))

@@ -3552,7 +3552,9 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 		return nil, "", fmt.Errorf("failed to find instance: %w", err)
 	}
 
-	if !exists {
+	// A tombstone is an entry for an instance that is gone, so it settles
+	// the poll as a removed entry does.
+	if !exists || instance.IsTombstone() {
 		logger.Error("instance %s not found in vault index", instanceID)
 
 		return nil, "", nil // Return nil instance to indicate deletion
