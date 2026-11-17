@@ -235,6 +235,10 @@ t('a keeping refresh reads every page the reader loaded and stays on them', asyn
     const urls = calls.slice(before).filter((c) => c.includes('/b/tasks?'));
     expect(urls.length).toBe(3);
     expect(urls[0]).not.toContain('offset=');
+    expect(urls[0]).toContain('counts=1');
+    // Only the first page's counts are shown, so the later pages do not ask for them.
+    expect(urls[1]).not.toContain('counts=');
+    expect(urls[2]).not.toContain('counts=');
     expect(urls[2]).toContain('offset=400');
     expect(rows(d).length).toBe(600);
     expect(more(d)).not.toBeNull();

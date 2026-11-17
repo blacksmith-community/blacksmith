@@ -19140,6 +19140,8 @@
   // director so an older task of that state is found. Pages are read in turn
   // by offset, from the rows already held, until the table holds the target
   // number of rows or the broker has no more or says it has hit its ceiling.
+  // Only the first page of a read is asked for the state counts, because the
+  // counts do not change from page to page and only that page's are shown.
   const readTaskPages = async ({ taskType, team, states, existing, target }) => {
     const rows = existing.slice();
     const seen = new Set(rows.map(task => task.id));
@@ -19147,7 +19149,7 @@
     let last = null;
     let pages = 0;
     do {
-      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(team)}&counts=1${states.length ? `&states=${encodeURIComponent(states.join(','))}` : ''}${rows.length ? `&offset=${rows.length}` : ''}`;
+      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(team)}${pages === 0 ? '&counts=1' : ''}${states.length ? `&states=${encodeURIComponent(states.join(','))}` : ''}${rows.length ? `&offset=${rows.length}` : ''}`;
       const response = await fetch(url, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
