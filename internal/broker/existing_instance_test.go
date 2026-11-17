@@ -679,6 +679,8 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 	const (
 		planID         = "standalone"
 		keptDeployment = "kept-deployment"
+		markCurrent    = "current mark"
+		markLegacy     = "legacy flag"
 	)
 
 	var (
@@ -739,8 +741,8 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 	// its status or by the legacy deleted flag. A poll settles for it as it
 	// does for a removed entry, and never answers an error on every poll.
 	for name, tombstone := range map[string]vaultPkg.Instance{
-		"current mark": {ServiceID: "valkey", PlanID: planID, Status: vaultPkg.StatusDeleted},
-		"legacy flag":  {ServiceID: "valkey", PlanID: planID, Deleted: true},
+		markCurrent: {ServiceID: "valkey", PlanID: planID, Status: vaultPkg.StatusDeleted},
+		markLegacy:  {ServiceID: "valkey", PlanID: planID, Deleted: true},
 	} {
 		It("polls for a tombstoned entry marked by its "+name+" like a removed entry", func() {
 			Expect(vaultClient.Index(ctx, instanceID, tombstone)).To(Succeed())
@@ -765,8 +767,8 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 	// deployment was gone before the delete, but a tombstone can sit over a
 	// deployment that still exists, so the poll asks the director.
 	for name, tombstone := range map[string]vaultPkg.Instance{
-		"current mark": {ServiceID: "valkey", PlanID: planID, DeploymentName: keptDeployment, Status: vaultPkg.StatusDeleted},
-		"legacy flag":  {ServiceID: "valkey", PlanID: planID, DeploymentName: keptDeployment, Deleted: true},
+		markCurrent: {ServiceID: "valkey", PlanID: planID, DeploymentName: keptDeployment, Status: vaultPkg.StatusDeleted},
+		markLegacy:  {ServiceID: "valkey", PlanID: planID, DeploymentName: keptDeployment, Deleted: true},
 	} {
 		It("a deprovision poll for a tombstone with the "+name+" and no context ID asks the director", func() {
 			director := testutil.NewScriptedBOSHDirector()
@@ -796,6 +798,71 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 			Expect(poll("deprovision").State).To(Equal(osbapi.StateSucceeded))
 		})
 	}
+
+	// pollDeprovisionAsking polls a deprovision that names the plan, over a
+	// director that reports each deployment in exists, and returns the answer
+	// with the deployments the director was asked about.
+	pollDeprovisionAsking := func(exists map[string]bool) (osbapi.LastOperationResponse, []string) {
+		director := testutil.NewScriptedBOSHDirector()
+		brokerInstance.BOSH = director
+
+		var asked []string
+
+		director.GetDeploymentFn = func(deployment string) (*bosh.DeploymentDetail, error) {
+			asked = append(asked, deployment)
+
+			if exists[deployment] {
+				return &bosh.DeploymentDetail{Name: deployment}, nil
+			}
+
+			return nil, bosh.ErrDeploymentNotFound
+		}
+
+		response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: outcomeDeprovision, PlanID: planID})
+		Expect(err).ToNot(HaveOccurred())
+
+		return response, asked
+	}
+
+	for name, tombstone := range map[string]vaultPkg.Instance{
+		markCurrent: {ServiceID: "valkey", Status: vaultPkg.StatusDeleted},
+		markLegacy:  {ServiceID: "valkey", Deleted: true},
+	} {
+		It("a deprovision poll for a nameless tombstone with the "+name+" checks the deployment the poll's plan names", func() {
+			polled := planID + "-" + instanceID
+
+			Expect(vaultClient.Index(ctx, instanceID, tombstone)).To(Succeed())
+			brokerInstance.RecordTask(ctx, instanceID, "deprovision", "Deprovision request accepted", 0)
+
+			response, asked := pollDeprovisionAsking(map[string]bool{polled: true})
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a deployment that exists was reported deleted")
+			Expect(asked).To(Equal([]string{polled}))
+
+			response, _ = pollDeprovisionAsking(map[string]bool{})
+			Expect(response.State).To(Equal(osbapi.StateSucceeded))
+		})
+	}
+
+	It("a deprovision poll checks the deployment its record names before the one the tombstone names", func() {
+		const recordedDeployment = "recorded-deployment"
+
+		Expect(vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
+			ServiceID: "valkey", PlanID: planID, DeploymentName: keptDeployment, Status: vaultPkg.StatusDeleted,
+		})).To(Succeed())
+		brokerInstance.RecordTask(ctx, instanceID, "deprovision", "Deprovision request accepted", 0)
+
+		var task map[string]interface{}
+
+		_, err := vaultClient.Get(ctx, instanceID+"/task", &task)
+		Expect(err).ToNot(HaveOccurred())
+
+		task[internalVault.TaskRecordDeploymentNameKey] = recordedDeployment
+		Expect(vaultClient.Put(ctx, instanceID+"/task", task)).To(Succeed())
+
+		response, asked := pollDeprovisionAsking(map[string]bool{recordedDeployment: true})
+		Expect(response.State).To(Equal(osbapi.StateInProgress))
+		Expect(asked).To(Equal([]string{recordedDeployment}))
+	})
 
 	It("a deprovision poll for a removed entry with no context ID still answers succeeded without the director", func() {
 		director := testutil.NewScriptedBOSHDirector()
