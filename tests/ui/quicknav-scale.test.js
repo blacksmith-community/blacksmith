@@ -26,7 +26,7 @@ test('cooperative search cancels old work and agrees with synchronous ranking',a
 });
 
 const fs=require('fs');
-const {main:{boot,until}}=require('./certificates/harness.js');
+const {main:{boot,until,TEST_LIMIT}}=require('./certificates/harness.js');
 test('progressive results stay bounded initially, keyboard loads next page, and query changes cancel old results',async()=>{
  const {w,d,calls,stubs}=boot();try{
  // The page makes three requests at start, for the terminal status, the catalog, and the certificate inventory, and their answers must land before the fleet is set.
@@ -47,7 +47,7 @@ test('progressive results stay bounded initially, keyboard loads next page, and 
  expect(dialog.querySelector('[data-load-more]').hidden).toBe(true);
  query('missing-instance');await until(()=>list.getAttribute('aria-busy')==='false'&&list.children.length===0&&!input.hasAttribute('aria-activedescendant'),'the empty results');expect(list.children.length).toBe(0);expect(input.hasAttribute('aria-activedescendant')).toBe(false);
  }finally{w.close();}
-});
+},TEST_LIMIT);
 
 test('friendly catalog service and plan names remain searchable alongside IDs',()=>{
  const entries=api.destinations([],{i:{instance_name:'Orders',service_id:'service-id',plan_id:'plan-id'}},{services:[{id:'service-id',name:'Valkey',plans:[{id:'plan-id',name:'Cluster'}]}]});

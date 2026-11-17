@@ -93,14 +93,18 @@ function boot(opts={}){
 }
 // Polls until the condition holds, then returns. A wait that never ends in success throws, so a stuck page fails with a
 // message instead of a later assertion that guesses at the cause. The limit is generous so a loaded machine still passes.
-const until=async(condition,label,limit=15000)=>{
+const UNTIL_LIMIT=15000;
+// A test that calls until() needs bun's per-test limit above the wait's own limit, or bun kills the test with a
+// generic timeout before until() can throw its labelled error. Pass this as the third argument of test().
+const TEST_LIMIT=UNTIL_LIMIT+5000;
+const until=async(condition,label,limit=UNTIL_LIMIT)=>{
   const deadline=Date.now()+limit;
   while(!condition()){
     if(Date.now()>deadline) throw new Error('Timed out waiting for '+label);
     await sleep(5);
   }
 };
-return {boot,sleep,until,EVIL,day,now,iso};
+return {boot,sleep,until,TEST_LIMIT,EVIL,day,now,iso};
 })();
 
 const instance=(()=>{
