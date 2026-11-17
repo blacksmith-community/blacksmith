@@ -5,9 +5,10 @@
 // aria-current="page", and each area with children is a disclosure button.
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs'),path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,until,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+// Every wait below is on the state it needs, so a test can outlast bun's default limit on a loaded machine.
+const t=JSDOM?(name,fn)=>test(name,fn,TEST_LIMIT):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const envs=[];
@@ -17,7 +18,8 @@ const status={env:'lab',deployment:'blacksmith',plans:{},instances:{'inst-1':{in
 const routes=[['/v2/catalog',(u,o,j)=>j(200,{services:[]})],['/b/status',(u,o,j)=>j(200,status)]];
 // A width in CSS pixels answers the rail's media queries the way a browser would.
 const width=(px)=>(q)=>{const min=/min-width:\s*(\d+)px/.exec(q),max=/max-width:\s*(\d+)px/.exec(q);return (!min||px>=+min[1])&&(!max||px<=+max[1]);};
-const start=async(opts={})=>{const env=boot({noDialogs:true,router:true,routes,media:width(1440),...opts});envs.push(env);await sleep(120);return env;};
+// The router resolves its first route and the rail marks the current entry only after the page's first fetches settle, so a boot is ready when both have happened.
+const start=async(opts={})=>{const env=boot({noDialogs:true,router:true,routes,media:width(1440),...opts});envs.push(env);await until(()=>env.w.blacksmithRouter?.current&&!env.w.blacksmithRouter.applying&&current(env.d).length>0,'the router to resolve the first route and the rail to mark it');return env;};
 const rail=(d)=>d.getElementById('console-rail');
 const current=(d)=>[...rail(d).querySelectorAll('[aria-current="page"]')];
 const link=(d,sel)=>rail(d).querySelector(sel);
@@ -27,6 +29,10 @@ const link=(d,sel)=>rail(d).querySelector(sel);
 const click=(w,el,init={})=>{let taken=null;const after=(e)=>{taken=e.defaultPrevented;e.preventDefault();};w.addEventListener('click',after);el.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true,button:0,...init}));w.removeEventListener('click',after);return {defaultPrevented:taken};};
 // DOM nodes are compared by identity, never by a deep walk of the window.
 const only=(d,el)=>{const list=current(d);expect(list.length).toBe(1);expect(list[0]).toBe(el);};
+// A route is settled once the router reports it and has stopped applying, which is when the rail and the panels have followed it.
+const settled=(w,want)=>{const c=w.blacksmithRouter.current;return !!c&&!w.blacksmithRouter.applying&&Object.keys(want).every(k=>c[k]===want[k]);};
+const routed=(w,want)=>until(()=>settled(w,want),'the router to settle on '+JSON.stringify(want));
+const idle=(w)=>until(()=>!w.blacksmithRouter.applying,'the router to stop applying');
 
 t('the rail is the Primary landmark and the old navigation is gone',async()=>{
  const {d}=await start();
@@ -91,7 +97,8 @@ t('a rail link navigates through the router and moves aria-current',async()=>{
  const tasks=[...rail(d).querySelectorAll('a.rail-link')].find(a=>a.textContent.trim()==='Tasks');
  const event=click(w,tasks);
  expect(event.defaultPrevented).toBe(true);
- await sleep(80);
+ await routed(w,{screen:'blacksmith',section:'tasks'});
+ await until(()=>current(d).length===1&&current(d)[0]===tasks&&d.querySelector('#blacksmith .entity-workspace')?.dataset.section==='tasks','the rail and the workspace to follow the route');
  expect(w.blacksmithRouter.current).toMatchObject({screen:'blacksmith',section:'tasks'});
  expect(w.location.hash).toBe('#/broker/tasks');
  only(d,tasks);
@@ -105,7 +112,7 @@ t('a modified or middle click is left to the browser',async()=>{
   const event=click(w,tasks,init);
   expect(event.defaultPrevented).toBe(false);
  }
- await sleep(40);
+ await idle(w);
  expect(w.blacksmithRouter.current).toMatchObject({screen:'blacksmith',section:'details'});
 });
 
@@ -125,7 +132,8 @@ t('an area button only opens and closes its sections',async()=>{
 t('an open instance shows its name and its eight sections as links',async()=>{
  const {w,d}=await start();
  await w.blacksmithRouter.navigate({screen:'services',instance:'inst-1',section:'vms'});
- await sleep(60);
+ await routed(w,{screen:'services',instance:'inst-1',section:'vms'});
+ await until(()=>current(d).map(a=>a.textContent.trim()).join()==='VMs','the rail to mark VMs');
  const R=w.BlacksmithRoutes;
  const group=rail(d).querySelector('#rail-sections-services .rail-instance');
  expect(group.hidden).toBe(false);
@@ -136,26 +144,29 @@ t('an open instance shows its name and its eight sections as links',async()=>{
  expect(current(d).map(a=>a.textContent.trim())).toEqual(['VMs']);
  expect(rail(d).querySelector('[data-area="services"] > .rail-area-toggle').getAttribute('aria-expanded')).toBe('true');
  links.find(a=>a.textContent.trim()==='Credentials').click();
- await sleep(80);
+ await routed(w,{screen:'services',instance:'inst-1',section:'credentials'});
  expect(w.blacksmithRouter.current).toMatchObject({screen:'services',instance:'inst-1',section:'credentials'});
  await w.blacksmithRouter.navigate({screen:'services'});
- await sleep(40);
- expect(group.hidden).toBe(true);
+ await routed(w,{screen:'services'});
+ await until(()=>group.hidden&&current(d).map(a=>a.textContent.trim()).join()==='All instances','the instance group to close and All instances to be current');
  expect(current(d).map(a=>a.textContent.trim())).toEqual(['All instances']);
 });
 
 t('the batch links switch views and keep the New Operation draft',async()=>{
  const {w,d}=await start();
  await w.blacksmithRouter.navigate({screen:'upgrade',view:'new',operation:'upgrade',step:0});
- await sleep(60);
+ await routed(w,{screen:'upgrade',view:'new'});
+ await until(()=>current(d)[0]===link(d,'#batch-new'),'the rail to mark New Operation');
  only(d,link(d,'#batch-new'));
  link(d,'#batch-activity').click();
- await sleep(40);
+ await routed(w,{screen:'upgrade',view:'activity'});
+ await until(()=>current(d)[0]===link(d,'#batch-activity')&&!d.querySelector('#upgrade .upgrade-right-panel').hidden,'the Activity view to show');
  expect(w.blacksmithRouter.current).toMatchObject({screen:'upgrade',view:'activity'});
  expect(d.querySelector('#upgrade .upgrade-right-panel').hidden).toBe(false);
  only(d,link(d,'#batch-activity'));
  link(d,'#batch-new').click();
- await sleep(40);
+ await routed(w,{screen:'upgrade',view:'new'});
+ await until(()=>current(d)[0]===link(d,'#batch-new')&&!d.querySelector('#upgrade .upgrade-main').hidden,'the New Operation view to show');
  expect(w.blacksmithRouter.current).toMatchObject({screen:'upgrade',view:'new'});
  expect(d.querySelector('#upgrade .upgrade-main').hidden).toBe(false);
  only(d,link(d,'#batch-new'));
@@ -194,7 +205,7 @@ t('from 700 to 1099px the rail starts as icons and an icon opens it over the con
  expect(d.activeElement).toBe(toggle);
  toggle.click();
  link(d,'#batch-activity').click();
- await sleep(60);
+ await routed(w,{screen:'upgrade',view:'activity'});
  expect(rail(d).hasAttribute('data-overlay')).toBe(false);
  expect(w.blacksmithRouter.current).toMatchObject({screen:'upgrade',view:'activity'});
 });
@@ -223,7 +234,8 @@ t('under 700px a hamburger opens the rail as a modal drawer without touching his
  expect(w.history.length).toBe(before);
  toggle.click();
  [...rail(d).querySelectorAll('a.rail-link')].find(a=>a.textContent.trim()==='Events').click();
- await stubs.settle();await sleep(80);
+ await routed(w,{screen:'blacksmith',section:'events'});
+ await until(()=>!drawer.open&&d.activeElement===d.querySelector('#blacksmith .detail-content'),'the drawer to close and focus to reach the content');
  expect(drawer.open).toBe(false);
  expect(w.blacksmithRouter.current).toMatchObject({screen:'blacksmith',section:'events'});
  expect(d.activeElement).toBe(d.querySelector('#blacksmith .detail-content'));
@@ -235,10 +247,13 @@ t('the breadcrumb is the first row of the content column and Back shows only bel
  expect(bar.nextElementSibling).toBe(d.querySelector('.tab-content'));
  const back=()=>bar.querySelector('.route-back');
  for(const route of [{screen:'blacksmith',section:'details'},{screen:'services'},{screen:'certificates'},{screen:'upgrade',view:'new',operation:'upgrade',step:0},{screen:'upgrade',view:'activity'}]){
-  await w.blacksmithRouter.navigate(route);await sleep(40);
+  await w.blacksmithRouter.navigate(route);
+  await routed(w,route);
   expect(back()?.hidden??true).toBe(true);
  }
- await w.blacksmithRouter.navigate({screen:'blacksmith',section:'tasks'});await sleep(40);
+ await w.blacksmithRouter.navigate({screen:'blacksmith',section:'tasks'});
+ await routed(w,{screen:'blacksmith',section:'tasks'});
+ await until(()=>back()&&!back().hidden,'the Back button to show');
  expect(back().hidden).toBe(false);
 });
 
