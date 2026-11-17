@@ -800,9 +800,11 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 		})
 	}
 
-	// pollDeprovisionAsking polls a deprovision that names the plan, over a
-	// director that reports each deployment in exists, and returns the answer
-	// with the deployments the director was asked about.
+	// pollDeprovisionAsking polls a deprovision that carries pollPlan as its
+	// plan, over a director that reports each deployment in exists, and
+	// returns the answer with the deployments the director was asked about.
+	// The deployment name comes from the record first, then the tombstone's
+	// name, then the tombstone's plan, and last from pollPlan.
 	pollDeprovisionAsking := func(pollPlan string, exists map[string]bool) (osbapi.LastOperationResponse, []string) {
 		director := testutil.NewScriptedBOSHDirector()
 		brokerInstance.BOSH = director
