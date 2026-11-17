@@ -1779,6 +1779,26 @@ var _ = Describe("An instance's provision details", func() {
 		Expect(details.Parameters).To(HaveKeyWithValue("memory", "small"))
 	})
 
+	It("instance details refuse an entry with the legacy deleted flag", func() {
+		storedName := "standalone-classic-" + instanceID
+
+		Expect(brokerInstance.StoreDeploymentDetails(ctx, instanceID, storedName, request)).To(Succeed())
+		Expect(vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
+			ServiceID: request.ServiceID, PlanID: planID, DeploymentName: storedName, Deleted: true,
+		})).To(Succeed())
+
+		_, _, err := brokerInstance.InstanceDetails(ctx, instanceID)
+		Expect(err).To(MatchError(broker.ErrCouldNotFindInstanceInVaultIndex))
+	})
+
+	It("a provision sees an entry with the legacy deleted flag as no longer indexed", func() {
+		Expect(vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
+			ServiceID: request.ServiceID, PlanID: planID, Deleted: true,
+		})).To(Succeed())
+
+		Expect(brokerInstance.InstanceStillIndexed(ctx, instanceID)).To(BeFalse())
+	})
+
 	It("a provision sees a tombstoned entry as no longer indexed", func() {
 		Expect(brokerInstance.InstanceStillIndexed(ctx, instanceID)).To(BeTrue())
 
