@@ -40,6 +40,8 @@ var (
 
 const (
 	deploymentNameBlacksmith = "blacksmith"
+	vmsKey                   = "vms"
+	ownUnknownMessage        = "the broker's own deployment is unknown"
 	defaultLogLimit          = 5000  // Default number of log lines to return
 	maxLogLimit              = 20000 // Maximum number of log lines per request
 )
@@ -373,7 +375,13 @@ func (h *Handler) GetVMs(responseWriter http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	deploymentName := h.getBlacksmithDeploymentName(logger)
+	deploymentName, ok := h.ownDeploymentName(logger)
+	if !ok {
+		responseWriter.WriteHeader(http.StatusNotFound)
+		response.HandleJSON(responseWriter, map[string]interface{}{vmsKey: []interface{}{}, errorKey: ownUnknownMessage}, nil)
+
+		return
+	}
 
 	vms, err := h.fetchDeploymentVMs(ctx, deploymentName, logger)
 	if err != nil {
@@ -615,13 +623,12 @@ func (h *Handler) GetEvents(responseWriter http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// Fetch events for the blacksmith deployment
-	// Use the environment name with "-blacksmith" suffix as the deployment name
-	environment := h.config.GetEnvironment()
+	deploymentName, ok := h.ownDeploymentName(logger)
+	if !ok {
+		responseWriter.WriteHeader(http.StatusNotFound)
+		response.HandleJSON(responseWriter, map[string]interface{}{"events": []interface{}{}, errorKey: ownUnknownMessage}, nil)
 
-	deploymentName := environment + "-blacksmith"
-	if environment == "" {
-		deploymentName = deploymentNameBlacksmith
+		return
 	}
 
 	logger.Debug("Fetching events for deployment: %s", deploymentName)
@@ -662,13 +669,12 @@ func (h *Handler) GetManifest(responseWriter http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	// Fetch deployment details including manifest
-	// Use the environment name with "-blacksmith" suffix as the deployment name
-	environment := h.config.GetEnvironment()
+	deploymentName, ok := h.ownDeploymentName(logger)
+	if !ok {
+		responseWriter.WriteHeader(http.StatusNotFound)
+		response.HandleJSON(responseWriter, map[string]interface{}{"text": "", "parsed": map[string]interface{}{}, errorKey: ownUnknownMessage}, nil)
 
-	deploymentName := environment + "-blacksmith"
-	if environment == "" {
-		deploymentName = deploymentNameBlacksmith
+		return
 	}
 
 	logger.Debug("Fetching manifest for deployment: %s", deploymentName)
@@ -807,7 +813,7 @@ func (h *Handler) validateDirectorAvailable(responseWriter http.ResponseWriter, 
 		logger.Error("Director not configured")
 
 		vmsData := map[string]interface{}{
-			"vms":   []interface{}{},
+			vmsKey:  []interface{}{},
 			"error": "Director not configured",
 		}
 		response.HandleJSON(responseWriter, vmsData, nil)
@@ -816,19 +822,6 @@ func (h *Handler) validateDirectorAvailable(responseWriter http.ResponseWriter, 
 	}
 
 	return true
-}
-
-func (h *Handler) getBlacksmithDeploymentName(logger interfaces.Logger) string {
-	environment := h.config.GetEnvironment()
-
-	deploymentName := environment + "-blacksmith"
-	if environment == "" {
-		deploymentName = deploymentNameBlacksmith
-	}
-
-	logger.Debug("Fetching VMs for deployment: %s", deploymentName)
-
-	return deploymentName
 }
 
 func (h *Handler) fetchDeploymentVMs(ctx context.Context, deploymentName string, logger interfaces.Logger) ([]bosh.VM, error) {
@@ -844,7 +837,7 @@ func (h *Handler) fetchDeploymentVMs(ctx context.Context, deploymentName string,
 
 func (h *Handler) sendVMsErrorResponse(responseWriter http.ResponseWriter, err error) {
 	vmsData := map[string]interface{}{
-		"vms":   []interface{}{},
+		vmsKey:  []interface{}{},
 		"error": err.Error(),
 	}
 	response.HandleJSON(responseWriter, vmsData, nil)
@@ -972,13 +965,24 @@ func (h *Handler) resolveDeploymentName(req *http.Request, instanceID string, lo
 }
 
 func (h *Handler) getBlacksmithDeploymentNameForResurrection(logger interfaces.Logger, responseWriter http.ResponseWriter) (string, bool) {
+	deploymentName, ok := h.ownDeploymentName(logger)
+	if !ok {
+		responseWriter.WriteHeader(http.StatusNotFound)
+		response.HandleJSON(responseWriter, map[string]interface{}{errorKey: ownUnknownMessage}, nil)
+
+		return "", false
+	}
+
+	return deploymentName, true
+}
+
+// ownDeploymentName is the broker's own deployment name from the shared
+// resolver. It returns false when nothing names the broker, and then the
+// caller refuses instead of guessing a name.
+func (h *Handler) ownDeploymentName(logger interfaces.Logger) (string, bool) {
 	deploymentName, ok := ownname.Resolve(h.ownFile, h.config.GetEnvironment())
 	if !ok {
-		logger.Error("The broker's own deployment name is unknown, so resurrection is not changed")
-		responseWriter.WriteHeader(http.StatusNotFound)
-		response.HandleJSON(responseWriter, map[string]interface{}{
-			"error": "the broker's own deployment is unknown",
-		}, nil)
+		logger.Error("The broker's own deployment name is unknown")
 
 		return "", false
 	}
