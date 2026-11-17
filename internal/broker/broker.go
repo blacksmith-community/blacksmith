@@ -3336,8 +3336,8 @@ func (b *Broker) getInstanceDetails(ctx context.Context, instanceID string, logg
 
 	// Get instance from index to construct deployment name
 	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
-	if err != nil || !exists {
-		logger.Error("could not find instance in vault index: %s", err)
+	if err != nil || !exists || instance.IsTombstone() {
+		logger.Error("could not find a live instance in vault index: %v", err)
 
 		return osbapi.ProvisionRequest{}, "", ErrCouldNotFindInstanceInVaultIndex
 	}

@@ -1768,6 +1768,18 @@ var _ = Describe("An instance's provision details", func() {
 		Expect(brokerInstance.InstanceStillIndexed(ctx, instanceID)).To(BeFalse())
 	})
 
+	It("instance details refuse a tombstoned entry", func() {
+		storedName := "standalone-classic-" + instanceID
+
+		Expect(brokerInstance.StoreDeploymentDetails(ctx, instanceID, storedName, request)).To(Succeed())
+		Expect(vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
+			ServiceID: request.ServiceID, PlanID: planID, DeploymentName: storedName, Status: vaultPkg.StatusDeleted,
+		})).To(Succeed())
+
+		_, _, err := brokerInstance.InstanceDetails(ctx, instanceID)
+		Expect(err).To(MatchError(broker.ErrCouldNotFindInstanceInVaultIndex))
+	})
+
 	It("instance details of an entry without a stored name use the plan and instance ID", func() {
 		builtName := planID + "-" + instanceID
 
