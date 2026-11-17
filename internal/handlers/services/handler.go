@@ -2281,7 +2281,7 @@ func (h *Handler) resolveDeploymentInfo(ctx context.Context, instanceID string) 
 		return nil, fmt.Errorf("failed to load instance metadata from vault: %w", err)
 	}
 
-	if !exists || inst.PlanID == "" {
+	if !exists || inst.IsTombstone() || inst.PlanID == "" {
 		return nil, errInstanceNotFound
 	}
 

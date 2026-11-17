@@ -302,8 +302,8 @@ func (h *Handler) resolveServiceInstanceDeployment(ctx context.Context, instance
 		return "", "", fmt.Errorf("failed to lookup instance in vault: %w", err)
 	}
 
-	if !exists {
-		logger.Error("Unable to find service instance %s in vault index", instanceID)
+	if !exists || inst.IsTombstone() {
+		logger.Error("Unable to find a live service instance %s in vault index", instanceID)
 
 		return "", "", errServiceInstanceNotFound
 	}

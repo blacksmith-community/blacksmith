@@ -347,7 +347,7 @@ func (h *Handler) getDeploymentContext(ctx context.Context, instanceID string) (
 		return "", "", fmt.Errorf("failed to lookup instance in vault: %w", err)
 	}
 
-	if !exists {
+	if !exists || inst.IsTombstone() {
 		return "", "", errInstanceNotFoundInVault
 	}
 

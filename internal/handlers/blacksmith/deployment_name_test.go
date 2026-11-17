@@ -66,3 +66,26 @@ func TestToggleResurrectionNamesTheDeploymentAnIndexEntryRecords(t *testing.T) {
 		}
 	}
 }
+
+// A deprovisioned instance leaves a tombstone in the index, and resurrection
+// is not toggled on the deployment of an instance that is gone.
+func TestToggleResurrectionRefusesATombstonedInstance(t *testing.T) {
+	t.Parallel()
+
+	vault := &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
+		"gone": {ServiceID: "redis", PlanID: "standalone", Status: vaultPkg.StatusDeleted},
+	}}
+	director := &resurrectionDirector{ScriptedBOSHDirector: testutil.NewScriptedBOSHDirector()}
+	handler := handlerpkg.NewHandler(handlerpkg.Dependencies{
+		Logger: logger.Get().Named("test"), Config: createTestConfig(), Vault: vault, Director: director,
+	})
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/b/gone/resurrection", strings.NewReader(`{"enabled": true}`))
+	recorder := httptest.NewRecorder()
+
+	handler.ToggleResurrection(recorder, request)
+
+	if recorder.Code != http.StatusNotFound || len(director.toggled) != 0 {
+		t.Errorf("status %d with toggles %v, want 404 and none", recorder.Code, director.toggled)
+	}
+}

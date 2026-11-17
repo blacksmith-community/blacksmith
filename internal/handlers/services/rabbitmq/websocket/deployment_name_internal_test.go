@@ -31,3 +31,20 @@ func TestDeploymentContextNamesTheDeploymentAnIndexEntryRecords(t *testing.T) {
 		}
 	}
 }
+
+// A deprovisioned instance leaves a tombstone in the index, and nothing
+// opens a session to, or toggles, the deployment of an instance that is
+// gone.
+func TestDeploymentContextRefusesATombstonedInstance(t *testing.T) {
+	t.Parallel()
+
+	vault := &testutil.InstanceVault{Instances: map[string]vaultPkg.Instance{
+		"gone": {ServiceID: "rabbitmq", PlanID: "single-node", Status: vaultPkg.StatusDeleted},
+	}}
+	handler := NewHandler(Dependencies{Logger: logger.Get().Named("test"), Vault: vault})
+
+	_, _, err := handler.getDeploymentContext(t.Context(), "gone")
+	if err == nil {
+		t.Fatal("a tombstoned instance resolved to a deployment")
+	}
+}

@@ -999,8 +999,8 @@ func (h *Handler) getServiceDeploymentName(req *http.Request, instanceID string,
 	ctx := req.Context()
 
 	inst, exists, err := h.vault.FindInstance(ctx, instanceID)
-	if err != nil || !exists {
-		logger.Error("Unable to find service instance %s in vault index", instanceID)
+	if err != nil || !exists || inst.IsTombstone() {
+		logger.Error("Unable to find a live service instance %s in vault index", instanceID)
 		responseWriter.WriteHeader(http.StatusNotFound)
 		response.HandleJSON(responseWriter, map[string]interface{}{
 			"error": "service instance not found",
