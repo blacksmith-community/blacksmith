@@ -3,9 +3,11 @@ package broker_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"blacksmith/internal/broker"
+	"blacksmith/pkg/logger"
 )
 
 const (
@@ -55,5 +57,56 @@ func TestBasicAuthAcceptsOnlyTheExactPair(t *testing.T) {
 				t.Fatalf("status = %d, want %d", recorder.Code, testCase.want)
 			}
 		})
+	}
+}
+
+// A person sometimes types a password into the username field, so a failed
+// login must leave neither field in the log at any level.
+func TestFailedLoginLogsNoSubmittedCredential(t *testing.T) {
+	t.Parallel()
+
+	const (
+		typedUser = "hunter2-typed-as-username"
+		typedPass = "another-typed-secret"
+	)
+
+	recorder := &levelRecordingLogger{NoOpLogger: &logger.NoOpLogger{}}
+	api := broker.API{
+		Username: installUser,
+		Password: authTestPassword,
+		Internal: broker.NullHandler{},
+		Primary:  broker.NullHandler{},
+		Logger:   recorder,
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/status", nil)
+	req.SetBasicAuth(typedUser, typedPass)
+	req.RemoteAddr = "10.0.0.7:5000"
+
+	response := httptest.NewRecorder()
+	api.ServeHTTP(response, req)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+
+	sawFailure := false
+
+	for _, entry := range recorder.entries {
+		if strings.Contains(entry, typedUser) || strings.Contains(entry, typedPass) {
+			t.Fatalf("log line holds a submitted credential: %q", entry)
+		}
+
+		if strings.Contains(entry, "authentication failed") &&
+			strings.Contains(entry, "10.0.0.7:5000") && strings.Contains(entry, "/b/status") {
+			sawFailure = true
+		}
+	}
+
+	if !sawFailure {
+		t.Fatalf("no failed-login line with the address and route in %q", recorder.entries)
 	}
 }

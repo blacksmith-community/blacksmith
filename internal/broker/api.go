@@ -40,7 +40,7 @@ func (api API) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	}
 
 	if !api.validateCredentials(username, password) {
-		api.handleInvalidAuth(writer, req, username)
+		api.handleInvalidAuth(writer, req)
 
 		return
 	}
@@ -128,10 +128,12 @@ func (api API) validateCredentials(username, password string) bool {
 	return userMatch&passMatch == 1
 }
 
-func (api API) handleInvalidAuth(writer http.ResponseWriter, req *http.Request, username string) {
+// handleInvalidAuth refuses a request whose credentials did not match. It
+// never logs the submitted username or password, because a person who
+// mistypes into the wrong field would otherwise leave a secret in the log.
+func (api API) handleInvalidAuth(writer http.ResponseWriter, req *http.Request) {
 	if api.Logger != nil {
-		api.Logger.Info("authentication failed: Invalid credentials for user '%s' from %s", username, req.RemoteAddr)
-		api.Logger.Debug("failed auth attempt for user: %s, path: %s", username, req.URL.Path)
+		api.Logger.Info("authentication failed: invalid credentials for %s %s from %s", req.Method, req.URL.Path, req.RemoteAddr)
 	}
 
 	writer.WriteHeader(http.StatusForbidden)
