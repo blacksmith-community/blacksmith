@@ -29,7 +29,7 @@ const fs=require('fs');
 const {main:{boot,until}}=require('./certificates/harness.js');
 test('progressive results stay bounded initially, keyboard loads next page, and query changes cancel old results',async()=>{
  const {w,d,calls,stubs}=boot();try{
- // The page asks the broker for its status, instance, and catalog at start; its answers must land before the fleet is set.
+ // The page makes three requests at start, for the terminal status, the catalog, and the certificate inventory, and their answers must land before the fleet is set.
  await until(()=>calls.length>=3,'the page to make its startup requests');await stubs.settle();w.serviceInstances=fleet;
  w.Element.prototype.scrollIntoView=function(){};w.Element.prototype.getClientRects=function(){return this.matches('dialog[open]')?[1]:[]};
  const dialog=d.getElementById('navigation-dialog');dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
@@ -37,15 +37,15 @@ test('progressive results stay bounded initially, keyboard loads next page, and 
  d.getElementById('navigation-trigger').click();
  const input=d.getElementById('navigation-search'),list=d.getElementById('navigation-results');
  const query=value=>{input.value=value;input.dispatchEvent(new w.Event('input'));};
- query('cache');await until(()=>list.children.length===40&&list.firstChild.getAttribute('aria-setsize')==='10000','the first page of results');
+ query('cache');await until(()=>list.getAttribute('aria-busy')==='false'&&list.children.length===40&&list.firstChild.getAttribute('aria-setsize')==='10000','the first page of results');
  expect(list.children.length).toBe(40);expect(list.firstChild.getAttribute('aria-setsize')).toBe('10000');
  for(let i=0;i<40;i++)input.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));
  expect(list.children.length).toBe(80);expect(input.getAttribute('aria-activedescendant')).toBe('navigation-option-40');
  dialog.querySelector('[data-load-more]').click();expect(list.children.length).toBe(120);
- query('9998 logs');query('9999 credentials');await until(()=>list.children.length===1&&list.textContent.includes('Credentials'),'the results for the last query');
+ query('9998 logs');query('9999 credentials');await until(()=>list.getAttribute('aria-busy')==='false'&&list.children.length===1&&list.textContent.includes('Credentials'),'the results for the last query');
  expect(list.children.length).toBe(1);expect(list.textContent).toContain('Cache 9999');expect(list.textContent).toContain('Credentials');
  expect(dialog.querySelector('[data-load-more]').hidden).toBe(true);
- query('missing-instance');await until(()=>list.children.length===0&&!input.hasAttribute('aria-activedescendant'),'the empty results');expect(list.children.length).toBe(0);expect(input.hasAttribute('aria-activedescendant')).toBe(false);
+ query('missing-instance');await until(()=>list.getAttribute('aria-busy')==='false'&&list.children.length===0&&!input.hasAttribute('aria-activedescendant'),'the empty results');expect(list.children.length).toBe(0);expect(input.hasAttribute('aria-activedescendant')).toBe(false);
  }finally{w.close();}
 });
 
