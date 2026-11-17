@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"time"
 
+	"blacksmith/internal/handlers/instancegate"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
 	"blacksmith/pkg/services"
@@ -83,6 +84,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 func (h *Handler) handleRequest(responseWriter http.ResponseWriter, req *http.Request, instanceID, operation string) {
 	logger := h.logger.Named("rabbitmq-testing")
 	logger.Debug("RabbitMQ operation %s for instance %s", operation, instanceID)
+
+	if !instancegate.Permit(responseWriter, req, logger, h.vault, instanceID) {
+		return
+	}
 
 	ctx := req.Context()
 

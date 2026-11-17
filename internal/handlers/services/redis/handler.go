@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"time"
 
+	"blacksmith/internal/handlers/instancegate"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
 	"blacksmith/pkg/services"
@@ -60,6 +61,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 	logger := h.logger.Named("redis-testing")
 	logger.Debug("Redis operation %s for instance %s", operation, instanceID)
+
+	if !instancegate.Permit(writer, req, logger, h.vault, instanceID) {
+		return
+	}
 
 	// Get credentials from vault
 	var creds map[string]interface{}
