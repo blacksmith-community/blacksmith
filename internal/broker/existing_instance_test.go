@@ -676,7 +676,10 @@ func sendOSBRequest(baseURL, method, path string, body interface{}) (int, string
 // a provision succeeded. Only the records that outlive the index entry, the
 // task record and the metadata, can show that the instance was deleted.
 var _ = Describe("A poll for an instance the index does not have", func() {
-	const planID = "standalone"
+	const (
+		planID         = "standalone"
+		keptDeployment = "kept-deployment"
+	)
 
 	var (
 		ctx            context.Context
@@ -747,9 +750,66 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 
 			brokerInstance.RecordTask(ctx, instanceID, "deprovision", "BOSH delete in progress (task 78)", 78)
 
+			// The tombstone's deployment is checked with the director,
+			// which says it is gone.
+			director := testutil.NewScriptedBOSHDirector()
+			director.GetDeploymentFn = func(string) (*bosh.DeploymentDetail, error) { return nil, bosh.ErrDeploymentNotFound }
+			brokerInstance.BOSH = director
+
 			Expect(poll("deprovision").State).To(Equal(osbapi.StateSucceeded))
 		})
 	}
+
+	// A deprovision that was accepted but has not recorded its context ID
+	// yet leaves a record with none. For a removed entry that means the
+	// deployment was gone before the delete, but a tombstone can sit over a
+	// deployment that still exists, so the poll asks the director.
+	for name, tombstone := range map[string]vaultPkg.Instance{
+		"current mark": {ServiceID: "valkey", PlanID: planID, DeploymentName: keptDeployment, Status: vaultPkg.StatusDeleted},
+		"legacy flag":  {ServiceID: "valkey", PlanID: planID, DeploymentName: keptDeployment, Deleted: true},
+	} {
+		It("a deprovision poll for a tombstone with the "+name+" and no context ID asks the director", func() {
+			director := testutil.NewScriptedBOSHDirector()
+			brokerInstance.BOSH = director
+
+			var asked []string
+
+			exists := true
+			director.GetDeploymentFn = func(deployment string) (*bosh.DeploymentDetail, error) {
+				asked = append(asked, deployment)
+
+				if exists {
+					return &bosh.DeploymentDetail{Name: deployment}, nil
+				}
+
+				return nil, bosh.ErrDeploymentNotFound
+			}
+
+			Expect(vaultClient.Index(ctx, instanceID, tombstone)).To(Succeed())
+			brokerInstance.RecordTask(ctx, instanceID, "deprovision", "Deprovision request accepted", 0)
+
+			Expect(poll("deprovision").State).To(Equal(osbapi.StateInProgress), "a deployment that exists was reported deleted")
+			Expect(asked).To(Equal([]string{keptDeployment}))
+
+			exists = false
+
+			Expect(poll("deprovision").State).To(Equal(osbapi.StateSucceeded))
+		})
+	}
+
+	It("a deprovision poll for a removed entry with no context ID still answers succeeded without the director", func() {
+		director := testutil.NewScriptedBOSHDirector()
+		brokerInstance.BOSH = director
+		director.GetDeploymentFn = func(string) (*bosh.DeploymentDetail, error) {
+			Fail("the director was asked about a removed entry")
+
+			return nil, nil //nolint:nilnil // unreachable after Fail
+		}
+
+		brokerInstance.RecordTask(ctx, instanceID, "deprovision", "Deprovision request accepted", 0)
+
+		Expect(poll("deprovision").State).To(Equal(osbapi.StateSucceeded))
+	})
 
 	It("a poll for an instance with no records at all answers failed", func() {
 		Expect(poll("provision").State).To(Equal(osbapi.StateFailed))

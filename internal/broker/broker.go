@@ -742,7 +742,7 @@ func (b *Broker) LastOperation(
 	logger.Debug("LastOperation called for instance %s", instanceID)
 
 	// Get instance and deployment information
-	instance, deploymentName, err := b.getInstanceForOperation(ctx, instanceID, logger)
+	instance, deploymentName, tombstone, err := b.getInstanceForOperation(ctx, instanceID, logger)
 	if err != nil {
 		logger.Error("Error getting instance for operation: %s", err)
 
@@ -750,7 +750,7 @@ func (b *Broker) LastOperation(
 	}
 
 	if instance == nil {
-		return b.pollWithoutIndexEntry(ctx, instanceID, details, logger)
+		return b.pollWithoutIndexEntry(ctx, instanceID, details, tombstone, logger)
 	}
 
 	logger.Debug("Instance %s found, deployment: %s", instanceID, deploymentName)
@@ -2615,7 +2615,11 @@ func (b *Broker) orphanDeploymentUnconfirmed(ctx context.Context, deploymentName
 // that names no operation follows the record's action. When the record
 // names no deployment, the deployment is named from the plan the poll
 // names.
-func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, details osbapi.LastOperationRequest, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+//
+// A tombstone is the entry of an instance that is gone, but it can sit over
+// a deployment that still exists, so a tombstone passed here never takes the
+// no-context-ID shortcut of deprovisionWithoutIndexEntry.
+func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, details osbapi.LastOperationRequest, tombstone *vaultPkg.Instance, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if b.provisionActive(instanceID) {
 		logger.Debug("instance %s has no index entry yet, and its provision is still being accepted", instanceID)
 
@@ -2646,7 +2650,7 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, d
 			}, nil
 		}
 
-		return b.deprovisionWithoutIndexEntry(ctx, instanceID, details.PlanID, recorded, logger)
+		return b.deprovisionWithoutIndexEntry(ctx, instanceID, details.PlanID, recorded, tombstone, logger)
 	}
 
 	var metadata map[string]interface{}
@@ -2722,17 +2726,30 @@ func (b *Broker) unknownOutcomeWithoutIndexEntry(ctx context.Context, instanceID
 // when the record names none. When neither names one, it answers in
 // progress without asking. A deployment that still exists answers failed
 // when the record says the delete failed, and in progress otherwise.
-func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, planID string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+//
+// A tombstone, which is not a removed entry, skips the no-context-ID
+// answer, and names its deployment when the record names none.
+func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, planID string, recorded recordedOperation, tombstone *vaultPkg.Instance, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if recorded.State == internalVault.TaskStateDeleted {
 		logger.Info("instance %s has no index entry, and its deprovision is recorded as deleted", instanceID)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: descriptionInstanceDeleted}, nil
 	}
 
-	if recorded.ContextID == "" {
+	if recorded.ContextID == "" && tombstone == nil {
 		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: descriptionInstanceDeleted}, nil
+	}
+
+	if tombstone != nil {
+		if recorded.DeploymentName == "" {
+			recorded.DeploymentName = tombstone.DeploymentNameFor(instanceID)
+		}
+
+		if planID == "" {
+			planID = tombstone.PlanID
+		}
 	}
 
 	if recorded.DeploymentName == "" && planID == "" {
@@ -3544,20 +3561,29 @@ func (b *Broker) getCredentialsForBackup(ctx context.Context, instanceID string,
 	return creds, nil
 }
 
-func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string, logger logger.Logger) (*vaultPkg.Instance, string, error) {
+// getInstanceForOperation returns the live entry and its deployment name.
+// An instance that is gone comes back with no entry, and a tombstone that
+// marks it gone comes back as the fourth value for the poll to use.
+func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string, logger logger.Logger) (*vaultPkg.Instance, string, *vaultPkg.Instance, error) {
 	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
 	if err != nil {
 		logger.Error("could not find instance details: %s", err)
 
-		return nil, "", fmt.Errorf("failed to find instance: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to find instance: %w", err)
 	}
 
 	// A tombstone is an entry for an instance that is gone, so it settles
 	// the poll as a removed entry does.
-	if !exists || instance.IsTombstone() {
+	if !exists {
 		logger.Error("instance %s not found in vault index", instanceID)
 
-		return nil, "", nil // Return nil instance to indicate deletion
+		return nil, "", nil, nil // Return nil instance to indicate deletion
+	}
+
+	if instance.IsTombstone() {
+		logger.Error("instance %s is a tombstone in the vault index", instanceID)
+
+		return nil, "", instance, nil
 	}
 
 	// Prefer the deployment name recorded at provision time. Deriving it from
@@ -3572,7 +3598,7 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 
 	logger.Debug("checking deployment: %s", deploymentName)
 
-	return instance, deploymentName, nil
+	return instance, deploymentName, nil, nil
 }
 
 // recordedOperation is the progress the broker keeps for an instance's
