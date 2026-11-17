@@ -44,6 +44,7 @@ const (
 	// 404.
 	CodeInstanceNotFound = "instance_not_found"
 	CodeNotFound         = "not_found"
+	CodeTaskNotFound     = "task_not_found"
 
 	// 409.
 	CodeInstanceBusy           = "instance_busy"

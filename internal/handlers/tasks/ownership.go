@@ -10,19 +10,20 @@ import (
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/ownership"
 	"blacksmith/internal/ownname"
-	"blacksmith/pkg/http/response"
 
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
 
 // writeDirectorReadFailure answers a failed read of a task from the
 // director. It answers 404 only when the director says the task does not
-// exist, because an operator reads a 404 as a task that is gone. Any other
+// exist, because an operator reads a 404 as a task that is gone, and it
+// carries the code task_not_found. Any other
 // failure, such as an outage, a timeout, or a refusal, answers 502 with
 // internal_error, as the broker answers a director failure elsewhere.
 func writeDirectorReadFailure(writer http.ResponseWriter, err error, taskID int, what string) {
 	if boshapi.IsNotFound(err) {
-		response.WriteError(writer, http.StatusNotFound, fmt.Sprintf("task %d %s not found", taskID, what))
+		apierr.Write(writer, apierr.New(http.StatusNotFound, apierr.CodeTaskNotFound,
+			fmt.Sprintf("task %d %s not found", taskID, what)), http.StatusNotFound)
 
 		return
 	}

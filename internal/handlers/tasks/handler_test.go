@@ -473,6 +473,8 @@ func TestGetTaskDetailsNotFound(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d", recorder.Code)
 	}
+
+	assertTaskNotFoundCode(t, recorder)
 }
 
 func TestGetTaskDetailsEventsFallback(t *testing.T) {
@@ -612,6 +614,8 @@ func TestGetTaskOutputNotFound(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d", recorder.Code)
 	}
+
+	assertTaskNotFoundCode(t, recorder)
 }
 
 func TestCancelTaskSuccess(t *testing.T) {
@@ -701,5 +705,22 @@ func TestCancelTaskFailure(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+}
+
+func assertTaskNotFoundCode(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	var body struct {
+		Code string `json:"code"`
+	}
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &body)
+	if err != nil {
+		t.Fatalf("the 404 body is not JSON: %v", err)
+	}
+
+	if body.Code != "task_not_found" {
+		t.Fatalf("expected code task_not_found, got %q in %s", body.Code, recorder.Body.String())
 	}
 }
