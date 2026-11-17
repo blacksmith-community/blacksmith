@@ -20,6 +20,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/ownname"
+	"blacksmith/internal/settings"
 	"blacksmith/pkg/http/response"
 	"blacksmith/pkg/reconciler"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
@@ -485,17 +486,19 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 	logger := h.logger.Named("blacksmith-settings")
 	ctx := req.Context()
 
-	var body struct {
-		VaultMaxVersions   *int    `json:"vault_max_versions"`
-		ReconcilerInterval *string `json:"reconciler_interval"`
-		ErrandTimeout      *string `json:"errand_timeout"`
-	}
+	var body settingsRequest
 
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
 		responseWriter.WriteHeader(http.StatusBadRequest)
 		response.HandleJSON(responseWriter, nil, fmt.Errorf("%w: %w", ErrInvalidRequestBody, err))
 
+		return
+	}
+
+	// Every field is checked before any is saved, so a refusal means
+	// nothing changed.
+	if !h.validateSettings(responseWriter, &body) {
 		return
 	}
 
@@ -507,23 +510,6 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 	// Update vault max_versions if provided
 	if body.VaultMaxVersions != nil {
 		mv := *body.VaultMaxVersions
-		if mv < 0 || mv > 1000 {
-			responseWriter.WriteHeader(http.StatusBadRequest)
-			response.HandleJSON(responseWriter, map[string]interface{}{
-				"error": "vault_max_versions must be between 0 and 1000 (0 = unlimited)",
-			}, nil)
-
-			return
-		}
-
-		if h.vault == nil {
-			responseWriter.WriteHeader(http.StatusServiceUnavailable)
-			response.HandleJSON(responseWriter, map[string]interface{}{
-				"error": "vault is not available",
-			}, nil)
-
-			return
-		}
 
 		oldVersions := h.settingBefore(ctx)
 
@@ -545,24 +531,7 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 
 	// Update reconciler interval if provided
 	if body.ReconcilerInterval != nil {
-		interval, err := reconciler.ParseInterval(*body.ReconcilerInterval)
-		if err != nil || interval < reconciler.MinInterval {
-			responseWriter.WriteHeader(http.StatusBadRequest)
-			response.HandleJSON(responseWriter, map[string]interface{}{
-				"error": fmt.Sprintf("reconciler_interval must be a valid duration of at least %v (e.g. '5m', '1h', or 3600 for seconds)", reconciler.MinInterval),
-			}, nil)
-
-			return
-		}
-
-		if h.reconciler == nil {
-			responseWriter.WriteHeader(http.StatusServiceUnavailable)
-			response.HandleJSON(responseWriter, map[string]interface{}{
-				"error": "reconciler is not available",
-			}, nil)
-
-			return
-		}
+		interval, _ := reconciler.ParseInterval(*body.ReconcilerInterval)
 
 		oldInterval := h.reconciler.GetInterval().String()
 
@@ -587,6 +556,14 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 	}
 
 	response.HandleJSON(responseWriter, result, nil)
+}
+
+// settingsRequest is the body of a settings update. A nil field is left
+// alone.
+type settingsRequest struct {
+	VaultMaxVersions   *int    `json:"vault_max_versions"`
+	ReconcilerInterval *string `json:"reconciler_interval"`
+	ErrandTimeout      *string `json:"errand_timeout"`
 }
 
 // Cleanup reports that the manual cleanup job does not exist. The reconciler
@@ -1151,4 +1128,44 @@ func (h *Handler) formatManifestResponse(manifestYAML string) map[string]interfa
 		"text":   manifestYAML,
 		"parsed": parsed,
 	}
+}
+
+// validateSettings refuses a request that holds a bad value, or that names a
+// setting whose store is missing, before anything is saved. It answers the
+// request itself and returns false on a refusal.
+func (h *Handler) validateSettings(responseWriter http.ResponseWriter, body *settingsRequest) bool {
+	refuse := func(status int, message string) bool {
+		responseWriter.WriteHeader(status)
+		response.HandleJSON(responseWriter, map[string]interface{}{errorKey: message}, nil)
+
+		return false
+	}
+
+	if body.VaultMaxVersions != nil && (*body.VaultMaxVersions < 0 || *body.VaultMaxVersions > 1000) {
+		return refuse(http.StatusBadRequest, "vault_max_versions must be between 0 and 1000 (0 = unlimited)")
+	}
+
+	if body.ReconcilerInterval != nil {
+		interval, err := reconciler.ParseInterval(*body.ReconcilerInterval)
+		if err != nil || interval < reconciler.MinInterval {
+			return refuse(http.StatusBadRequest, fmt.Sprintf("reconciler_interval must be a valid duration of at least %v (e.g. '5m', '1h', or 3600 for seconds)", reconciler.MinInterval))
+		}
+	}
+
+	if body.ErrandTimeout != nil {
+		_, err := settings.ParseErrandTimeout(*body.ErrandTimeout)
+		if err != nil {
+			return refuse(http.StatusBadRequest, "errand_timeout must be a duration above zero, such as '45m' or '1h30m'")
+		}
+	}
+
+	if (body.VaultMaxVersions != nil || body.ErrandTimeout != nil) && h.vault == nil {
+		return refuse(http.StatusServiceUnavailable, "vault is not available")
+	}
+
+	if body.ReconcilerInterval != nil && h.reconciler == nil {
+		return refuse(http.StatusServiceUnavailable, "reconciler is not available")
+	}
+
+	return true
 }
