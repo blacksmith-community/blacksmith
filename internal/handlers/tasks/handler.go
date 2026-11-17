@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -206,36 +208,12 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// The counts describe the latest unfiltered rows. With no states those
-	// are the rows just listed. With states they are a window of their own,
-	// read without the states, so every state can still be counted.
-	var (
-		stateCounts map[string]int
-		window      int
-	)
+	// Each chip counts its state through the same listing that fills its
+	// rows, so a count and the rows listed under it agree.
+	var counts stateCountResult
 
 	if wantCounts {
-		counted := listing.Tasks
-
-		if len(states) > 0 {
-			latest, countErr := bosh.ListTasksFrom(ctx, h.director, taskType, maxTaskWindow, nil, team)
-			if countErr != nil {
-				logger.Error("Failed to count tasks from director: %v", countErr)
-
-				response.HandleJSON(writer, nil, fmt.Errorf("failed to count tasks: %w", countErr))
-
-				return
-			}
-
-			counted = latest.Tasks
-		}
-
-		window = len(counted)
-		stateCounts = map[string]int{"processing": 0, "queued": 0, "done": 0, "error": 0, "cancelled": 0}
-
-		for _, directorTask := range counted {
-			stateCounts[directorTask.State]++
-		}
+		counts = h.countStates(ctx, logger, taskType, team)
 	}
 
 	result := make([]Task, 0, len(listing.Tasks))
@@ -254,7 +232,7 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 	page.Ceiling = hasMore && listing.Exact && offset+len(result) >= maxListedTasks
 
 	if wantCounts {
-		page.StateCounts, page.Window = stateCounts, &window
+		page.StateCounts, page.StateCountsCapped, page.StateCountsUnknown = counts.counts, counts.capped, counts.unknown
 	}
 
 	writePage(writer, page, wantObject)
@@ -299,18 +277,23 @@ const (
 // false when the listing stopped before it could tell, in which case HasMore
 // is true. Ceiling is true when the page ends at the deepest row the listing
 // reaches while more tasks exist, so a caller must stop asking for later pages.
-// StateCounts and Window appear only when counts were asked for. With no
-// states they describe the rows from the newest through the end of this page.
-// With states they describe the latest unfiltered window, whatever the page.
+// The state fields appear only when counts were asked for. StateCounts holds
+// one count per state, read through the same listing that lists the state's
+// rows, so it does not change from page to page. A count stops at
+// maxTaskWindow, and StateCountsCapped names the states that have at least
+// that many, so the caller shows "200+". StateCountsUnknown names the states
+// whose count could not be read, which are absent from StateCounts and must
+// never be shown as zero.
 type taskPage struct {
-	Tasks       []Task         `json:"tasks"`
-	Offset      int            `json:"offset"`
-	Limit       int            `json:"limit"`
-	HasMore     bool           `json:"has_more"`
-	Exact       bool           `json:"exact"`
-	Ceiling     bool           `json:"ceiling"`
-	StateCounts map[string]int `json:"state_counts,omitempty"`
-	Window      *int           `json:"window,omitempty"`
+	Tasks              []Task         `json:"tasks"`
+	Offset             int            `json:"offset"`
+	Limit              int            `json:"limit"`
+	HasMore            bool           `json:"has_more"`
+	Exact              bool           `json:"exact"`
+	Ceiling            bool           `json:"ceiling"`
+	StateCounts        map[string]int `json:"state_counts,omitempty"`
+	StateCountsCapped  []string       `json:"state_counts_capped,omitempty"`
+	StateCountsUnknown []string       `json:"state_counts_unknown,omitempty"`
 }
 
 func convertTask(task bosh.Task) Task {
@@ -543,4 +526,81 @@ func (h *Handler) CancelTask(writer http.ResponseWriter, req *http.Request, task
 	}
 
 	response.HandleJSON(writer, result, nil)
+}
+
+// countedStates are the states a chip counts, in the order the page shows them.
+func countedStates() []string {
+	return []string{"processing", "queued", "done", "error", "cancelled"}
+}
+
+// countConcurrency bounds how many state counts run against the director at once.
+const countConcurrency = 3
+
+type stateCountResult struct {
+	counts  map[string]int
+	capped  []string
+	unknown []string
+}
+
+// countStates counts every state through the listing the state's rows come
+// from, with the same type, team filter, and states query. It reads one row
+// past maxTaskWindow, so a state with more than that is reported as capped. A
+// state whose count fails is reported unknown, and the others are unaffected.
+func (h *Handler) countStates(ctx context.Context, logger interfaces.Logger, taskType, team string) stateCountResult {
+	type outcome struct {
+		count  int
+		capped bool
+		failed bool
+	}
+
+	states := countedStates()
+	outcomes := make([]outcome, len(states))
+	slots := make(chan struct{}, countConcurrency)
+
+	var group sync.WaitGroup
+
+	for index, state := range states {
+		group.Add(1)
+
+		slots <- struct{}{}
+
+		go func() {
+			defer group.Done()
+			defer func() { <-slots }()
+
+			listing, err := bosh.ListTasksFrom(ctx, h.director, taskType, maxTaskWindow+1, []string{state}, team)
+			if err != nil {
+				logger.Error("Failed to count %s tasks from director: %v", state, err)
+
+				outcomes[index] = outcome{failed: true}
+
+				return
+			}
+
+			// A listing the broker could not finish is a lower bound, so it is
+			// shown with a plus, the way a full one is.
+			outcomes[index] = outcome{
+				count:  min(len(listing.Tasks), maxTaskWindow),
+				capped: len(listing.Tasks) > maxTaskWindow || !listing.Exact,
+			}
+		}()
+	}
+
+	group.Wait()
+
+	result := stateCountResult{counts: make(map[string]int, len(states))}
+
+	for index, state := range states {
+		switch {
+		case outcomes[index].failed:
+			result.unknown = append(result.unknown, state)
+		default:
+			result.counts[state] = outcomes[index].count
+			if outcomes[index].capped {
+				result.capped = append(result.capped, state)
+			}
+		}
+	}
+
+	return result
 }

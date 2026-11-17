@@ -231,7 +231,7 @@ const serve = (all) => (u) => {
   const counts = { processing: 0, queued: 0, done: 0, error: 0, cancelled: 0 };
   all.forEach((task) => { counts[task.state] += 1; });
   const rows = all.filter((task) => !states.length || states.includes(task.state)).slice(0, limit);
-  return q.get('counts') === '1' ? { tasks: rows, state_counts: counts, window: all.length } : rows;
+  return q.get('counts') === '1' ? { tasks: rows, state_counts: counts } : rows;
 };
 
 t('a refresh with some chips pressed asks for those states, and the chips count from state_counts', async () => {
@@ -247,7 +247,7 @@ t('a refresh with some chips pressed asks for those states, and the chips count 
     const count = (s) => d.querySelector(`#blacksmith .toolbar-chips input[value="${s}"]`).closest('label').querySelector('.chip-count').textContent;
     expect(count('done')).toBe('3');
     expect(count('error')).toBe('2');
-    expect(d.querySelector('#blacksmith .tasks-count-note').textContent).toContain('latest 5 tasks of every state');
+    expect(d.querySelector('#blacksmith .tasks-count-note')).toBeNull();
     expect(shown(d).length).toBe(2);
   } finally { w.close(); }
 });

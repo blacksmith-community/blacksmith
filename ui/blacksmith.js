@@ -12485,7 +12485,7 @@
   // label says that. The value the request carries is unchanged.
   const TASK_SCOPE_ALL_LABEL = 'Broker director (all tasks)';
 
-  // The most tasks the broker will list at once, and so the window the chips count.
+  // The most tasks the broker lists at once. A chip counts up to this many of its state, and shows it with a plus beyond.
   const TASKS_WINDOW = 200;
 
   // The deepest the broker lists, so a table that holds this many tasks has everything it can load.
@@ -12495,9 +12495,9 @@
 
   // A state with no tasks has nothing to show, so its chip is disabled and
   // dimmed. One that is pressed stays enabled so it can be turned off.
-  // The counts cover the latest window, and a state with none there can still
-  // have older tasks, so a chip is dimmed only when the window is the whole
-  // list.
+  // The broker counts each state through the listing that fills its rows, so a
+  // count of zero is the whole answer. Without server counts the chips count
+  // the rows held, and a chip is dimmed only when those rows are the whole list.
   let tasksWindowComplete = true;
   const syncTaskStateChips = () => {
     document.querySelectorAll('#blacksmith .toolbar-chips input[type="checkbox"][data-count]').forEach((input) => {
@@ -12509,38 +12509,49 @@
   };
 
   // The list answers with a bare array, or with the rows plus a count of every
-  // state across the window the server looked at when counts were asked for.
-  // hasMore is undefined when the broker does not say, so an older broker's
-  // answer keeps the note it always had.
+  // state when counts were asked for. A count stops at the window, and the
+  // broker names the states that reached it. It also names any state it could
+  // not count, which is not zero. hasMore is undefined when the broker does
+  // not say, so an older broker's answer keeps the behavior it always had.
   const readTasksResponse = (body) => {
-    if (Array.isArray(body)) return { tasks: body, stateCounts: null, window: 0, hasMore: false, exact: true, ceiling: false };
+    if (Array.isArray(body)) return { tasks: body, stateCounts: null, capped: [], unknown: [], hasMore: false, exact: true, ceiling: false };
     return {
       tasks: body?.tasks || [],
       stateCounts: body?.state_counts || null,
-      window: Number(body?.window) || 0,
+      capped: Array.isArray(body?.state_counts_capped) ? body.state_counts_capped : [],
+      unknown: Array.isArray(body?.state_counts_unknown) ? body.state_counts_unknown : [],
       hasMore: typeof body?.has_more === 'boolean' ? body.has_more : undefined,
       exact: body?.exact !== false,
       ceiling: body?.ceiling === true,
     };
   };
 
-  // What the chip counts cover. They are counted over the rows the table holds
-  // and the note says so, including when older tasks remain unloaded or the
-  // broker could not check every task.
+  // What one chip shows. A state at the cap, or counted from a listing the
+  // broker could not finish, shows a plus. A state the broker could not count
+  // shows a question mark and never a zero. Without server counts the chip
+  // counts the rows the table holds.
+  const taskChipCount = (state, tasks, meta) => {
+    if (!meta.stateCounts) return (tasks || []).filter((task) => task.state === state).length;
+    if ((meta.unknown || []).includes(state) || !(state in meta.stateCounts)) return '?';
+    const count = Number(meta.stateCounts[state]) || 0;
+    return (meta.capped || []).includes(state) ? `${count}+` : count;
+  };
+
+  // The sentences under the chips explain only what a chip can show beyond a
+  // plain number. With nothing of that kind to explain, there is no note.
   const tasksCountNote = (meta) => {
-    if (meta.exact === false && meta.filtered) return `The broker could not check every task, so the list of the pressed states may be incomplete. State counts cover the latest ${meta.window} tasks of every state.`;
-    if (meta.filtered && meta.window) return `State counts cover the latest ${meta.window} tasks of every state, not only the states pressed here. The rows listed are the pressed states' tasks, however old.`;
-    if (!meta.window) return 'State counts cover the tasks loaded here.';
-    if (meta.exact === false) return `State counts cover the latest ${meta.window} tasks loaded here. The broker could not check every task, so a state with none there can still have older tasks.`;
-    if (meta.hasMore === false) return `State counts cover all ${meta.window} tasks the director lists.`;
-    return `State counts cover the latest ${meta.window} tasks, so a state with none there can still have older tasks.`;
+    const notes = [];
+    if ((meta.capped || []).length > 0) notes.push(`A count stops at ${TASKS_WINDOW}, so ${TASKS_WINDOW}+ means that state has at least that many tasks.`);
+    if ((meta.unknown || []).length > 0) notes.push('A question mark means the broker could not read that count.');
+    if (meta.exact === false) notes.push('The broker could not check every task, so a count or a list may be incomplete.');
+    return notes.join(' ');
   };
 
   const formatTasks = (tasks, dataKey = 'tasks', meta = {}) => {
     // Always store data for sorting, even if empty
     tableOriginalData.set(dataKey, tasks || []);
-    // With states pressed the window is read on its own, and it is the whole list when it came back short.
-    tasksWindowComplete = meta.exact !== false && (meta.filtered ? meta.window < TASKS_WINDOW : meta.hasMore !== true);
+    // Counts from the broker are whole answers, and counts from held rows are whole only when every row is held.
+    tasksWindowComplete = meta.stateCounts ? true : meta.exact !== false && meta.hasMore !== true;
 
     const tableId = `tasks-table`;
 
@@ -12558,10 +12569,10 @@
               <option value="all">All</option>` })}
         ${tableToolbarField({ id: 'task-filter', label: 'Scope', keepKey: 'tasks-scope', options: `
               <option value="blacksmith">${TASK_SCOPE_ALL_LABEL}</option>` })}
-        ${tableToolbarChips({ legend: 'States', keepPrefix: 'tasks-state', chips: TASK_STATE_CHIPS.map(([value, text]) => [value, text, meta.stateCounts ? Number(meta.stateCounts[value]) || 0 : (tasks || []).filter((task) => task.state === value).length]) })}
+        ${tableToolbarChips({ legend: 'States', keepPrefix: 'tasks-state', chips: TASK_STATE_CHIPS.map(([value, text]) => [value, text, taskChipCount(value, tasks, meta)]) })}
         ${tableToolbarActions({ tableSelector: `.${tableId}`, noun: 'tasks', refresh: 'id="refresh-tasks-btn"', wrapperClass: 'tasks-action-buttons' })}
       </div>
-      <p class="tasks-count-note muted">${tasksCountNote(meta)}</p>
+      ${tasksCountNote(meta) ? `<p class="tasks-count-note muted">${tasksCountNote(meta)}</p>` : ''}
       <div class="tasks-table-container">
         <table class="${tableId}">
           <thead>
@@ -19183,7 +19194,7 @@
       // Every state pressed, or none, is the plain latest window. Some pressed
       // asks the broker for those states alone.
       const states = checkedStates.length > 0 && uncheckedStates.length > 0 ? checkedStates : [];
-      const { rows: tasks, first, last, pages } = await readTaskPages({
+      const { rows: tasks, first, last } = await readTaskPages({
         taskType,
         team: taskFilterValue,
         states,
@@ -19193,18 +19204,14 @@
       let loaded = {
         tasks,
         stateCounts: first.stateCounts,
-        window: first.window,
+        capped: first.capped,
+        unknown: first.unknown,
         hasMore: last.hasMore,
         exact: first.exact && last.exact,
         ceiling: last.ceiling,
-        filtered: states.length > 0,
       };
       // A page that added nothing leaves a button that would load nothing, so it ends here.
       if (more && tasks.length === held.length && loaded.hasMore === true) loaded.ceiling = true;
-      if (!loaded.filtered && (more || pages > 1)) {
-        // The counts are then taken from the rows held, which is the set the note describes.
-        loaded = { ...loaded, stateCounts: null, window: tasks.length };
-      }
       if (!refresh.current()) return;
       refresh.fetched();
       const contentContainer = refresh.container;

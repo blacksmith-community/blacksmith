@@ -22,7 +22,6 @@ type pagedBody struct {
 	HasMore     bool           `json:"has_more"`
 	Exact       bool           `json:"exact"`
 	StateCounts map[string]int `json:"state_counts"`
-	Window      *int           `json:"window"`
 	Ceiling     bool           `json:"ceiling"`
 }
 
@@ -69,8 +68,8 @@ func historyHandler(t *testing.T, total int, failed map[int]bool) *tasks.Handler
 			}
 
 			out = append(out, map[string]interface{}{
-				"id": number, "state": state, "description": "create deployment",
-				"timestamp": 1759766400, "started_at": 1759766000, "user": pagedUser, "deployment": "valkey-1",
+				"id": number, "state": state, "description": createDeploymentText,
+				"timestamp": 1759766400, "started_at": 1759766000, "user": pagedUser, "deployment": managedDeployment,
 			})
 		}
 
@@ -147,8 +146,8 @@ func TestStatesQueryFindsAFailedTaskBehindMoreThan400NewerTasks(t *testing.T) {
 		t.Fatalf("object form: %+v", page)
 	}
 
-	if page.StateCounts != nil || page.Window != nil {
-		t.Errorf("paged=1 alone must not carry counts, got %v %v", page.StateCounts, page.Window)
+	if page.StateCounts != nil {
+		t.Errorf("paged=1 alone must not carry counts, got %v", page.StateCounts)
 	}
 }
 
@@ -184,27 +183,18 @@ func TestOffsetPagesWalkTheHistory(t *testing.T) {
 	}
 }
 
-// With counts, the counts and the window describe the rows from the newest
-// through the end of the page, which are the rows a caller holds after
-// loading each page in turn.
-func TestCountsDescribeEveryRowLoadedThroughThePage(t *testing.T) {
+// With counts, the chips count the director's tasks of each state, so they
+// are the same on every page and do not depend on how many rows are loaded.
+func TestCountsDoNotChangeFromPageToPage(t *testing.T) {
 	t.Parallel()
 
 	handler := historyHandler(t, 30, map[int]bool{28: true, 5: true})
 
-	first := decodePage(t, get(t, handler, "/b/tasks?counts=1&limit=10"))
-	if first.Window == nil || *first.Window != 10 || first.StateCounts["error"] != 1 || first.StateCounts["done"] != 9 || !first.HasMore {
-		t.Fatalf("first page: window %v counts %v more %v", first.Window, first.StateCounts, first.HasMore)
-	}
-
-	second := decodePage(t, get(t, handler, "/b/tasks?counts=1&limit=10&offset=10"))
-	if second.Window == nil || *second.Window != 20 || len(second.Tasks) != 10 || second.Tasks[0].ID != 20 || second.StateCounts["error"] != 1 || second.StateCounts["done"] != 19 {
-		t.Fatalf("second page: window %v counts %v tasks %d", second.Window, second.StateCounts, len(second.Tasks))
-	}
-
-	third := decodePage(t, get(t, handler, "/b/tasks?counts=1&limit=10&offset=20"))
-	if *third.Window != 30 || third.StateCounts["error"] != 2 || third.HasMore {
-		t.Fatalf("third page: window %v counts %v more %v", *third.Window, third.StateCounts, third.HasMore)
+	for _, query := range []string{"/b/tasks?counts=1&limit=10", "/b/tasks?counts=1&limit=10&offset=10", "/b/tasks?counts=1&limit=10&offset=20"} {
+		page := decodePage(t, get(t, handler, query))
+		if page.StateCounts["error"] != 2 || page.StateCounts["done"] != 28 {
+			t.Fatalf("%s: counts %v, want 2 errors and 28 done", query, page.StateCounts)
+		}
 	}
 }
 
@@ -218,9 +208,9 @@ func TestAnInexactListingIsMarkedInexact(t *testing.T) {
 	}
 }
 
-// A request that names a state with counts still gets an exact list, and the
-// counts still describe the latest unfiltered window.
-func TestCountsWithStatesListsExactlyAndCountsTheLatestWindow(t *testing.T) {
+// A request that names a state with counts still gets an exact list, and
+// every chip counts its state through its own listing.
+func TestCountsWithStatesListsExactlyAndCountsEachState(t *testing.T) {
 	t.Parallel()
 
 	handler := historyHandler(t, 2500, map[int]bool{7: true})
@@ -232,33 +222,9 @@ func TestCountsWithStatesListsExactlyAndCountsTheLatestWindow(t *testing.T) {
 			t.Fatalf("%s: expected only failed task 7, exact, got %+v", query, page)
 		}
 
-		if page.Window == nil || *page.Window != 200 || page.StateCounts[pagedDone] != 200 || page.StateCounts[errorState] != 0 {
-			t.Fatalf("%s: counts %v window %v, want the latest 200 unfiltered tasks", query, page.StateCounts, page.Window)
+		if page.StateCounts[pagedDone] != 200 || page.StateCounts[errorState] != 1 {
+			t.Fatalf("%s: counts %v, want 200 done and the one error", query, page.StateCounts)
 		}
-	}
-}
-
-// Paging through a states query with counts keeps the window the same on
-// every page, so the chip counts do not change as the operator loads more.
-func TestCountsWithStatesKeepTheWindowAcrossPages(t *testing.T) {
-	t.Parallel()
-
-	failed := map[int]bool{}
-	for id := 1; id <= 2000; id += 100 {
-		failed[id] = true
-	}
-
-	handler := historyHandler(t, 2500, failed)
-
-	first := decodePage(t, get(t, handler, "/b/tasks?counts=1&limit=10&states=error"))
-	second := decodePage(t, get(t, handler, "/b/tasks?counts=1&limit=10&offset=10&states=error"))
-
-	if len(first.Tasks) != 10 || len(second.Tasks) != 10 || second.Tasks[0].ID >= first.Tasks[9].ID {
-		t.Fatalf("pages overlap or are short: %d then %d", len(first.Tasks), len(second.Tasks))
-	}
-
-	if *first.Window != 200 || *second.Window != 200 || first.StateCounts[errorState] != second.StateCounts[errorState] {
-		t.Fatalf("window changed between pages: %v %v", first.StateCounts, second.StateCounts)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ type fakeDirector struct {
 
 	tasks          []bosh.Task
 	getTasksErr    error
+	mu             sync.Mutex
 	gotLimit       int
 	gotStates      []string
 	taskDetails    map[int]bosh.Task
@@ -67,8 +69,10 @@ func (f *fakeDirector) GetTasks(_ context.Context, taskType string, limit int, s
 		return nil, f.getTasksErr
 	}
 
+	f.mu.Lock()
 	f.gotLimit = limit
 	f.gotStates = states
+	f.mu.Unlock()
 
 	result := make([]bosh.Task, 0, len(f.tasks))
 
@@ -255,7 +259,7 @@ func TestListTasksFiltersByState(t *testing.T) {
 
 const errorState = "error"
 
-func TestListTasksCountsEveryStateInTheWindow(t *testing.T) {
+func TestListTasksCountsEveryStateWhileListingOne(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
@@ -284,7 +288,6 @@ func TestListTasksCountsEveryStateInTheWindow(t *testing.T) {
 	var payload struct {
 		Tasks       []tasks.Task   `json:"tasks"`
 		StateCounts map[string]int `json:"state_counts"`
-		Window      int            `json:"window"`
 	}
 
 	err = json.Unmarshal(recorder.Body.Bytes(), &payload)
@@ -302,13 +305,9 @@ func TestListTasksCountsEveryStateInTheWindow(t *testing.T) {
 			t.Fatalf("state_counts[%s] = %d, want %d (all: %v)", state, payload.StateCounts[state], count, payload.StateCounts)
 		}
 	}
-
-	if payload.Window != 7 {
-		t.Fatalf("window = %d, want 7", payload.Window)
-	}
 }
 
-func TestListTasksCountsWithoutStatesAsksForOneWindow(t *testing.T) {
+func TestListTasksCountsWithoutStatesCountsEveryStateOnItsOwn(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
@@ -331,7 +330,6 @@ func TestListTasksCountsWithoutStatesAsksForOneWindow(t *testing.T) {
 	var payload struct {
 		Tasks       []tasks.Task   `json:"tasks"`
 		StateCounts map[string]int `json:"state_counts"`
-		Window      int            `json:"window"`
 	}
 
 	err = json.Unmarshal(recorder.Body.Bytes(), &payload)
@@ -339,12 +337,8 @@ func TestListTasksCountsWithoutStatesAsksForOneWindow(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if fakeDir.gotLimit != 4 || len(fakeDir.gotStates) != 0 {
-		t.Fatalf("director asked with limit %d and states %v, want the requested limit and one more, and no states", fakeDir.gotLimit, fakeDir.gotStates)
-	}
-
-	if len(payload.Tasks) != 3 || payload.Window != 3 || payload.StateCounts["done"] != 2 || payload.StateCounts[errorState] != 1 {
-		t.Fatalf("rows and counts must describe the same window, got %d rows, window %d, counts %v", len(payload.Tasks), payload.Window, payload.StateCounts)
+	if len(payload.Tasks) != 3 || payload.StateCounts["done"] != 3 || payload.StateCounts[errorState] != 1 {
+		t.Fatalf("rows are the page and counts are per state, got %d rows, counts %v", len(payload.Tasks), payload.StateCounts)
 	}
 }
 

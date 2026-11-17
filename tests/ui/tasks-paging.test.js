@@ -14,7 +14,7 @@ const mount = async (all, shift, deep) => {
   root.innerHTML = '<div class="entity-workspace" data-section="tasks"><div class="detail-content"></div></div>';
   w.__routes.push(['/b/tasks?', (u, o, json) => json(200, serve(all, shift, deep)(u))]);
   const first = serve(all, undefined, deep)('/b/tasks?type=recent&limit=200&counts=1');
-  d.querySelector('#blacksmith .detail-content').innerHTML = w.__T.formatTasks(first.tasks, 'tasks', { stateCounts: first.state_counts, window: first.window, hasMore: first.has_more, exact: first.exact, ceiling: first.ceiling });
+  d.querySelector('#blacksmith .detail-content').innerHTML = w.__T.formatTasks(first.tasks, 'tasks', { stateCounts: first.state_counts, capped: first.state_counts_capped, hasMore: first.has_more, exact: first.exact, ceiling: first.ceiling });
   return { w, d, calls };
 };
 const rows = (d) => Array.from(d.querySelectorAll('.tasks-table tbody tr')).filter((r) => r.querySelector('.task-id'));
@@ -26,7 +26,7 @@ t('a table with more rows to load shows a polite status and a Load more button',
   const { w, d } = boot();
   try {
     const host = d.createElement('div');
-    host.innerHTML = w.__T.formatTasks([row(2, 'done'), row(1, 'done')], 'tasks', { hasMore: true, window: 2 });
+    host.innerHTML = w.__T.formatTasks([row(2, 'done'), row(1, 'done')], 'tasks', { hasMore: true });
     const button = host.querySelector('[data-tasks-load-more]');
     expect(button.tagName).toBe('BUTTON');
     expect(button.getAttribute('type')).toBe('button');
@@ -36,21 +36,44 @@ t('a table with more rows to load shows a polite status and a Load more button',
     expect(status.getAttribute('aria-live')).toBe('polite');
     expect(status.textContent).toBe('Showing 2 tasks. Older tasks are available.');
     const done = host.cloneNode(false);
-    done.innerHTML = w.__T.formatTasks([row(1, 'done')], 'tasks', { hasMore: false, window: 1 });
+    done.innerHTML = w.__T.formatTasks([row(1, 'done')], 'tasks', { hasMore: false });
     expect(done.querySelector('[data-tasks-load-more]')).toBeNull();
   } finally { w.close(); }
 });
 
-t('the note says what the chip counts cover, and does not claim completeness it lacks', () => {
+t('the note explains only the 200+ cap and an unknown count, and is absent when there is nothing to explain', () => {
   const { w, d } = boot();
   try {
-    const of = (meta) => { const host = d.createElement('div'); host.innerHTML = w.__T.formatTasks([row(1, 'done')], 'tasks', meta); return host.querySelector('.tasks-count-note').textContent; };
-    expect(of({ window: 200, hasMore: true })).toContain('latest 200 tasks');
-    expect(of({ window: 200, hasMore: true })).toContain('can still have older tasks');
-    expect(of({ window: 5, hasMore: false, exact: true })).toBe('State counts cover all 5 tasks the director lists.');
-    expect(of({ window: 5, hasMore: false, exact: false })).toContain('could not check every task');
-    expect(of({ window: 5 })).toContain('latest 5 tasks');
-    expect(of({})).toBe('State counts cover the tasks loaded here.');
+    const of = (meta) => { const host = d.createElement('div'); host.innerHTML = w.__T.formatTasks([row(1, 'done')], 'tasks', meta); return host.querySelector('.tasks-count-note')?.textContent ?? null; };
+    const counts = { processing: 0, queued: 0, done: 200, error: 3, cancelled: 0 };
+    expect(of({ stateCounts: counts, capped: ['done'] })).toBe('A count stops at 200, so 200+ means that state has at least that many tasks.');
+    expect(of({ stateCounts: counts, capped: [] })).toBeNull();
+    expect(of({ stateCounts: counts, capped: [], unknown: ['queued'] })).toBe('A question mark means the broker could not read that count.');
+    expect(of({})).toBeNull();
+    const text = of({ stateCounts: counts, capped: ['done'] });
+    expect(text).not.toContain('latest');
+    expect(text).not.toContain('window');
+  } finally { w.close(); }
+});
+
+t('a capped chip reads 200+, an uncounted chip reads a question mark and never 0, and neither is dimmed', () => {
+  const { w, d } = boot();
+  try {
+    const host = d.createElement('div');
+    d.getElementById('blacksmith').appendChild(host);
+    host.innerHTML = w.__T.formatTasks([row(1, 'done')], 'tasks', { stateCounts: { processing: 0, done: 200, error: 4 }, capped: ['done'], unknown: ['queued'] });
+    const shown = (s) => host.querySelector(`input[value="${s}"]`).closest('label').querySelector('.chip-count').textContent;
+    expect(shown('done')).toBe('200+');
+    expect(shown('error')).toBe('4');
+    expect(shown('queued')).toBe('?');
+    expect(shown('cancelled')).toBe('?');
+    ['queued', 'done'].forEach((s) => { host.querySelector(`input[value="${s}"]`).checked = false; });
+    w.__T.syncTaskStateChips();
+    expect(host.querySelector('input[value="queued"]').disabled).toBe(false);
+    expect(host.querySelector('input[value="done"]').disabled).toBe(false);
+    host.querySelector('input[value="processing"]').checked = false;
+    w.__T.syncTaskStateChips();
+    expect(host.querySelector('input[value="processing"]').disabled).toBe(true);
   } finally { w.close(); }
 });
 
@@ -89,23 +112,23 @@ t('Load more asks for the next page by offset and the table then holds every row
   } finally { w.close(); }
 });
 
-t('the chip counts and the note describe exactly the rows the table holds after each load', async () => {
+t('chip counts come from the broker and stay the same as more rows are loaded', async () => {
   const { w, d } = await mount(history(450));
   try {
-    expect(count(d, 'error')).toBe('20');
+    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('45/200+');
+    expect(note(d)).toBe('A count stops at 200, so 200+ means that state has at least that many tasks.');
     more(d).click();
     await sleep(200);
-    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('40/360');
-    expect(Number(count(d, 'error')) + Number(count(d, 'done'))).toBe(rows(d).length);
-    expect(note(d)).toContain('latest 400 tasks');
+    expect(rows(d).length).toBe(400);
+    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('45/200+');
     more(d).click();
     await sleep(200);
-    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('45/405');
-    expect(note(d)).toBe('State counts cover all 450 tasks the director lists.');
+    expect(rows(d).length).toBe(450);
+    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('45/200+');
   } finally { w.close(); }
 });
 
-t('a task that moved down while paging is not shown twice, and the counts follow the rows', async () => {
+t('a task that moved down while paging is not shown twice', async () => {
   // Five newer tasks arrive before the second page is read, so five rows repeat.
   const { w, d } = await mount(history(450), () => 5);
   try {
@@ -113,7 +136,6 @@ t('a task that moved down while paging is not shown twice, and the counts follow
     await sleep(200);
     const ids = rows(d).map((r) => r.querySelector('.task-id').textContent);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(Number(count(d, 'error')) + Number(count(d, 'done'))).toBe(ids.length);
   } finally { w.close(); }
 });
 
@@ -136,9 +158,9 @@ t('a pressed chip asks the broker for its state, and Load more pages through tha
     expect(url).toContain('limit=200');
     expect(rows(d).length).toBe(200);
     expect(rows(d).every((r) => r.querySelector('.status-badge').dataset.state === 'error')).toBe(true);
-    // The chip counts are the latest window's, and the note says so.
-    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('20/180');
-    expect(note(d)).toContain('latest 200 tasks of every state');
+    // Each chip counts its state through the listing that fills its rows.
+    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('200+/200+');
+    expect(note(d)).toContain('200+ means');
     more(d).click();
     await sleep(200);
     const next = lastTasksUrl(calls);
@@ -146,7 +168,7 @@ t('a pressed chip asks the broker for its state, and Load more pages through tha
     expect(next).toContain('offset=200');
     expect(rows(d).length).toBe(250);
     expect(rows(d)[249].querySelector('.task-id').textContent).toBe('10');
-    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('20/180');
+    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('200+/200+');
     expect(more(d)).toBeNull();
   } finally { w.close(); }
 });
@@ -219,13 +241,28 @@ t('a keeping refresh reads every page the reader loaded and stays on them', asyn
   } finally { w.close(); }
 });
 
-t('a chip with none in the latest window stays pressable while older tasks exist', async () => {
+t('a chip counts the error task behind 200 newer tasks, and it equals the rows pressing it lists', async () => {
+  const { w, d } = await mount(history(450, [7, 9, 11]));
+  try {
+    expect(count(d, 'error')).toBe('3');
+    pressOnly(d, 'error');
+    await w.__T.refreshTasksTable();
+    await sleep(150);
+    expect(rows(d).length).toBe(3);
+    expect(count(d, 'error')).toBe('3');
+  } finally { w.close(); }
+});
+
+t('a chip with a known count of zero is dimmed, and an unpressed one with tasks is not', async () => {
   const { w, d } = await mount(history(450, [7]));
   try {
-    const error = d.querySelector('#blacksmith .toolbar-chips input[value="error"]');
+    const box = (s) => d.querySelector(`#blacksmith .toolbar-chips input[value="${s}"]`);
+    box('cancelled').checked = false;
+    box('error').checked = false;
     w.__T.syncTaskStateChips();
-    expect(count(d, 'error')).toBe('0');
-    expect(error.disabled).toBe(false);
+    expect(count(d, 'cancelled')).toBe('0');
+    expect(box('cancelled').disabled).toBe(true);
+    expect(box('error').disabled).toBe(false);
   } finally { w.close(); }
 });
 
@@ -260,9 +297,46 @@ t('a pressed chip with an inexact answer says the list may be incomplete', () =>
   const { w, d } = boot();
   try {
     const host = d.createElement('div');
-    host.innerHTML = w.__T.formatTasks([row(7, 'error')], 'tasks', { filtered: true, exact: false, window: 200, hasMore: false });
+    host.innerHTML = w.__T.formatTasks([row(7, 'error')], 'tasks', { exact: false, hasMore: false });
     const text = host.querySelector('.tasks-count-note').textContent;
     expect(text).toContain('may be incomplete');
-    expect(text).not.toContain('however old');
+    expect(text).not.toContain('latest');
+  } finally { w.close(); }
+});
+
+t('a refresh whose answer names an uncounted state shows a question mark on that chip and never 0', async () => {
+  const { w, d } = await mount(history(40));
+  try {
+    w.__routes.unshift(['/b/tasks?', (u, o, json) => {
+      const body = serve(history(40))(u);
+      delete body.state_counts.queued;
+      return json(200, { ...body, state_counts_unknown: ['queued'] });
+    }]);
+    await w.__T.refreshTasksTable();
+    await sleep(150);
+    expect(count(d, 'queued')).toBe('?');
+    expect(count(d, 'done')).toBe('36');
+    expect(d.querySelector('#blacksmith .toolbar-chips input[value="queued"]').disabled).toBe(false);
+    expect(note(d)).toBe('A question mark means the broker could not read that count.');
+  } finally { w.close(); }
+});
+
+t('a narrowed Scope asks the broker for its team with counts, and the chips show the counts the broker answers', async () => {
+  const { w, d, calls } = await mount(history(40));
+  try {
+    const scope = d.getElementById('task-filter');
+    scope.innerHTML = '<option value="blacksmith">All</option><option value="valkey">valkey</option>';
+    scope.value = 'valkey';
+    // The broker counts after its team filter, so its answer is the scope's own.
+    w.__routes.unshift(['/b/tasks?', (u, o, json) => json(200, u.includes('team=valkey')
+      ? serve(history(6, [3, 4]))(u)
+      : serve(history(40))(u))]);
+    await w.__T.refreshTasksTable();
+    await sleep(150);
+    const url = lastTasksUrl(calls);
+    expect(url).toContain('team=valkey');
+    expect(url).toContain('counts=1');
+    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('2/4');
+    expect(rows(d).length).toBe(6);
   } finally { w.close(); }
 });
