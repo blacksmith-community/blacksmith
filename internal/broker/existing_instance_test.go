@@ -28,6 +28,7 @@ import (
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/internal/vmmonitor/vmmonitortest"
 	"blacksmith/pkg/testutil"
+	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
 
 	osbapibroker "github.com/fivetwenty-io/osbapi/v2/pkg/broker"
@@ -1755,6 +1756,16 @@ var _ = Describe("An instance's provision details", func() {
 		Expect(deployment).To(Equal(storedName))
 		Expect(details.PlanID).To(Equal(planID))
 		Expect(details.Parameters).To(HaveKeyWithValue("memory", "small"))
+	})
+
+	It("a provision sees a tombstoned entry as no longer indexed", func() {
+		Expect(brokerInstance.InstanceStillIndexed(ctx, instanceID)).To(BeTrue())
+
+		Expect(vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
+			ServiceID: request.ServiceID, PlanID: planID, Status: vaultPkg.StatusDeleted,
+		})).To(Succeed())
+
+		Expect(brokerInstance.InstanceStillIndexed(ctx, instanceID)).To(BeFalse())
 	})
 
 	It("instance details of an entry without a stored name use the plan and instance ID", func() {

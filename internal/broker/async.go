@@ -533,17 +533,18 @@ func (b *Broker) directorAddress() string {
 }
 
 // instanceStillIndexed reports whether the instance is still present in the
-// vault index. When the lookup itself fails the instance is assumed to be
-// present, so a vault hiccup never turns a finished provision into a delete.
+// vault index as a live entry, so a tombstone counts as gone. When the lookup
+// itself fails the instance is assumed to be present, so a vault hiccup never
+// turns a finished provision into a delete.
 func (p *provisioningPhase) instanceStillIndexed(ctx context.Context) bool {
-	_, exists, err := p.broker.Vault.FindInstance(ctx, p.instanceID)
+	instance, exists, err := p.broker.Vault.FindInstance(ctx, p.instanceID)
 	if err != nil {
 		p.logger.Error("could not check whether instance %s is still indexed, assuming it is: %s", p.instanceID, err)
 
 		return true
 	}
 
-	return exists
+	return exists && !instance.IsTombstone()
 }
 
 // tearDownAbandonedDeployment deletes a deployment whose instance was removed

@@ -484,3 +484,11 @@ func YamlGsub(obj interface{}, orig, replacement string) (interface{}, error) {
 // YamlErrorSummary exposes the description of a YAML decode error that the
 // broker logs and returns, to package broker_test.
 func YamlErrorSummary(err error) string { return yamlErrorSummary(err) }
+
+// InstanceStillIndexed exposes the provision's check that its instance is
+// still in the index.
+func (b *Broker) InstanceStillIndexed(ctx context.Context, instanceID string) bool {
+	phase := &provisioningPhase{broker: b, instanceID: instanceID, logger: logger.Get().Named("broker")}
+
+	return phase.instanceStillIndexed(ctx)
+}
