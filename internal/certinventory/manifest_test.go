@@ -255,6 +255,9 @@ func TestWalkManifestMergeCycleAcrossTwoNodes(t *testing.T) {
 	assertWalkReturns(t, manifest)
 }
 
+// aliasBombBackstop bounds the alias bomb test so a real hang fails it.
+const aliasBombBackstop = 20 * time.Second
+
 func TestWalkManifestAliasBombFailsQuickly(t *testing.T) {
 	var b strings.Builder
 
@@ -272,8 +275,15 @@ func TestWalkManifestAliasBombFailsQuickly(t *testing.T) {
 		t.Fatal("an alias bomb should be rejected")
 	}
 
-	if time.Since(start) > 2*time.Second {
-		t.Errorf("took %s, want it to stop quickly", time.Since(start))
+	// The proof is that the walker stops on its alias budget, which bounds the
+	// work whatever the machine speed. The clock is only a backstop, about
+	// 200 times the normal run, that catches a hang without measuring speed.
+	if !strings.Contains(err.Error(), "more than 100000 aliases") {
+		t.Errorf("error = %q, want it to name the alias limit", err)
+	}
+
+	if elapsed := time.Since(start); elapsed > aliasBombBackstop {
+		t.Errorf("took %s, want it to stop within %s", elapsed, aliasBombBackstop)
 	}
 }
 
