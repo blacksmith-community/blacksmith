@@ -738,8 +738,9 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 	})
 
 	// A tombstone is an index entry for an instance that is gone, marked by
-	// its status or by the legacy deleted flag. A poll settles for it as it
-	// does for a removed entry, and never answers an error on every poll.
+	// its status or by the legacy deleted flag. A provision poll answers
+	// failed for it as it does for a removed entry, and a deprovision poll
+	// asks the director, so neither answers an error on every poll.
 	for name, tombstone := range map[string]vaultPkg.Instance{
 		markCurrent: {ServiceID: "valkey", PlanID: planID, Status: vaultPkg.StatusDeleted},
 		markLegacy:  {ServiceID: "valkey", PlanID: planID, Deleted: true},

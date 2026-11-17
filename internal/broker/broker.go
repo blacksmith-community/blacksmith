@@ -2711,6 +2711,16 @@ func (b *Broker) unknownOutcomeWithoutIndexEntry(ctx context.Context, instanceID
 	return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
 }
 
+// contextIDNote names a context ID in a message, and says nothing when the
+// record holds none.
+func contextIDNote(contextID string) string {
+	if contextID == "" {
+		return ""
+	}
+
+	return " with context ID " + contextID
+}
+
 // deprovisionWithoutIndexEntry answers a poll for an instance whose index
 // entry is gone and whose last recorded operation is a deprovision. A
 // deprovision removes the entry only once the director has said the
@@ -2753,11 +2763,11 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 	}
 
 	if recorded.DeploymentName == "" && planID == "" {
-		logger.Warning("instance %s has no index entry, its record names no deployment, and the poll names no plan, so whether the delete with context ID %s removed its deployment cannot be checked", instanceID, recorded.ContextID)
+		logger.Warning("instance %s has no index entry, its record names no deployment, and the poll names no plan, so whether the delete%s removed its deployment cannot be checked", instanceID, contextIDNote(recorded.ContextID))
 
 		return osbapi.LastOperationResponse{
 			State:       osbapi.StateInProgress,
-			Description: fmt.Sprintf("The delete with context ID %s is not confirmed, and neither its record nor the poll names the deployment to check", recorded.ContextID),
+			Description: fmt.Sprintf("The delete%s is not confirmed, and neither its record nor the poll names the deployment to check", contextIDNote(recorded.ContextID)),
 		}, nil
 	}
 
@@ -2769,18 +2779,18 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 	case errors.Is(err, osbapi.ErrGoneError):
 		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: descriptionInstanceDeleted}, nil
 	case err != nil:
-		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to confirm the delete with context ID %s: %w", recorded.ContextID, err)
+		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to confirm the delete%s: %w", contextIDNote(recorded.ContextID), err)
 	case recorded.State == recordedStateFailed:
-		logger.Error("instance %s has no index entry, and the delete of deployment %s with context ID %s failed: %s", instanceID, deploymentName, recorded.ContextID, recorded.Description)
+		logger.Error("instance %s has no index entry, and the delete of deployment %s%s failed: %s", instanceID, deploymentName, contextIDNote(recorded.ContextID), recorded.Description)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
 	}
 
-	logger.Debug("instance %s has no index entry, and deployment %s is still there while its delete with context ID %s runs", instanceID, deploymentName, recorded.ContextID)
+	logger.Debug("instance %s has no index entry, and deployment %s is still there while its delete%s runs", instanceID, deploymentName, contextIDNote(recorded.ContextID))
 
 	return osbapi.LastOperationResponse{
 		State:       osbapi.StateInProgress,
-		Description: fmt.Sprintf("Deleting deployment %s with context ID %s: %s", deploymentName, recorded.ContextID, recorded.Description),
+		Description: fmt.Sprintf("Deleting deployment %s%s: %s", deploymentName, contextIDNote(recorded.ContextID), recorded.Description),
 	}, nil
 }
 
@@ -3572,8 +3582,6 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 		return nil, "", nil, fmt.Errorf("failed to find instance: %w", err)
 	}
 
-	// A tombstone is an entry for an instance that is gone, so it settles
-	// the poll as a removed entry does.
 	if !exists {
 		logger.Error("instance %s not found in vault index", instanceID)
 
@@ -3581,7 +3589,7 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 	}
 
 	if instance.IsTombstone() {
-		logger.Error("instance %s is a tombstone in the vault index", instanceID)
+		logger.Debug("instance %s is a tombstone in the vault index", instanceID)
 
 		return nil, "", instance, nil
 	}
