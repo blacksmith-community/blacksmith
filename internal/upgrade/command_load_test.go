@@ -137,10 +137,15 @@ func (f *taskFixture) assertNeverSentTo(deployment string, index int) {
 func TestLoadedNodeIsSettledThroughCleanupOnly(t *testing.T) {
 	for _, phase := range []CommandPhase{CommandPhaseSent, CommandPhaseStaged} {
 		t.Run(string(phase), func(t *testing.T) {
-			fix := newTaskFixtureFrom(t, 2, 2, restartedWith(map[int]CommandPhase{0: phase}))
-			fix.cleanups["dep-0/0"] = "cleanup started=yes exit=7 killed=no"
+			var release func()
 
-			release := fix.holdCleanups(t)
+			// The cleanup answer and the hold are set in the seed, before
+			// the manager starts, since the manager reads both at once.
+			fix := newTaskFixtureFrom(t, 2, 2, func(fix *taskFixture, task *UpgradeTask) {
+				restartedWith(map[int]CommandPhase{0: phase})(fix, task)
+				fix.cleanups["dep-0/0"] = "cleanup started=yes exit=7 killed=no"
+				release = fix.holdCleanups(t)
+			})
 
 			// The task is owned from the load and runs its settle.
 			waitUntil(t, "the loaded task to be owned", fix.owns)
