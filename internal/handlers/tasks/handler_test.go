@@ -40,6 +40,8 @@ type fakeDirector struct {
 	mu             sync.Mutex
 	gotLimit       int
 	gotStates      []string
+	listTeams      []string
+	inexact        bool
 	taskDetails    map[int]bosh.Task
 	taskDetailErr  map[int]error
 	taskEvents     map[int][]bosh.TaskEvent
@@ -94,12 +96,17 @@ func (f *fakeDirector) GetTasks(_ context.Context, taskType string, limit int, s
 // ListTasks is the exact listing the handler reads. It records one more than
 // the limit, as the adapter asks the director for, and applies the states.
 func (f *fakeDirector) ListTasks(ctx context.Context, taskType string, limit int, states []string, team string) (bosh.TaskListing, error) {
+	f.mu.Lock()
+	f.listTeams = append(f.listTeams, team)
+	inexact := f.inexact
+	f.mu.Unlock()
+
 	tasks, err := f.GetTasks(ctx, taskType, limit+1, states, team)
 	if err != nil {
 		return bosh.TaskListing{}, err
 	}
 
-	listing := bosh.TaskListing{Tasks: tasks, More: len(tasks) > limit, Exact: true}
+	listing := bosh.TaskListing{Tasks: tasks, More: len(tasks) > limit, Exact: !inexact}
 	if listing.More {
 		listing.Tasks = tasks[:limit]
 	}
@@ -257,7 +264,10 @@ func TestListTasksFiltersByState(t *testing.T) {
 	}
 }
 
-const errorState = "error"
+const (
+	errorState  = "error"
+	queuedState = "queued"
+)
 
 func TestListTasksCountsEveryStateWhileListingOne(t *testing.T) {
 	t.Parallel()
@@ -299,7 +309,7 @@ func TestListTasksCountsEveryStateWhileListingOne(t *testing.T) {
 		t.Fatalf("expected the two newest error tasks, got %+v", payload.Tasks)
 	}
 
-	want := map[string]int{"processing": 1, "queued": 0, "done": 3, errorState: 3, "cancelled": 0}
+	want := map[string]int{"processing": 1, queuedState: 0, "done": 3, errorState: 3, "cancelled": 0}
 	for state, count := range want {
 		if payload.StateCounts[state] != count {
 			t.Fatalf("state_counts[%s] = %d, want %d (all: %v)", state, payload.StateCounts[state], count, payload.StateCounts)
@@ -339,6 +349,90 @@ func TestListTasksCountsWithoutStatesCountsEveryStateOnItsOwn(t *testing.T) {
 
 	if len(payload.Tasks) != 3 || payload.StateCounts["done"] != 3 || payload.StateCounts[errorState] != 1 {
 		t.Fatalf("rows are the page and counts are per state, got %d rows, counts %v", len(payload.Tasks), payload.StateCounts)
+	}
+}
+
+func decodeCountedPage(t *testing.T, handler *tasks.Handler, target string) struct {
+	Tasks       []tasks.Task   `json:"tasks"`
+	StateCounts map[string]int `json:"state_counts"`
+	Capped      []string       `json:"state_counts_capped"`
+} {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ListTasks(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+
+	var payload struct {
+		Tasks       []tasks.Task   `json:"tasks"`
+		StateCounts map[string]int `json:"state_counts"`
+		Capped      []string       `json:"state_counts_capped"`
+	}
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &payload)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	return payload
+}
+
+func newCountingHandler(t *testing.T, fakeDir *fakeDirector) *tasks.Handler {
+	t.Helper()
+
+	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	return tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+}
+
+// Every count reads the team the request named, so a count and the rows
+// under it agree for any team.
+func TestListTasksCountsReadTheRequestedTeam(t *testing.T) {
+	t.Parallel()
+
+	fakeDir := newFakeDirector()
+	fakeDir.tasks = []bosh.Task{{ID: 1, State: "done"}}
+
+	decodeCountedPage(t, newCountingHandler(t, fakeDir), "/b/tasks?counts=1&team=platform")
+
+	fakeDir.mu.Lock()
+	defer fakeDir.mu.Unlock()
+
+	// One read for the rows and one for each counted state.
+	if len(fakeDir.listTeams) < 2 {
+		t.Fatalf("expected the rows and the counts to be read, got %d reads", len(fakeDir.listTeams))
+	}
+
+	for _, team := range fakeDir.listTeams {
+		if team != "platform" {
+			t.Fatalf("a read used team %q, want platform (all: %v)", team, fakeDir.listTeams)
+		}
+	}
+}
+
+// A count read from a listing the broker could not finish is a lower bound,
+// so every state is reported capped and never as an exact number.
+func TestListTasksCountsFromAnInexactListingAreCapped(t *testing.T) {
+	t.Parallel()
+
+	fakeDir := newFakeDirector()
+	fakeDir.inexact = true
+	fakeDir.tasks = []bosh.Task{{ID: 1, State: "done"}, {ID: 2, State: errorState}}
+
+	payload := decodeCountedPage(t, newCountingHandler(t, fakeDir), "/b/tasks?counts=1")
+
+	for _, state := range []string{"processing", queuedState, "done", errorState, "cancelled"} {
+		if !slices.Contains(payload.Capped, state) {
+			t.Fatalf("state %q should be capped, got capped %v", state, payload.Capped)
+		}
 	}
 }
 
@@ -651,6 +745,34 @@ func TestCancelTaskSuccess(t *testing.T) {
 
 	if len(fakeDir.cancelledTasks) != 1 || fakeDir.cancelledTasks[0] != 12 {
 		t.Fatalf("expected task 12 to be cancelled, got %+v", fakeDir.cancelledTasks)
+	}
+}
+
+func TestCancelTaskNotFound(t *testing.T) {
+	t.Parallel()
+
+	fakeDir := newFakeDirector()
+
+	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir, Vault: managingTaskVault()})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/tasks/404/cancel", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.CancelTask(recorder, req, 404)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", recorder.Code)
+	}
+
+	assertTaskNotFoundCode(t, recorder)
+
+	if len(fakeDir.cancelledTasks) != 0 {
+		t.Fatalf("an unknown task must not reach the director's cancel, got %+v", fakeDir.cancelledTasks)
 	}
 }
 

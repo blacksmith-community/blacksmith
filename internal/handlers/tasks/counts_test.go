@@ -256,7 +256,7 @@ func TestFailedStateCountIsUnknownNotZero(t *testing.T) {
 
 	counts := decodeCounts(t, countsAllStates, handler)
 
-	if !slices.Equal(counts.StateCountsUnknown, []string{"queued"}) {
+	if !slices.Equal(counts.StateCountsUnknown, []string{queuedState}) {
 		t.Fatalf("unknown = %v, want [queued]", counts.StateCountsUnknown)
 	}
 
