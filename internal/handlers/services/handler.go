@@ -1995,6 +1995,10 @@ func (h *Handler) handleCertificateTrustedFile(writer http.ResponseWriter, req *
 	}
 
 	instanceID := matches[1]
+	if !h.permitInstance(writer, req, instanceID) {
+		return true
+	}
+
 	h.GetTrustedCertificateFile(writer, req, instanceID)
 
 	return true
@@ -2009,6 +2013,9 @@ func (h *Handler) handleCertificateTrusted(writer http.ResponseWriter, req *http
 	}
 
 	instanceID := m[1]
+	if !h.permitInstance(writer, req, instanceID) {
+		return true
+	}
 
 	switch req.Method {
 	case http.MethodGet:
