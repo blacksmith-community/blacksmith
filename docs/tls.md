@@ -45,7 +45,7 @@ The HTTPS server turns HTTP/2 off, so every connection uses HTTP/1.1. The broker
 - **HTTP Server**: Handles normal traffic (TLS disabled) or redirects (TLS enabled)
 - **HTTPS Server**: Handles TLS-encrypted traffic when TLS is enabled
 - **TLS Configuration**: Manages protocols, cipher suites, and certificates
-- **Certificate Validation**: Loads the certificate and key pair on startup and refuses to start when it does not load
+- **Certificate Validation**: Loads the certificate and key pair on startup, and the broker refuses to start when the pair does not load
 
 ## Configuration
 
@@ -128,7 +128,7 @@ Blacksmith loads the certificate and key pair on startup, and that load checks t
 - **File format**: Must be valid PEM-encoded files
 - **Key matching**: Private key must match the certificate
 
-Blacksmith does not check the expiry date at startup. A broker with an expired certificate starts normally, and its clients then reject the certificate. The [certificate inventory](#certificate-inventory-and-rotation) reports expiry ahead of time, so we use it to catch a certificate before it expires.
+Blacksmith does not check the expiry date at startup. A broker with an expired certificate starts normally, and its clients then reject the certificate. The [certificate inventory](#certificate-inventory-and-rotation) reports expiry ahead of time, so we use it to catch a certificate before it lapses.
 
 If the load fails, Blacksmith logs the error and exits.
 
@@ -215,7 +215,7 @@ The routes live under `/b/certificates/`.
 | `GET /b/certificates/settings` | Reads the runtime settings |
 | `PUT /b/certificates/settings` | Saves the runtime settings |
 
-The runtime settings are saved in Vault and can be changed without a redeploy. They start with these defaults, which are the warning at 30 days, the critical alert at 7 days, a scan every 60 minutes, and four scans at a time.
+The runtime settings are saved in Vault, so we can change them without a redeploy. They start with a warning at 30 days, a critical alert at 7 days, a scan every 60 minutes, and four scans at a time.
 
 ### Rotation
 

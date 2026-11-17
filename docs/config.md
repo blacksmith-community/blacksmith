@@ -372,7 +372,7 @@ vault:
   token: "vault-token"                       # Optional if using credentials file
   skip_ssl_validation: false                 # Optional
   credentials: "/path/to/vault/creds"        # Optional
-  cacert: "/path/to/vault-ca.pem"            # Optional
+  cacert: "/path/to/vault-ca.pem"            # Optional (PEM text or a file path)
   auto_unseal: true                          # Optional (default: true)
   health_check_interval: "15s"               # Optional (default: 15s)
   unseal_cooldown: "30s"                     # Optional (default: 30s)
@@ -410,7 +410,7 @@ Path to file containing Vault credentials. Used when `token` is not provided dir
 #### `cacert` (string)
 **Default:** `""`
 
-Path to a PEM file with the certificate authority that signs Vault's certificate. Set it when Vault uses a private authority and `skip_ssl_validation` is off.
+The certificate authority that signs Vault's certificate, given either as PEM text or as the path to a PEM file. A value that contains `-----BEGIN` is read as PEM text, and any other value is read as a file path. The broker trusts only this authority, and it does not fall back to the system roots. Set it when Vault uses a private authority. The setting has no effect while `skip_ssl_validation` is `true`, and the broker logs a warning at startup when it ignores the value for that reason. A value that is neither PEM text nor a readable file, or that holds no usable certificate, is an error.
 
 #### `auto_unseal` (boolean)
 **Default:** `true`
@@ -633,7 +633,7 @@ bosh:
 #### `enabled` (boolean)
 **Default:** `true`
 
-The key defaults to `true` when it is absent from the file, and an explicit `false` turns SSH off for the whole broker. When it is `false`, the broker refuses every SSH-backed entry point with a 403 answer, the error code `ssh_disabled`, and a message that starts "SSH is disabled". Those entry points fall into five groups.
+The key defaults to `true` when it is absent from the file, and an explicit `false` turns SSH off for the whole broker. When it is `false`, the broker refuses every SSH-backed entry point with a 403 answer, the error code `ssh_disabled`, and a message that starts "SSH is disabled". The entry points fall into the following five groups.
 
 - The terminal and command routes
 

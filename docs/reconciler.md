@@ -393,9 +393,14 @@ Synchronizes the service instance index for fast lookups.
 ### Phase 6: Orphan Handling
 Marks instances whose deployments have gone missing, and removes the marks that have gone unanswered. The next section describes the rules.
 
-**Orphan types detected**:
-- **Index orphans**: Vault index entries whose BOSH deployment no longer exists
-- **Unclaimed deployments**: BOSH deployments that have neither a Vault index entry nor a Cloud Foundry service instance
+The reconciler detects two kinds of orphan.
+
+- **Index orphans**
+  Vault index entries whose BOSH deployment no longer exists.
+
+- **Unclaimed deployments**
+  BOSH deployments that have neither a Vault index entry nor a Cloud Foundry service instance.
+
 
 ## Orphan Detection
 
@@ -532,7 +537,8 @@ When the broker stops, the reconciler stops its background workers and gives a r
 ## Performance Considerations
 
 ### Caching
-Deployment details are cached to reduce BOSH API calls:
+Deployment details are cached to reduce BOSH API calls.
+
 - The cache lives for a fixed five minutes, and no setting changes that
 - Expired entries are dropped when they are next read
 
@@ -733,8 +739,8 @@ The reconciler integrates seamlessly with existing Blacksmith components using a
 ### Operational Procedures
 
 6. **Error Investigation**: Investigate issues systematically:
-   - **Index orphans**: Usually mean someone deleted a deployment by hand, or a deprovision did not finish
-   - **Unclaimed deployments**: Often follow a deprovision that raced a provision
+   - **Index orphans** usually mean someone deleted a deployment by hand, or a deprovision did not finish
+   - **Unclaimed deployments** often follow a deprovision that raced a provision
 
 7. **Maintenance Windows**: Plan reconciler operations around maintenance:
    - Disable reconciler during major CF/BOSH maintenance

@@ -376,7 +376,7 @@ func (m *Monitor) GetServiceVMStatus(ctx context.Context, serviceID string) (*VM
 Based on BOSH Director VM information:
 - **`running`**: VM and all processes are healthy and operational
 - **`failing`**: One or more processes have failed or are unhealthy
-- **`unresponsive agent`**: VM agent is not responding to director queries. This is the job state the director itself writes, so it is the form the monitor sees and stores when an agent stops answering.
+- **`unresponsive agent`**: VM agent is not responding to director queries. The director itself writes this job state, so it is the form the monitor sees and stores when an agent stops answering.
 - **`unresponsive`**: The short form of the same state. The monitor treats it exactly as it treats `unresponsive agent`, with the same priority, and it also ends provisioning. Nothing in the broker writes the short form, so it appears only when another caller stores it.
 - **`stopping`**: VM is in the process of being stopped
 - **`starting`**: VM is in the process of starting up
