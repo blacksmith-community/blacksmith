@@ -56,10 +56,18 @@ func schemaPlans() map[string]struct {
 		"draft-04-no-fragment": {`{"$schema": "http://json-schema.org/draft-04/schema", "type": "object"}`, true},
 
 		// Cloud Controller counts the characters of the schema's JSON, so
-		// a multibyte character, or one Go escapes for HTML, counts once.
+		// a multibyte character counts once. It writes <, >, and & as
+		// six-character escapes, and a decimal such as 1e+300 in full.
+		// Each limit case's JSON is 86 characters before its description.
 		"multibyte-under-limit": {draft4(`"type": "object", "description": "` + strings.Repeat("é", 40000) + `"`), true},
-		"html-under-limit":      {draft4(`"type": "object", "description": "` + strings.Repeat("<&>", 20000) + `"`), true},
 		"multibyte-over-limit":  {draft4(`"type": "object", "description": "` + strings.Repeat("é", 64*1024) + `"`), false},
+		"html-over-limit":       {draft4(`"type": "object", "description": "` + strings.Repeat("<&>", 20000) + `"`), false},
+		"html-at-limit": {draft4(`"type": "object", "description": "` +
+			strings.Repeat("<&>", 3000) + strings.Repeat("x", 11450) + `"`), true},
+		"html-one-over-limit": {draft4(`"type": "object", "description": "` +
+			strings.Repeat("<&>", 3000) + strings.Repeat("x", 11451) + `"`), false},
+		"decimal-over-limit": {draft4(`"type": "number", "maximum": 1e300, "description": "` +
+			strings.Repeat("x", 65400) + `"`), false},
 
 		// A $ref is a reference only where a schema is expected, and
 		// data in a default or an enum is not a schema.

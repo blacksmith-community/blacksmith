@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -21,10 +20,6 @@ import (
 const (
 	draft4MetaSchema      = "http://json-schema.org/draft-04/schema"
 	maxParameterSchemaLen = 64 * 1024
-
-	// A JSON line separator or paragraph separator is one character
-	// to Ruby's to_json, and Go writes it as a six-character escape.
-	separatorEscapeExtra = len(` `) - 1
 )
 
 // Errors a parameter schema is refused with.
@@ -107,12 +102,12 @@ func draft4Meta() (*jsonschema.Schema, error) {
 // pattern Go can't compile, or a $ref that resolves to nothing inside
 // the schema, is not refused, as Cloud Controller does not refuse it.
 func ValidateParameterSchema(schema map[string]interface{}) error {
-	length, err := jsonLength(schema)
+	served, err := servedSchema(schema)
 	if err != nil {
 		return err
 	}
 
-	if length > maxParameterSchemaLen {
+	if length := rubyJSONLength(served); length > maxParameterSchemaLen {
 		return fmt.Errorf("%w: it is %d characters", ErrPlanSchemaTooLarge, length)
 	}
 
@@ -150,27 +145,6 @@ func ValidateParameterSchema(schema map[string]interface{}) error {
 	}
 
 	return nil
-}
-
-// jsonLength is the length of schema.to_json in Cloud Controller, which
-// counts characters, not bytes. Ruby writes a non-ASCII character, and
-// <, >, and &, as themselves. Go escapes U+2028 and U+2029 even with
-// HTML escaping off, so each of those counts once.
-func jsonLength(schema map[string]interface{}) (int, error) {
-	var buffer bytes.Buffer
-
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-
-	err := encoder.Encode(schema)
-	if err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrPlanSchemaNotEncoded, err)
-	}
-
-	data := bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
-	separators := bytes.Count(data, []byte(` `)) + bytes.Count(data, []byte(` `))
-
-	return utf8.RuneCount(data) - separators*separatorEscapeExtra, nil
 }
 
 // namesDraft4 reports whether a $schema value names the draft-04
