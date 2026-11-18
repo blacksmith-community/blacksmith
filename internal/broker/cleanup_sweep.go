@@ -41,6 +41,14 @@ type owedRetry struct {
 	next  time.Time
 }
 
+// stalledProvision is a provision the sweep found in progress on record
+// with no index entry, under the context ID it carried, and when the sweep
+// first saw it so.
+type stalledProvision struct {
+	contextID string
+	since     time.Time
+}
+
 // cleanupSweep is the state the sweep of owed cleanups keeps between
 // passes. Its zero value is ready to use.
 //
@@ -56,6 +64,7 @@ type cleanupSweep struct {
 	pass     sync.Mutex
 	lastFull time.Time
 	retries  map[string]*owedRetry
+	stalled  map[string]stalledProvision
 
 	mu       sync.Mutex
 	suspects map[string]uint64
@@ -180,6 +189,7 @@ func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 
 	if sweep.retries == nil {
 		sweep.retries = map[string]*owedRetry{}
+		sweep.stalled = map[string]stalledProvision{}
 	}
 
 	now := sweep.now()
@@ -226,7 +236,20 @@ func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 		owed[cleanup.instanceID] = true
 	}
 
+	stalled := b.adoptStalledProvisions(candidates, now, full, logger) //nolint:contextcheck // an adopted provision outlives the pass and runs under the service context
+
+	for instanceID := range stalled {
+		owed[instanceID] = true
+	}
+
 	b.forgetSettledSuspects(candidates, owed, notes, full)
+	b.retryOwedCleanups(ctx, cleanups, now, interval, logger)
+}
+
+// retryOwedCleanups runs the cleanup of each owed cleanup whose backoff
+// has passed, and sets when the sweep may try it next.
+func (b *Broker) retryOwedCleanups(ctx context.Context, cleanups []owedCleanup, now time.Time, interval time.Duration, logger logger.Logger) {
+	sweep := &b.sweep
 
 	for _, cleanup := range cleanups {
 		if ctx.Err() != nil {
@@ -249,6 +272,110 @@ func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 		logger.Info("Instance %s: its failed provision still owes the delete of deployment %s, so the sweep tries the cleanup again", cleanup.instanceID, cleanup.deploymentName)
 		b.cleanupFailedDeployment(ctx, cleanup.instanceID, cleanup.deploymentName, logger)
 	}
+}
+
+// adoptStalledProvisions finds each provision that is in progress on
+// record with no index entry, and that no provision in this process owns.
+// Such a provision's goroutine is gone, so nothing else records its
+// failure or deletes what its deploy left. Once the sweep has seen it so
+// for longer than provisionTimeout, by when no live provision can still
+// own it, the sweep claims it and settles it the way boot re-adoption
+// does, which records the failure with the mark and runs the cleanup. It
+// returns the provisions it is still watching, which stay suspects.
+func (b *Broker) adoptStalledProvisions(candidates []*readoptCandidate, now time.Time, full bool, logger logger.Logger) map[string]bool {
+	sweep := &b.sweep
+	watching := map[string]bool{}
+	read := make(map[string]bool, len(candidates))
+
+	for _, candidate := range candidates {
+		read[candidate.instanceID] = true
+		recorded := candidate.recorded
+
+		if !b.unownedUnindexedProvision(candidate) {
+			delete(sweep.stalled, candidate.instanceID)
+
+			continue
+		}
+
+		seen, ok := sweep.stalled[candidate.instanceID]
+		if !ok || seen.contextID != recorded.ContextID {
+			sweep.stalled[candidate.instanceID] = stalledProvision{contextID: recorded.ContextID, since: now}
+			watching[candidate.instanceID] = true
+
+			continue
+		}
+
+		if now.Sub(seen.since) <= provisionTimeout {
+			watching[candidate.instanceID] = true
+
+			continue
+		}
+
+		if !b.adoptStalledProvision(candidate.instanceID, recorded, now, logger) {
+			watching[candidate.instanceID] = true
+
+			continue
+		}
+
+		delete(sweep.stalled, candidate.instanceID)
+	}
+
+	if full {
+		for instanceID := range sweep.stalled {
+			if !read[instanceID] {
+				delete(sweep.stalled, instanceID)
+			}
+		}
+	}
+
+	// A provision a full scan found stays a suspect, so the passes between
+	// full scans keep reading it.
+	for instanceID := range watching {
+		sweep.note(instanceID)
+	}
+
+	return watching
+}
+
+// unownedUnindexedProvision reports whether candidate's record holds a
+// provision in progress or initializing, with no index entry, that no
+// provision in this process owns.
+func (b *Broker) unownedUnindexedProvision(candidate *readoptCandidate) bool {
+	recorded := candidate.recorded
+	if candidate.indexed || !candidate.exists || !candidate.parsed || recorded.Action != operationTypeProvision {
+		return false
+	}
+
+	if recorded.State != recordedStateInProgress && recorded.State != recordedStateInitializing {
+		return false
+	}
+
+	return !b.provisionActive(candidate.instanceID)
+}
+
+// adoptStalledProvision claims a stalled provision as boot re-adoption
+// claims one, and settles it in a goroutine of its own. It reports false
+// when the instance is claimed already or held in the mutation guard.
+func (b *Broker) adoptStalledProvision(instanceID string, recorded recordedOperation, now time.Time, logger logger.Logger) bool {
+	claim := &operationClaim{operation: operationTypeProvision, claimed: now, readopted: true}
+	claim.launched.Store(true)
+
+	_, taken, err := b.claimOperation(instanceID, recorded.DeploymentName, claim)
+	if err != nil || !taken {
+		logger.Info("Instance %s: its provision has been in progress with no index entry for longer than %v, and the instance is claimed or held, so the sweep looks again on its next pass", instanceID, provisionTimeout)
+
+		return false
+	}
+
+	logger.Warning("Instance %s: its provision has been in progress with no index entry for longer than %v, and no provision in this broker owns it, so the sweep settles it", instanceID, provisionTimeout)
+
+	operation := readoptOperation{instanceID: instanceID, deploymentName: recorded.DeploymentName, recorded: recorded, claim: claim}
+
+	b.track("adoption of the stalled provision of instance "+instanceID, func() {
+		b.readoptOperation(operation, now, nil, logger)
+	})
+
+	return true
 }
 
 // forgetSettledSuspects drops the suspects, the retries, and the

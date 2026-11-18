@@ -2750,6 +2750,13 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, d
 
 	logger.Error("instance %s has no index entry and no record of a delete, so its operation is reported as failed", instanceID)
 
+	// The answer writes nothing, because another broker may still run the
+	// provision. The sweep watches it instead, and settles it once no
+	// provision can still own it.
+	if recorded.Action == operationTypeProvision && (recorded.State == recordedStateInProgress || recorded.State == recordedStateInitializing) {
+		b.noteOwedCleanup(instanceID)
+	}
+
 	return osbapi.LastOperationResponse{
 		State:       osbapi.StateFailed,
 		Description: fmt.Sprintf("Blacksmith has no record of service instance %s, so it cannot finish. Delete the service instance.", instanceID),

@@ -1097,6 +1097,56 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Expect(recorded().CleanupPending).To(BeTrue())
 	})
 
+	It("the cleanup sweep settles an unindexed provision left in progress once no provision can still own it, and deletes its deployment", func() {
+		recordNamedProvision(createTaskID, deploymentName)
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
+
+		brokerInstance := newBroker(director)
+		now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+
+		brokerInstance.SetSweepClock(func() time.Time { return now })
+
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		Expect(brokerInstance.OwedCleanupSuspects()).To(ContainElement(instanceID), "the sweep watches the stalled provision")
+
+		now = now.Add(time.Hour)
+
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		Consistently(recordState, 300*time.Millisecond).Should(Equal("in_progress"), "a provision may still own the record until provisionTimeout has passed")
+		Expect(director.Calls(directorDeleteDeployment)).To(BeEmpty())
+
+		now = now.Add(time.Minute)
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+		Eventually(recordState, 10*time.Second).Should(Equal("failed"))
+		Eventually(func() []string { return director.Calls(directorDeleteDeployment) }, 10*time.Second).Should(Equal([]string{deploymentName}))
+		Eventually(func() bool { return recorded().CleanupPending }, 10*time.Second).Should(BeFalse())
+		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
+	})
+
+	It("the cleanup sweep leaves alone an unindexed provision in progress that a provision in this broker owns", func() {
+		recordNamedProvision(createTaskID, deploymentName)
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
+
+		brokerInstance := newBroker(director)
+
+		release := brokerInstance.HoldOperationClaim(instanceID, "provision")
+		defer release()
+
+		now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+
+		brokerInstance.SetSweepClock(func() time.Time { return now })
+
+		for range 3 {
+			brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+			now = now.Add(time.Hour)
+		}
+
+		Consistently(recordState, 300*time.Millisecond).Should(Equal("in_progress"))
+		Expect(director.Calls(directorDeleteDeployment)).To(BeEmpty())
+	})
+
 	It("boot re-adoption fails a provision whose index entry is gone and whose record names no deployment, and deletes nothing", func() {
 		recordProvision(createTaskID)
 		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
