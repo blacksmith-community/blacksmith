@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,until,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -20,7 +20,7 @@ const start=async()=>{
  const {w,d}=env;
  w.eval(OAT);
  const opener=d.createElement('button');opener.id='dlg-opener';opener.textContent='Open';d.body.appendChild(opener);
- await sleep(60);
+ await idle(w);
  opener.focus();
  const dialog=()=>d.getElementById('dialog-modal');
  const role=(r)=>dialog().querySelector(`[data-dialog-role="${r}"]`);
@@ -40,7 +40,7 @@ t('the confirmation opens as a native modal dialog on the surface stack with Can
  const env=await start(); const {w,d,dialog,role,stubs,snapshot}=env;
  const before=snapshot();
  const done=w.showConfirmDialog({title:'Delete it',message:'Really delete?',danger:true});
- await sleep(10);
+ await idle(env);
  expect(dialog() instanceof w.HTMLDialogElement).toBe(true);
  expect(dialog().open).toBe(true);
  expect(stubs.isModal(dialog())).toBe(true);
@@ -65,11 +65,11 @@ paths.forEach(({name,expected,close})=>{
   const env=await start(); const {w,d,dialog,stubs,snapshot}=env;
   const before=snapshot();
   const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
-  await sleep(10);
+  await idle(env);
   expect(snapshot()).not.toBe(before);
   close(env);
   expect(await done).toBe(expected);
-  await stubs.settle();
+  await until(()=>!dialog().open&&!stubs.isModal(dialog())&&d.activeElement===env.opener,'the dialog to close and give focus back');
   expect(dialog().open).toBe(false);
   expect(stubs.isModal(dialog())).toBe(false);
   expect(snapshot()).toBe(before);
@@ -81,11 +81,11 @@ paths.forEach(({name,expected,close})=>{
 t('a click or touch on the content leaves the confirmation open',async()=>{
  const env=await start(); const {w,d,dialog,stubs}=env;
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(env);
  dialog().querySelector('.dialog-modal-message').click();
  const e=new w.Event('touchstart',{bubbles:true,cancelable:true});
  dialog().querySelector('.dialog-modal-message').dispatchEvent(e);
- await stubs.settle();
+ await idle(env);
  expect(e.defaultPrevented).toBe(false);
  expect(dialog().open).toBe(true);
  expect(w.blacksmithSurfaces.size()).toBe(1);
@@ -95,12 +95,12 @@ t('a click or touch on the content leaves the confirmation open',async()=>{
 t('the typed-word confirmation stays open on Enter with the wrong word and still cancels on Escape',async()=>{
  const env=await start(); const {w,d,dialog,stubs,key}=env;
  const done=w.showConfirmDialog({title:'Wipe',message:'Wipe it?',requireText:'wipe'});
- await sleep(10);
+ await idle(env);
  const ack=dialog().querySelector('.dialog-modal-ack-input');
  expect(d.activeElement).toBe(ack);
  ack.value='nope';
  key('Enter');
- await stubs.settle();
+ await idle(env);
  expect(dialog().open).toBe(true);
  expect(dialog().querySelector('.dialog-modal-error').hidden).toBe(false);
  key('Escape');
@@ -111,10 +111,10 @@ t('the typed-word confirmation stays open on Enter with the wrong word and still
 t('Escape closes only the topmost surface when another surface sits above the dialog',async()=>{
  const env=await start(); const {w,dialog,stubs,key}=env;
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(env);
  const above={close(){}};
  w.blacksmithSurfaces.push(above);
- key('Escape'); await stubs.settle();
+ key('Escape'); await idle(env);
  expect(dialog().open).toBe(true);
  expect(w.blacksmithSurfaces.size()).toBe(2);
  w.blacksmithSurfaces.remove(above);
@@ -127,16 +127,16 @@ t('a second confirmation dismisses the first, and a late close event from the fi
  const env=await start(); const {w,d,dialog,role,stubs,snapshot}=env;
  const before=snapshot();
  const first=w.showConfirmDialog({title:'One',message:'First?'});
- await sleep(10);
+ await idle(env);
  const second=w.showConfirmDialog({title:'Two',message:'Second?'});
  expect(await first).toBe(false);
- await stubs.settle();
+ await idle(env);
  expect(dialog().open).toBe(true);
  expect(dialog().querySelector('.dialog-modal-title').textContent).toBe('Two');
  expect(w.blacksmithSurfaces.size()).toBe(1);
  role('confirm').click();
  expect(await second).toBe(true);
- await stubs.settle();
+ await idle(env);
  expect(snapshot()).toBe(before);
  expect(d.activeElement).toBe(env.opener);
 });
@@ -150,12 +150,12 @@ t('closing a confirmation opened over a modal returns to that modal, still modal
  const outerOpen=snapshot();
  d.getElementById('outer-btn').focus();
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(env);
  expect(w.blacksmithSurfaces.size()).toBe(2);
  expect(outer.hasAttribute('inert')).toBe(true);
  role('cancel').click();
  expect(await done).toBe(false);
- await stubs.settle();
+ await idle(env);
  expect(snapshot()).toBe(outerOpen);
  expect(outer.hasAttribute('inert')).toBe(false);
  expect(w.ModalManager.isTopmost()).toBe(true);
@@ -169,27 +169,27 @@ t('the prompt cancels with null on Escape and on a backdrop click, and returns t
  const before=snapshot();
  const input=()=>dialog().querySelector('.dialog-modal-input');
  let done=w.__T.showPromptDialog({title:'Name',message:'Name?',defaultValue:'abc'});
- await sleep(10);
+ await idle(env);
  expect(dialog().open).toBe(true);
  expect(d.activeElement).toBe(input());
  key('Escape');
  expect(await done).toBeNull();
- await stubs.settle();
+ await idle(env);
  expect(snapshot()).toBe(before);
  expect(input().value).toBe('');
  done=w.__T.showPromptDialog({title:'Name',message:'Name?'});
- await sleep(10);
+ await idle(env);
  backdrop();
  expect(await done).toBeNull();
- await stubs.settle();
+ await idle(env);
  expect(snapshot()).toBe(before);
  done=w.__T.showPromptDialog({title:'Secret',message:'Password?',secret:true});
- await sleep(10);
+ await idle(env);
  expect(input().getAttribute('type')).toBe('password');
  input().value='hunter2';
  key('Enter');
  expect(await done).toBe('hunter2');
- await stubs.settle();
+ await idle(env);
  expect(input().value).toBe('');
  expect(input().getAttribute('type')).toBe('text');
  expect(snapshot()).toBe(before);
