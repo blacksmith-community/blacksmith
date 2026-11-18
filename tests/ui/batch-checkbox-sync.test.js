@@ -1,5 +1,5 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 async function setup(){

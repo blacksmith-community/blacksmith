@@ -1,5 +1,5 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {expectNoAlerts}=require('./certificates/no-alerts.js');
 const {setupRotate,cert}=require('./rotate-flow-support.js');

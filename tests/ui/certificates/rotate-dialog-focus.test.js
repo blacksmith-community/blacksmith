@@ -5,7 +5,7 @@ const { checks, JSDOM } = require('./support.js');
 const { ok, failures } = checks();
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
-const {boot,sleep,idle,until,TEST_LIMIT} = H.main;
+const {boot,idle,until,TEST_LIMIT} = H.main;
 const K='/s/valkey_crt', K2='/s/redis_crt', KX='/s/x_crt';
 const cert=(key,variable,id,name,days)=>({key,variable,kind:'leaf',days_left:days,owners:[{kind:'instance',instance_id:id,instance_name:name}],rotation:{allowed:true,reasons:[]},findings:[]});
 const inv={certificates:[cert(K,'valkey_crt','inst-a','a',10),cert(K2,'redis_crt','inst-a','a',12),cert(KX,'x_crt','inst-x','x',9)],capabilities:{rotation:{enabled:true}},settings:{warning_days:30,critical_days:7}};

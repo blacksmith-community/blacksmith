@@ -1,5 +1,5 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep,idle,until,TEST_LIMIT}}=require('./certificates/harness.js');
+const {main:{boot,idle,until,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
 const fs=require('fs'),path=require('path');

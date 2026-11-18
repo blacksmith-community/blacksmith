@@ -3,7 +3,7 @@ const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
 
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
-const {boot,sleep,idle,until,TEST_LIMIT} = H.main;
+const {boot,idle,TEST_LIMIT} = H.main;
 
 const inst={service_id:'svc1',plan_id:'p1',plan:{id:'p1',name:'small'}};
 const mk=(id,key,variable,instId,name,days,exp)=>({id,key,variable,kind:'leaf',days_left:days,expiry:exp,health:'ok',owners:[{kind:'instance',instance_id:instId,instance_name:name}],rotation:{allowed:true,modes:['redeploy','patch'],reasons:[]},findings:[]});

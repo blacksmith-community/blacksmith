@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const {main:{boot,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {install}=require('./dom-stubs.js');
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;

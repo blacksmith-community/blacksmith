@@ -5,7 +5,7 @@ const { checks, JSDOM } = require('./support.js');
 const { ok, failures } = checks();
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
-const {boot,sleep,idle,until,TEST_LIMIT,EVIL} = H.main;
+const {boot,idle,until,TEST_LIMIT,EVIL} = H.main;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const mk=(id,key,variable,inst,name,days,exp,extra={})=>({id,key,variable,kind:'leaf',days_left:days,expiry:exp,health:'ok',owners:[{kind:'instance',instance_id:inst,instance_name:name}],rotation:{allowed:true,reasons:[]},findings:[],...extra});
 t('instance rotation and overview', async () => {

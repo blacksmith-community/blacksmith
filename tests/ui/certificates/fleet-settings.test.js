@@ -5,7 +5,7 @@ const { checks, JSDOM } = require('./support.js');
 const { ok, failures } = checks();
 
 const {boot,sleep,idle,EVIL} = H.fleet;
-const {until,TEST_LIMIT} = H.main;
+const {TEST_LIMIT} = H.main;
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const bad=(d)=>d.querySelectorAll('#certificates img,#certificates script,#certificates [onerror],.modal-overlay img,.modal-overlay script,dialog img,dialog script,#blacksmith-live-region img,#toast-container img').length;
 const fire=(w,el,type)=>el.dispatchEvent(new w.Event(type,{bubbles:true,cancelable:true}));

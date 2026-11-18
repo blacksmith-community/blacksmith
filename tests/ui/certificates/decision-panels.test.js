@@ -5,7 +5,7 @@ const { checks, JSDOM } = require('./support.js');
 const { ok, failures } = checks();
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
-const {boot,sleep,idle,until,TEST_LIMIT,EVIL} = H.main;
+const {boot,idle,until,TEST_LIMIT,EVIL} = H.main;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const chk=(name,passed,detail)=>({name,passed,detail});
 const mkTask=(over={})=>({id:'task-1',name:'Spring '+EVIL,kind:'certificates',status:'running',paused:false,certificates:{mode:'redeploy',preview_id:'pv'},

@@ -1,6 +1,6 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs'),path=require('path');
-const {main:{boot,sleep,now,day,iso,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const {main:{boot,now,day,iso,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;

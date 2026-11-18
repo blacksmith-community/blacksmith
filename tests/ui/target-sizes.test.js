@@ -1,7 +1,7 @@
 const { test, expect } = require('bun:test');
 const fs = require('fs');
 const path = require('path');
-const { main: { boot } } = require('./certificates/harness.js');
+const { main: {  } } = require('./certificates/harness.js');
 
 const UI = path.resolve(__dirname, '..', '..', 'ui');
 const read = (name) => fs.readFileSync(path.join(UI, name), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
