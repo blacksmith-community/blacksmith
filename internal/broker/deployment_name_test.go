@@ -6,9 +6,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/broker"
+	"blacksmith/internal/mutation"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/testutil"
@@ -33,15 +35,33 @@ func recordedNameInstance(reader string) (string, string) {
 	return instanceID, recordedNameCreated + "-" + instanceID
 }
 
-// seedRecordedNames indexes, for every credential reader, an instance whose
-// entry records the current plan and the deployment of the plan it was
-// created under. One Vault value seeds them all, because the index lock
-// belongs to a Vault value and writers through separate values race.
+// recordedNamePaths names every broker path the test runs: each
+// credential reader and each other path that names a deployment.
+func recordedNamePaths() []string {
+	readers := (&broker.Broker{}).CredentialReaders()
+	sites := (&broker.Broker{}).DeploymentNameSites()
+	paths := make([]string, 0, len(readers)+len(sites))
+
+	for reader := range readers {
+		paths = append(paths, reader)
+	}
+
+	for site := range sites {
+		paths = append(paths, site)
+	}
+
+	return paths
+}
+
+// seedRecordedNames indexes, for every path the test runs, an instance
+// whose entry records the current plan and the deployment of the plan it
+// was created under. One Vault value seeds them all, because the index
+// lock belongs to a Vault value and writers through separate values race.
 func seedRecordedNames(t *testing.T, vaultClient *internalVault.Vault) {
 	t.Helper()
 
-	for reader := range (&broker.Broker{}).CredentialReaders() {
-		instanceID, recorded := recordedNameInstance(reader)
+	for _, path := range recordedNamePaths() {
+		instanceID, recorded := recordedNameInstance(path)
 
 		err := vaultClient.Index(context.Background(), instanceID, map[string]interface{}{
 			serviceIDKey:      recordedNameService,
@@ -98,11 +118,46 @@ func requireRecordedNameRead(t *testing.T, reader string, vaultClient *internalV
 	}
 }
 
+// requireRecordedNameSite runs one path that names a deployment and fails
+// the test unless the name it chose and every deployment it asked the
+// director about are the recorded one.
+func requireRecordedNameSite(t *testing.T, site string, vaultClient *internalVault.Vault) {
+	t.Helper()
+
+	instanceID, recorded := recordedNameInstance(site)
+
+	director := testutil.NewScriptedBOSHDirector()
+	director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no running task is a nil task without an error
+
+	brokerInstance := &broker.Broker{BOSH: director, Vault: vaultClient, Guard: mutation.NewGuard(time.Now)}
+
+	chosen, err := brokerInstance.DeploymentNameSites()[site](context.Background(), instanceID, recordedNameCurrent)
+	if err != nil {
+		t.Fatalf("the %s path failed: %v", site, err)
+	}
+
+	named := director.Calls("FindRunningTaskForDeployment")
+	if chosen != "" {
+		named = append(named, chosen)
+	}
+
+	if len(named) == 0 {
+		t.Fatalf("the %s path named no deployment", site)
+	}
+
+	for _, deployment := range named {
+		if deployment != recorded {
+			t.Errorf("the %s path named deployment %q, want the recorded deployment %q", site, deployment, recorded)
+		}
+	}
+}
+
 // After a plan change, an instance's deployment keeps the name it was
 // created under, so the name starts with the old plan while the index
-// records the new one. Every broker path that reads credentials from the
-// deployment's VMs must ask the director for the deployment the index
-// records, not for one named from the new plan, which doesn't exist.
+// records the new one. Every broker path that names the deployment, the
+// credential readers and the deprovision, last_operation, and re-adoption
+// paths, must name the deployment the index records, not one named from
+// the new plan, which doesn't exist.
 func TestDeploymentName_ReadsRecordedName(t *testing.T) {
 	t.Parallel()
 
@@ -124,6 +179,14 @@ func TestDeploymentName_ReadsRecordedName(t *testing.T) {
 			t.Parallel()
 
 			requireRecordedNameRead(t, reader, vaultClient, plan)
+		})
+	}
+
+	for site := range (&broker.Broker{}).DeploymentNameSites() {
+		t.Run(site, func(t *testing.T) {
+			t.Parallel()
+
+			requireRecordedNameSite(t, site, vaultClient)
 		})
 	}
 }

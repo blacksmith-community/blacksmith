@@ -540,3 +540,44 @@ func (b *Broker) SettleReadoptedTask(ctx context.Context, instanceID, deployment
 
 	return b.settleReadoptedTask(ctx, operation, current, logger.Get().Named("broker"))
 }
+
+// DeploymentNameSites exposes, by a name for the test to report, each
+// broker path besides the credential readers that names an indexed
+// instance's deployment: the deployment a deprovision reserves, the
+// running-task check before a deprovision, the deployment a last_operation
+// poll checks, and the re-adoption candidate list. Each returns the name
+// it chose, or "" for a path that only asks the director, whose calls the
+// test reads.
+func (b *Broker) DeploymentNameSites() map[string]func(ctx context.Context, instanceID, planID string) (string, error) {
+	brokerLogger := logger.Get().Named("broker")
+
+	return map[string]func(ctx context.Context, instanceID, planID string) (string, error){
+		"deprovision reservation": func(ctx context.Context, instanceID, planID string) (string, error) {
+			return b.deprovisionDeployment(ctx, instanceID, planID, brokerLogger)
+		},
+		"deprovision busy check": func(ctx context.Context, instanceID, planID string) (string, error) {
+			_, err := b.rejectIfOperationInProgress(ctx, instanceID, planID, brokerLogger)
+
+			return "", err
+		},
+		"last_operation poll": func(ctx context.Context, instanceID, _ string) (string, error) {
+			_, deploymentName, _, err := b.getInstanceForOperation(ctx, instanceID, brokerLogger)
+
+			return deploymentName, err
+		},
+		"re-adoption candidates": func(ctx context.Context, instanceID, _ string) (string, error) {
+			candidates, _, err := readoptListOnce(ctx, b.Vault)
+			if err != nil {
+				return "", err
+			}
+
+			for _, candidate := range candidates {
+				if candidate.instanceID == instanceID {
+					return candidate.deploymentName, nil
+				}
+			}
+
+			return "", nil
+		},
+	}
+}
