@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -54,7 +54,7 @@ const start=async()=>{
  };
  const observers=[];
  w.ResizeObserver=class{constructor(cb){this.cb=cb;this.targets=[];observers.push(this);}observe(el){this.targets.push(el);}unobserve(){}disconnect(){}};
- await sleep(60);
+ await idle(w);
  const mgr=w.TerminalManager;
  const open=(instance='node/0')=>mgr.openWithContext('blacksmith','broker',instance,'node','broker');
  const deliver=(socket,msg)=>socket.onmessage({data:JSON.stringify(msg)});
@@ -62,7 +62,7 @@ const start=async()=>{
   socket.readyState=1; socket.onopen();
   deliver(socket,{type:'handshake'});
   if(term && !term.ready) term.resolveInit();
-  await sleep(150);
+  await idle(w);
   deliver(socket,{type:'status',meta:{status:'connected'}});
  };
  const sent=(socket,type)=>socket.sent.filter(m=>m.type===type);

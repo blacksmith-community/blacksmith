@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -29,7 +29,7 @@ const start=async(opts={})=>{
  if(opts.preloaded) w.WTermLib={WTerm,version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}send(m){this.sent.push(m);}close(code){this.readyState=3;this.closedWith=code;}};
  w.eval(OAT);
- await sleep(80);
+ await idle(w);
  const d=w.document;
  const scripts=()=>[...d.querySelectorAll('script[src*="/vendor/wterm/"]')];
  const styles=()=>[...d.querySelectorAll('link[href*="/vendor/wterm/"]')];
@@ -71,10 +71,10 @@ t('the first terminal loads one keyed script and one keyed stylesheet, and a sec
  // Each tab exists, but nothing is built and no SSH session starts until
  // both the script and the stylesheet have arrived.
  expect(env.d.querySelectorAll('#terminal-tabs [role=tab]').length).toBe(2);
- env.loadScript(); await sleep(0);
+ env.loadScript(); await idle(env);
  expect(env.terms.length).toBe(0);
  expect(env.sockets.length).toBe(0);
- env.loadStyle(); await sleep(0);
+ env.loadStyle(); await idle(env);
  expect(env.terms.length).toBe(2);
  expect(env.sockets.length).toBe(2);
  // A later terminal is built at once from the loaded library.
@@ -94,7 +94,7 @@ t('the scheme frame is read again once the stylesheet has loaded',async()=>{
  const synced=[];
  const sync=env.mgr.syncFrame;
  env.mgr.syncFrame=function(m){ synced.push(m); return sync.call(this,m); };
- env.loadScript(); env.loadStyle(); await sleep(0);
+ env.loadScript(); env.loadStyle(); await idle(env);
  expect(synced).toEqual([modal]);
  env.mgr.closeAll();
 });
@@ -105,7 +105,7 @@ t('a script that fails to load shows the fixed failure, opens no socket, and Rec
  env.open(0);
  const session=env.mgr.sessions.get('blacksmith-broker-node/0');
  expect(session.status).not.toBe('failed');
- env.fire(env.scripts()[0],'error'); await sleep(0);
+ env.fire(env.scripts()[0],'error'); await idle(env);
  expect(session.status).toBe('failed');
  expect(raised).toEqual([{message:FAILED,options:{toast:true}}]);
  expect(session.element.querySelector('[role=alert]').textContent).toBe(FAILED);
@@ -113,13 +113,13 @@ t('a script that fails to load shows the fixed failure, opens no socket, and Rec
  // The failed script is gone, and the stylesheet that did load stays.
  expect(env.scripts()).toEqual([]);
  expect(env.styles().length).toBe(1);
- env.loadStyle(); await sleep(0);
+ env.loadStyle(); await idle(env);
  expect(env.terms.length).toBe(0);
  env.d.querySelector('#terminal-tabs button.terminal-reconnect').click();
  expect(env.scripts().length).toBe(1);
  expect(env.styles().length).toBe(1);
  expect(env.sockets.length).toBe(0);
- env.loadScript(); await sleep(0);
+ env.loadScript(); await idle(env);
  expect(env.terms.length).toBe(1);
  expect(session.failed).toBe(false);
  expect(env.sockets.length).toBe(1);
@@ -131,7 +131,7 @@ t('a stylesheet that fails to load fails the terminal, and Reconnect loads only 
  env.w.Feedback.error=()=>{};
  env.open(0);
  env.loadScript();
- env.fire(env.styles()[0],'error'); await sleep(0);
+ env.fire(env.styles()[0],'error'); await idle(env);
  const session=env.mgr.sessions.get('blacksmith-broker-node/0');
  expect(session.status).toBe('failed');
  expect(env.terms.length).toBe(0);
@@ -140,7 +140,7 @@ t('a stylesheet that fails to load fails the terminal, and Reconnect loads only 
  env.d.querySelector('#terminal-tabs button.terminal-reconnect').click();
  expect(env.scripts().length).toBe(1);
  expect(env.styles().length).toBe(1);
- env.loadStyle(); await sleep(0);
+ env.loadStyle(); await idle(env);
  expect(env.terms.length).toBe(1);
  expect(env.sockets.length).toBe(1);
  env.mgr.closeAll();
@@ -150,14 +150,14 @@ t('a script that loads without defining the library fails the terminal and is fe
  const env=await start();
  env.w.Feedback.error=()=>{};
  env.open(0);
- env.loadStyle(); env.loadScript(false); await sleep(0);
+ env.loadStyle(); env.loadScript(false); await idle(env);
  const session=env.mgr.sessions.get('blacksmith-broker-node/0');
  expect(session.status).toBe('failed');
  expect(env.sockets.length).toBe(0);
  expect(env.scripts()).toEqual([]);
  env.d.querySelector('#terminal-tabs button.terminal-reconnect').click();
  expect(env.scripts().length).toBe(1);
- env.loadScript(); await sleep(0);
+ env.loadScript(); await idle(env);
  expect(env.terms.length).toBe(1);
  expect(env.sockets.length).toBe(1);
  env.mgr.closeAll();
@@ -167,7 +167,7 @@ t('a terminal closed while the library loads is never built and never connects',
  const env=await start();
  env.open(0);
  env.mgr.closeAll();
- env.loadScript(); env.loadStyle(); await sleep(0);
+ env.loadScript(); env.loadStyle(); await idle(env);
  expect(env.terms.length).toBe(0);
  expect(env.sockets.length).toBe(0);
 });
@@ -190,7 +190,7 @@ t('restored tabs show in the dock before the library has loaded',async()=>{
  expect(env.terms.length).toBe(0);
  expect(env.sockets.length).toBe(0);
  expect(env.scripts().length).toBe(1);
- env.loadScript(); env.loadStyle(); await sleep(0);
+ env.loadScript(); env.loadStyle(); await idle(env);
  expect(env.terms.length).toBe(3);
  // A restored tab still waits for the operator before it connects.
  expect(env.sockets.length).toBe(0);

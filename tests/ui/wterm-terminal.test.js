@@ -1,9 +1,26 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
+
+// Runs fn and lets the page settle while timers longer than 500 ms are held,
+// then runs the held ones due within ms in order of delay, as if that much time
+// had passed. The rest go back to the real clock. A retry backoff is one of
+// these, so a test can see a retry happen, or prove none comes, without
+// waiting the delay out.
+const advance=async(w,ms,fn)=>{
+ const set=w.setTimeout, clear=w.clearTimeout; const held=new Map(); let n=0;
+ w.setTimeout=(cb,delay,...a)=>{
+  if(typeof cb!=='function'||!(Number(delay)>500)) return set(cb,delay,...a);
+  const id='held-'+(++n); held.set(id,{cb,delay:Number(delay),a}); return id;
+ };
+ w.clearTimeout=(id)=>{ if(!held.delete(id)) clear(id); };
+ try{ fn(); await idle(w); }finally{ w.setTimeout=set; w.clearTimeout=clear; }
+ for(const h of [...held.values()].sort((x,y)=>x.delay-y.delay)){ if(h.delay<=ms) h.cb(...h.a); else set(h.cb,h.delay,...h.a); }
+ await idle(w);
+};
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -56,7 +73,7 @@ const start=async()=>{
   send(message){this.sent.push(JSON.parse(message));}
   close(code){this.readyState=3;this.closedWith=code;}
  };
- await sleep(60);
+ await idle(w);
  const mgr=w.TerminalManager;
  const open=(instance='node/0')=>mgr.openWithContext('blacksmith','broker',instance,'node','broker');
  const deliver=(socket,msg)=>socket.onmessage({data:JSON.stringify(msg)});
@@ -64,7 +81,7 @@ const start=async()=>{
   socket.readyState=1; socket.onopen();
   deliver(socket,{type:'handshake'});
   if(term && !term.ready) term.resolveInit();
-  await sleep(150);
+  await idle(w);
   deliver(socket,{type:'status',meta:{status:'connected'}});
  };
  const sent=(socket,type)=>socket.sent.filter(m=>m.type===type);
@@ -107,7 +124,7 @@ t('a session builds a wterm terminal on its own element with the versioned WASM 
  expect(term.element.getAttribute('aria-describedby')).toBe('terminal-keyboard-help');
  expect(term.element.getAttribute('aria-label')).toContain('node/0');
  expect(term.element.hasAttribute('tabindex')).toBe(false);
- term.resolveInit(); await sleep(0);
+ term.resolveInit(); await idle(env);
  mgr.closeAll();
 });
 
@@ -120,7 +137,7 @@ t('output that arrives before init resolves is written in order once it does',as
  deliver(socket,{type:'output',data:OUTPUT+'-2 '});
  expect(term.written).toEqual([]);
  expect(term.dropped).toEqual([]);
- term.resolveInit(); await sleep(0);
+ term.resolveInit(); await idle(env);
  deliver(socket,{type:'output',data:OUTPUT+'-3'});
  expect(term.dropped).toEqual([]);
  const text=term.written.join('');
@@ -135,9 +152,9 @@ t('the start message waits for init and carries the applied grid size',async()=>
  const term=terms[0], socket=sockets[0];
  socket.readyState=1; socket.onopen();
  deliver(socket,{type:'handshake'});
- await sleep(150);
+ await idle(env);
  expect(sent(socket,'control')).toEqual([]);
- term.resolveInit(132,43); await sleep(0);
+ term.resolveInit(132,43); await idle(env);
  const control=sent(socket,'control');
  expect(control.length).toBe(1);
  expect(control[0].meta).toEqual({action:'start',width:132,height:43,term:'xterm-256color'});
@@ -148,7 +165,7 @@ t('keystrokes reach the websocket only once the session is connected',async()=>{
  const env=await start(); const {terms,sockets,open,deliver,connect,sent,mgr}=env;
  open();
  const term=terms[0], socket=sockets[0];
- socket.readyState=1; socket.onopen(); term.resolveInit(); await sleep(0);
+ socket.readyState=1; socket.onopen(); term.resolveInit(); await idle(env);
  term.onData(SECRET+'-early');
  expect(sent(socket,'input')).toEqual([]);
  await connect(socket,term);
@@ -196,7 +213,7 @@ t('a session closed before init resolves never writes to its terminal',async()=>
  deliver(socket,{type:'output',data:OUTPUT});
  mgr.closeAll();
  expect(term.destroyed).toBe(true);
- term.resolveInit(); await sleep(0);
+ term.resolveInit(); await idle(env);
  expect(term.written).toEqual([]);
  expect(term.dropped).toEqual([]);
 });
@@ -204,26 +221,23 @@ t('a session closed before init resolves never writes to its terminal',async()=>
 t('a retried connection is the socket that closing the session closes',async()=>{
  const env=await start(); const {terms,sockets,open,mgr}=env;
  open();
- terms[0].resolveInit(); await sleep(0);
- sockets[0].onclose({code:1006});
- await sleep(1100);
+ terms[0].resolveInit(); await idle(env);
+ await advance(env.w,1100,()=>sockets[0].onclose({code:1006}));
  expect(sockets.length).toBe(2);
- mgr.closeAll();
- expect(sockets[1].readyState).toBe(3);
- await sleep(1100);
+ await advance(env.w,1100,()=>{ mgr.closeAll(); expect(sockets[1].readyState).toBe(3); });
  expect(sockets.length).toBe(2);
 });
 
 t('switching sessions pauses rendering for the hidden terminal',async()=>{
  const env=await start(); const {terms,open,mgr}=env;
  open(); open('node/1');
- terms.forEach(term=>term.resolveInit()); await sleep(0);
+ terms.forEach(term=>term.resolveInit()); await idle(env);
  expect(terms[0].paused).toBe(true);
  expect(terms[1].paused).toBe(false);
  mgr.switchToSession('blacksmith-broker-node/0');
  expect(terms[0].paused).toBe(false);
  expect(terms[1].paused).toBe(true);
- await sleep(150);
+ await idle(env);
  expect(terms[0].focused).toBeGreaterThan(0);
  mgr.closeAll();
 });
@@ -231,7 +245,7 @@ t('switching sessions pauses rendering for the hidden terminal',async()=>{
 t('Ctrl+Shift+F6 leaves terminal input without reaching the terminal',async()=>{
  const env=await start(); const {w,d,terms,open,mgr}=env;
  open();
- const term=terms[0]; term.resolveInit(); await sleep(0);
+ const term=terms[0]; term.resolveInit(); await idle(env);
  const input=d.createElement('textarea'); term.element.appendChild(input);
  const reached=[]; input.addEventListener('keydown',e=>reached.push(e.key));
  input.focus();
@@ -254,7 +268,7 @@ t('reconnecting clears the screen and routes keystrokes and resizes to the new s
  expect(sockets.length).toBe(2);
  expect(sockets[0].readyState).toBe(3);
  expect(term.written.join('')).toContain('\x1bc');
- const fresh=sockets[1]; fresh.readyState=1; fresh.onopen(); await sleep(0);
+ const fresh=sockets[1]; fresh.readyState=1; fresh.onopen(); await idle(env);
  expect(sent(fresh,'control')[0].meta).toEqual({action:'start',width:term.cols,height:term.rows,term:'xterm-256color'});
  term.onData(SECRET);
  term.onResize(90,20);
@@ -270,7 +284,7 @@ t('a terminal that fails to start says so and closes its socket',async()=>{
  w.Feedback.error=(message,options)=>{ raised.push({message,options}); };
  open();
  sockets[0].readyState=1; sockets[0].onopen();
- terms[0].rejectInit(); await sleep(0);
+ terms[0].rejectInit(); await idle(env);
  w.Feedback.error=error;
  expect(raised.length).toBe(1);
  expect(raised[0].message).toContain('terminal could not start');
@@ -293,7 +307,7 @@ t('a missing terminal library shows the fixed failure and never opens a socket',
  open();
  // The console tries to load the library, and the script never arrives.
  d.querySelector('script[src^="/vendor/wterm/"]').dispatchEvent(new w.Event('error'));
- await sleep(0);
+ await idle(env);
  expect(raised).toEqual([{message:FAILED,options:{toast:true}}]);
  expect(sockets.length).toBe(0);
  const host=d.getElementById('terminal-blacksmith-broker-node/0');
@@ -307,7 +321,7 @@ t('a terminal constructor that throws shows the fixed failure and never opens a 
  const env=await start(); const {w,d,sockets,open,mgr}=env;
  w.WTermLib={WTerm:class{constructor(){throw new Error('synthetic constructor failure');}},version:'0.5.10'};
  const raised=raisedErrors(w);
- open(); await sleep(0);
+ open(); await idle(env);
  expect(raised).toEqual([{message:FAILED,options:{toast:true}}]);
  expect(sockets.length).toBe(0);
  expect(d.querySelector('#terminal-blacksmith-broker-node\\/0 [role=alert]').textContent).toBe(FAILED);
@@ -319,10 +333,9 @@ t('a failed start raises no second disconnect notification when its socket close
  const raised=raisedErrors(w);
  open();
  sockets[0].readyState=1; sockets[0].onopen();
- terms[0].rejectInit(); await sleep(0);
+ terms[0].rejectInit(); await idle(env);
  // A socket closed while connecting reports 1006 in a browser.
- sockets[0].onclose({code:1006});
- await sleep(1100);
+ await advance(w,1100,()=>sockets[0].onclose({code:1006}));
  expect(raised.length).toBe(1);
  expect(d.body.textContent).not.toContain('Disconnected:');
  expect(sockets.length).toBe(1);
@@ -335,13 +348,12 @@ t('a retry while the terminal starts sends exactly one start message, on the new
  const term=terms[0];
  sockets[0].readyState=1; sockets[0].onopen();
  deliver(sockets[0],{type:'handshake'});
- deliver(sockets[0],{type:'error',data:'Session not connected'});
- await sleep(1100);
+ await advance(env.w,1100,()=>deliver(sockets[0],{type:'error',data:'Session not connected'}));
  expect(sockets.length).toBe(2);
  sockets[1].readyState=1; sockets[1].onopen();
  deliver(sockets[1],{type:'handshake'});
- await sleep(150);
- term.resolveInit(); await sleep(0);
+ await idle(env);
+ term.resolveInit(); await idle(env);
  const starts=socket=>sent(socket,'control').filter(m=>m.meta.action==='start');
  expect(starts(sockets[0])).toEqual([]);
  expect(starts(sockets[1]).length).toBe(1);
@@ -355,7 +367,7 @@ t('a resize between the start message and connected reaches the backend once con
  socket.readyState=1; socket.onopen();
  deliver(socket,{type:'handshake'});
  term.resolveInit(120,40);
- await sleep(150);
+ await idle(env);
  expect(sent(socket,'control').map(m=>m.meta)).toEqual([{action:'start',width:120,height:40,term:'xterm-256color'}]);
  term.cols=100; term.rows=30; term.onResize(100,30);
  expect(sent(socket,'control').length).toBe(1);
@@ -367,9 +379,9 @@ t('a resize between the start message and connected reaches the backend once con
 t('a focus request made while the terminal starts is honored for the active session once ready',async()=>{
  const env=await start(); const {terms,open,mgr}=env;
  open(); open('node/1');
- await sleep(150);
+ await idle(env);
  expect(terms.map(term=>term.focused)).toEqual([0,0]);
- terms.forEach(term=>term.resolveInit()); await sleep(0);
+ terms.forEach(term=>term.resolveInit()); await idle(env);
  expect(terms[1].focused).toBe(1);
  expect(terms[0].focused).toBe(0);
  mgr.closeAll();
@@ -378,7 +390,7 @@ t('a focus request made while the terminal starts is honored for the active sess
 t('the keyup of Ctrl+Shift+F6 never reaches the terminal input',async()=>{
  const env=await start(); const {w,d,terms,open,mgr}=env;
  open();
- const term=terms[0]; term.resolveInit(); await sleep(0);
+ const term=terms[0]; term.resolveInit(); await idle(env);
  const input=d.createElement('textarea'); term.element.appendChild(input);
  const reached=[]; input.addEventListener('keyup',e=>reached.push(e.key));
  const chord=new w.KeyboardEvent('keyup',{key:'F6',ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true});
@@ -393,12 +405,13 @@ t('the keyup of Ctrl+Shift+F6 never reaches the terminal input',async()=>{
 t('a reconnect stops the replaced connection from retrying',async()=>{
  const env=await start(); const {terms,sockets,open,mgr}=env;
  open();
- terms[0].resolveInit(); await sleep(0);
- mgr.reconnectSession(Array.from(mgr.sessions.keys())[0]);
- expect(sockets.length).toBe(2);
- // The replaced socket closes before any handshake, which would retry.
- sockets[0].onclose({code:1006});
- await sleep(1100);
+ terms[0].resolveInit(); await idle(env);
+ await advance(env.w,1100,()=>{
+  mgr.reconnectSession(Array.from(mgr.sessions.keys())[0]);
+  expect(sockets.length).toBe(2);
+  // The replaced socket closes before any handshake, which would retry.
+  sockets[0].onclose({code:1006});
+ });
  expect(sockets.length).toBe(2);
  mgr.closeAll();
 });

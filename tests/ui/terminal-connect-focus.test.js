@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -57,7 +57,7 @@ const start=async()=>{
   send(message){this.sent.push(JSON.parse(message));}
   close(code){this.readyState=3;this.closedWith=code;}
  };
- await sleep(60);
+ await idle(env);
  const mgr=w.TerminalManager;
  const open=(instance='node/0')=>mgr.openWithContext('blacksmith','broker',instance,'node','broker');
  const deliver=(socket,msg)=>socket.onmessage({data:JSON.stringify(msg)});
@@ -65,7 +65,7 @@ const start=async()=>{
   socket.readyState=1; socket.onopen();
   deliver(socket,{type:'handshake'});
   if(term && !term.ready) term.resolveInit();
-  await sleep(150);
+  await idle(env);
   deliver(socket,{type:'status',meta:{status:'connected'}});
  };
  const sent=(socket,type)=>socket.sent.filter(m=>m.type===type);
@@ -81,7 +81,7 @@ const KEY_A='blacksmith-broker-node/0';
 
 t('a session that connects while the dialog is open and active takes focus once',async()=>{
  const env=await start();const {terms,sockets,open,connect,mgr}=env;
- open('node/0');await connect(sockets[0],terms[0]);await sleep(150);
+ open('node/0');await connect(sockets[0],terms[0]);await idle(env);
  expect(terms[0].focused).toBeGreaterThan(0);
  expect(env.d.activeElement).toBe(terms[0].input);
  mgr.closeAll();
@@ -92,7 +92,7 @@ t('a session that connects while minimized does not take focus',async()=>{
  open('node/0');
  mgr.minimizeAll();
  const field=d.createElement('input');d.body.appendChild(field);field.focus();
- await connect(sockets[0],terms[0]);await sleep(200);
+ await connect(sockets[0],terms[0]);await idle(env);
  expect(terms[0].focused).toBe(0);
  expect(env.d.activeElement).toBe(field);
  mgr.closeAll();
@@ -100,11 +100,11 @@ t('a session that connects while minimized does not take focus',async()=>{
 
 t('a session that reconnects while minimized does not take focus',async()=>{
  const env=await start();const {terms,sockets,open,connect,mgr,d}=env;
- open('node/0');await connect(sockets[0],terms[0]);await sleep(150);
+ open('node/0');await connect(sockets[0],terms[0]);await idle(env);
  mgr.minimizeAll();
  const field=d.createElement('input');d.body.appendChild(field);field.focus();
  const before=terms[0].focused;
- await connect(sockets[0],terms[0]);await sleep(200);
+ await connect(sockets[0],terms[0]);await idle(env);
  expect(terms[0].focused).toBe(before);
  expect(d.activeElement).toBe(field);
  mgr.closeAll();
@@ -113,7 +113,7 @@ t('a session that reconnects while minimized does not take focus',async()=>{
 t('a background session in the open dialog does not take focus when it connects',async()=>{
  const env=await start();const {terms,sockets,open,connect,mgr}=env;
  open('node/0');open('node/1');
- await connect(sockets[0],terms[0]);await sleep(200);
+ await connect(sockets[0],terms[0]);await idle(env);
  expect(terms[0].focused).toBe(0);
  mgr.closeAll();
 });
@@ -123,11 +123,11 @@ t('a background session in the open dialog does not take focus when it connects'
 t('a focus asked for while the core loads is dropped when the dialog is minimized first',async()=>{
  const env=await start();const {terms,sockets,open,mgr,d}=env;
  open('node/0');
- await sleep(200);
+ await idle(env);
  mgr.minimizeAll();
  const field=d.createElement('input');d.body.appendChild(field);field.focus();
  terms[0].resolveInit();
- await sleep(50);
+ await idle(env);
  expect(terms[0].focused).toBe(0);
  expect(d.activeElement).toBe(field);
  mgr.closeAll();
@@ -136,9 +136,9 @@ t('a focus asked for while the core loads is dropped when the dialog is minimize
 t('a focus asked for while the core loads is honored when the dialog stays open',async()=>{
  const env=await start();const {terms,open,mgr,d}=env;
  open('node/0');
- await sleep(200);
+ await idle(env);
  terms[0].resolveInit();
- await sleep(50);
+ await idle(env);
  expect(terms[0].focused).toBeGreaterThan(0);
  expect(d.activeElement).toBe(terms[0].input);
  mgr.closeAll();

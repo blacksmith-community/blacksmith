@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -52,7 +52,7 @@ const start=async()=>{
   send(message){this.sent.push(JSON.parse(message));}
   close(code){this.readyState=3;this.closedWith=code;}
  };
- await sleep(60);
+ await idle(w);
  const mgr=w.TerminalManager;
  const open=(instance='node/0')=>mgr.openWithContext('blacksmith','broker',instance,'node','broker');
  const deliver=(socket,msg)=>socket.onmessage({data:JSON.stringify(msg)});
@@ -60,7 +60,7 @@ const start=async()=>{
   socket.readyState=1; socket.onopen();
   deliver(socket,{type:'handshake'});
   if(term && !term.ready) term.resolveInit();
-  await sleep(150);
+  await idle(w);
   deliver(socket,{type:'status',meta:{status:'connected'}});
  };
  const sent=(socket,type)=>socket.sent.filter(m=>m.type===type);
@@ -75,7 +75,7 @@ const THEMES=['theme-solarized-dark','theme-monokai','theme-light'];
 const items=(d)=>[...d.querySelectorAll('#terminal-scheme-menu [role="menuitemradio"]')];
 const item=(d,scheme)=>d.querySelector(`#terminal-scheme-menu [data-scheme="${scheme}"]`);
 const themeOf=(el)=>THEMES.filter(c=>el.classList.contains(c));
-const choose=async(d,scheme)=>{ item(d,scheme).click(); await sleep(40); };
+const choose=async(d,scheme)=>{ item(d,scheme).click(); await idle(d); };
 
 t('the palette button sits between Show VMs and maximize',async()=>{
  const {w,open}=await start();
@@ -167,14 +167,14 @@ t('Match console follows the console theme live',async()=>{
  expect(w.localStorage.getItem(KEY)).toBe('console');
  expect(themeOf(el())).toEqual(['theme-light']);
  d.documentElement.setAttribute('data-theme','dark');
- await sleep(40);
+ await idle(w);
  expect(themeOf(el())).toEqual([]);
  d.documentElement.removeAttribute('data-theme');
- await sleep(40);
+ await idle(w);
  expect(themeOf(el())).toEqual(['theme-light']);
  await choose(d,'monokai');
  d.documentElement.setAttribute('data-theme','dark');
- await sleep(40);
+ await idle(w);
  expect(themeOf(el())).toEqual(['theme-monokai']);
 });
 
@@ -196,12 +196,12 @@ t('Escape closes the menu and returns focus to the button',async()=>{
  open();
  const d=w.document;
  const b=d.getElementById('scheme-btn');
- b.click(); await sleep(60);
+ b.click(); await idle(w);
  expect(b.getAttribute('aria-expanded')).toBe('true');
  expect(d.activeElement.getAttribute('role')).toBe('menuitemradio');
  expect(d.activeElement.dataset.scheme).toBe('blacksmith');
  d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
- await sleep(60);
+ await idle(w);
  expect(b.getAttribute('aria-expanded')).toBe('false');
  expect(d.activeElement).toBe(b);
 });
@@ -210,7 +210,7 @@ t('the dialog leaves an Escape inside the menu uncanceled so the popover can clo
  const {w,open}=await start();
  open();
  const d=w.document;
- d.getElementById('scheme-btn').click(); await sleep(60);
+ d.getElementById('scheme-btn').click(); await idle(w);
  const inMenu=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});
  d.activeElement.dispatchEvent(inMenu);
  expect(inMenu.defaultPrevented).toBe(false);
@@ -226,7 +226,7 @@ t('Escape inside the menu moves focus to the active terminal before the popover 
  open();
  await connect(sockets[0],terms[0]);
  const d=w.document;
- d.getElementById('scheme-btn').click(); await sleep(60);
+ d.getElementById('scheme-btn').click(); await idle(w);
  const before=terms[0].focused;
  d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
  expect(terms[0].focused).toBeGreaterThan(before);
@@ -236,7 +236,7 @@ t('the arrow keys move between items and wrap',async()=>{
  const {w,open}=await start();
  open();
  const d=w.document;
- d.getElementById('scheme-btn').click(); await sleep(60);
+ d.getElementById('scheme-btn').click(); await idle(w);
  const key=(k)=>d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true}));
  key('ArrowDown'); expect(d.activeElement.dataset.scheme).toBe('solarized-dark');
  key('ArrowUp'); key('ArrowUp'); expect(d.activeElement.dataset.scheme).toBe('console');
@@ -250,9 +250,9 @@ t('choosing a scheme returns focus to the active terminal',async()=>{
  open();
  await connect(sockets[0],terms[0]);
  const d=w.document;
- d.getElementById('scheme-btn').click(); await sleep(60);
+ d.getElementById('scheme-btn').click(); await idle(w);
  const before=terms[0].focused;
- item(d,'light').click(); await sleep(80);
+ item(d,'light').click(); await idle(w);
  expect(terms[0].focused).toBeGreaterThan(before);
 });
 

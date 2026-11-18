@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
@@ -383,7 +383,7 @@ t('a failed session reconnects when the terminal library is missing, and stays f
  const env=await start(); const {d,sockets,open,mgr,w}=env;
  w.WTermLib=undefined;
  // Every attempt to load the library fails, as a missing script would.
- const missing=async()=>{ d.querySelector('script[src^="/vendor/wterm/"]').dispatchEvent(new w.Event('error')); await sleep(0); };
+ const missing=async()=>{ d.querySelector('script[src^="/vendor/wterm/"]').dispatchEvent(new w.Event('error')); await idle(w); };
  open(); await missing();
  expect(mgr.sessions.get(KEY_BK).status).toBe('failed');
  const count=sockets.length;

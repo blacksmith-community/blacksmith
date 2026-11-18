@@ -1,9 +1,9 @@
 const { test, expect } = require('bun:test');
 const fs = require('fs');
 const path = require('path');
-const { main: { boot } } = require('./certificates/harness.js');
+const { main: { boot, idle, TEST_LIMIT } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const UI = path.resolve(__dirname, '..', '..', 'ui');
 
@@ -85,7 +85,7 @@ t('a copy button that copies only the shown rows says so and announces the same 
     expect(button.getAttribute('aria-label')).toBe('Copy shown tasks');
     expect(button.title).toBe('Copy shown tasks');
     await w.copyTableRowsAsText('.tasks-table', { currentTarget: button });
-    await new Promise((r) => setTimeout(r, 120));
+    await idle(w);
     expect(copied.length).toBe(1);
     expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied shown tasks');
   } finally { w.close(); }

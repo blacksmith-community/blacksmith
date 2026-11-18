@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -24,7 +24,7 @@ const start=async(preset,opts={})=>{
  w.WTermLib={WTerm:class{constructor(el,o){if(opts.throwCtor) throw new Error('wterm: synthetic constructor failure');this.cols=80;this.rows=24;this.written=[];el.classList.add('wterm');terms.push(this);}init(){return opts.failInit?Promise.reject(new Error('wterm: failed to initialize: synthetic')):Promise.resolve(this);}focus(){}write(x){this.written.push(x);}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}send(m){this.sent.push(m);}close(){this.readyState=3;}};
  w.eval(OAT);
- await sleep(80);
+ await idle(w);
  const d=w.document;
  const tabs=()=>[...d.querySelectorAll('#terminal-tabs [role=tab]')].map(x=>x.textContent);
  const stored=()=>{ const raw=w.sessionStorage.getItem(KEY); return raw===null?null:JSON.parse(raw); };
@@ -56,7 +56,7 @@ t('the stored record holds only the allowed fields and no output',async()=>{
  open(env,0);
  env.sockets[0].readyState=1; env.sockets[0].onopen();
  env.sockets[0].onmessage({data:JSON.stringify({type:'output',data:'SECRET-OUTPUT-MARKER'})});
- await sleep(30);
+ await idle(env);
  const raw=env.w.sessionStorage.getItem(KEY);
  expect(raw).not.toContain('SECRET-OUTPUT-MARKER');
  const rec=JSON.parse(raw);
@@ -81,7 +81,7 @@ t('a reload restores the tabs disconnected, in order, in the bar and the dialog,
  expect(env.calls.filter(c=>c.includes('ssh')&&!c.includes('ui-terminal-status'))).toEqual([]);
  // The panel is a real, empty terminal with a short note.
  expect(env.terms.length).toBe(3);
- await sleep(30);
+ await idle(env);
  expect(env.terms[0].written.join('')).toContain('Select reconnect to start a new session.');
  // Restoring does not rewrite a different record.
  expect(env.stored().sessions.length).toBe(3);
@@ -100,7 +100,7 @@ t('reconnect on one restored tab connects only that tab and makes it active',asy
 
 t('a restored tab whose terminal cannot start is failed, offers reconnect, and connects nothing by itself',async()=>{
  const env=await start(record(['node/0'],'blacksmith-broker-node/0'),{failInit:true});
- await sleep(30);
+ await idle(env);
  const {d,w,mgr,sockets}=env;
  const key='blacksmith-broker-node/0';
  expect(mgr.sessions.get(key).status).toBe('failed');
@@ -118,7 +118,7 @@ t('a restored tab whose terminal cannot start is failed, offers reconnect, and c
 
 t('a restored tab whose terminal fails at once stays failed and says nothing about disconnecting',async()=>{
  const env=await start(record(['node/0'],'blacksmith-broker-node/0'),{throwCtor:true});
- await sleep(30);
+ await idle(env);
  const {d,mgr,sockets}=env;
  const session=mgr.sessions.get('blacksmith-broker-node/0');
  expect(session.failed).toBe(true);
@@ -134,7 +134,7 @@ t('a reconnect to a target that is gone fails through the close path without thr
  env.d.querySelector('#terminal-tabs button.terminal-reconnect').click();
  env.sockets[0].onerror({message:'x'});
  env.sockets[0].onclose({code:1006});
- await sleep(30);
+ await idle(env);
  expect(env.mgr.sessions.get('blacksmith-broker-node/0').status).toBe('disconnected');
 });
 
@@ -154,7 +154,7 @@ t('blocked storage restores no tabs and does not break opening a session',async(
  w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');}init(){return Promise.resolve(this);}focus(){}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(){this.readyState=0;}send(){}close(){}};
  w.eval(OAT);
- await sleep(80);
+ await idle(w);
  expect(w.TerminalManager.sessions.size).toBe(0);
  w.TerminalManager.openWithContext('blacksmith','broker','node/0','node','broker');
  expect(w.TerminalManager.sessions.size).toBe(1);
