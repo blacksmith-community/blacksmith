@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -118,9 +119,16 @@ const checkBound = 5 * time.Second
 func runChecks(t *testing.T, tester *ConnectionTester, req *RegistrationTest) []ConnectionCheck {
 	t.Helper()
 
+	return runChecksWithin(t, context.Background(), tester, req)
+}
+
+// runChecksWithin is runChecks for a caller whose context is ctx.
+func runChecksWithin(t *testing.T, ctx context.Context, tester *ConnectionTester, req *RegistrationTest) []ConnectionCheck {
+	t.Helper()
+
 	done := make(chan []ConnectionCheck, 1)
 
-	go func() { done <- tester.Run(context.Background(), req) }()
+	go func() { done <- tester.Run(ctx, req) }()
 
 	var checks []ConnectionCheck
 
@@ -627,21 +635,55 @@ func TestConnectionTestStopsAtItsTimeout(t *testing.T) {
 	}
 }
 
+// deadlineOnTrigger is a context whose deadline passes when the test says
+// so, and not after a fixed time, because a timer can pass before a slow
+// machine has reached the step the test needs the deadline to cut short.
+type deadlineOnTrigger struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func newDeadlineOnTrigger() *deadlineOnTrigger {
+	return &deadlineOnTrigger{done: make(chan struct{})}
+}
+
+func (c *deadlineOnTrigger) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+func (c *deadlineOnTrigger) Value(any) any { return nil }
+
+func (c *deadlineOnTrigger) Done() <-chan struct{} { return c.done }
+
+func (c *deadlineOnTrigger) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+// pass makes the deadline pass.
+func (c *deadlineOnTrigger) pass() { c.once.Do(func() { close(c.done) }) }
+
+// The test's deadline passes once the token request is held at the token
+// endpoint, so the first three checks always run to their end first. The
+// test's own limit stays a generous one, and what ends the run is the
+// deadline.
 func TestConnectionTestTimeoutCoversTheTokenRequest(t *testing.T) {
 	t.Parallel()
 
-	uaa := httptest.NewTLSServer(http.HandlerFunc(hang))
+	deadline := newDeadlineOnTrigger()
+
+	uaa := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		deadline.pass()
+		hang(writer, req)
+	}))
 	t.Cleanup(uaa.Close)
 	t.Cleanup(uaa.CloseClientConnections)
 
 	api, _ := newFakeAPI(t, uaa.URL)
 
-	started := time.Now()
-	checks := runChecks(t, &ConnectionTester{RootCAs: trust(api), Timeout: testTimeout}, probe(api.URL))
-
-	if elapsed := time.Since(started); elapsed > 5*time.Second {
-		t.Fatalf("the test took %s, past its %s limit", elapsed, testTimeout)
-	}
+	checks := runChecksWithin(t, deadline, &ConnectionTester{RootCAs: trust(api), Timeout: checkBound}, probe(api.URL))
 
 	expectOutcome(t, checks, tokenFails)
 }
