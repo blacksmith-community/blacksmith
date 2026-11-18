@@ -2394,16 +2394,18 @@ func (b *Broker) readDeploymentCreds(ctx context.Context, instanceID string, pla
 
 // recordedDeploymentName names the deployment of instanceID by the name its
 // index entry records. After a plan change the deployment keeps the name
-// it was created under, so planID mints the name only for an entry that
-// records none or an instance the index doesn't have. An index that can't
-// be read fails the lookup rather than guess at a deployment.
+// it was created under, so the name is minted only for an entry that
+// records none, from the plan the entry records. planID, the plan of the
+// request, mints it for an instance the index doesn't have and for an
+// entry that records neither a name nor a plan. An index that can't be
+// read fails the lookup rather than guess at a deployment.
 func (b *Broker) recordedDeploymentName(ctx context.Context, instanceID, planID string) (string, error) {
 	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
 	if err != nil {
 		return "", fmt.Errorf("could not read the index entry of instance %s to name its deployment: %w", instanceID, err)
 	}
 
-	if !exists {
+	if !exists || (instance.DeploymentName == "" && instance.PlanID == "") {
 		return vaultPkg.MintDeploymentName(planID, instanceID), nil
 	}
 

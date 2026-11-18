@@ -81,6 +81,15 @@ func requireRecordedNameRead(t *testing.T, reader string, vaultClient *internalV
 
 	instanceID, recorded := recordedNameInstance(reader)
 
+	requireCredentialReadOf(t, reader, instanceID, recorded, vaultClient, plan)
+}
+
+// requireCredentialReadOf runs one credential reader for instanceID and
+// fails the test unless every deployment it asked the director for is
+// want.
+func requireCredentialReadOf(t *testing.T, reader, instanceID, want string, vaultClient *internalVault.Vault, plan services.Plan) {
+	t.Helper()
+
 	var (
 		askedLock sync.Mutex
 		asked     []string
@@ -112,8 +121,8 @@ func requireRecordedNameRead(t *testing.T, reader string, vaultClient *internalV
 	}
 
 	for _, deployment := range asked {
-		if deployment != recorded {
-			t.Errorf("the %s path asked for the VMs of %q, want the recorded deployment %q", reader, deployment, recorded)
+		if deployment != want {
+			t.Errorf("the %s path asked for the VMs of %q, want deployment %q", reader, deployment, want)
 		}
 	}
 }
@@ -187,6 +196,45 @@ func TestDeploymentName_ReadsRecordedName(t *testing.T) {
 			t.Parallel()
 
 			requireRecordedNameSite(t, site, vaultClient)
+		})
+	}
+}
+
+// An index entry that records neither a deployment name nor a plan gives
+// no name to read, so every credential reader names the deployment from
+// the plan of the request, as it did before it read the index, and not
+// "-<instance>", which no deployment is named.
+func TestDeploymentName_FallsBackToTheRequestPlan(t *testing.T) {
+	t.Parallel()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start Vault: %v", err)
+	}
+
+	t.Cleanup(server.Close)
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+
+	service := &services.Service{ID: recordedNameService, Name: recordedNameService}
+	plan := services.Plan{ID: recordedNameCurrent, Name: recordedNameCurrent, Service: service}
+
+	for reader := range (&broker.Broker{}).CredentialReaders() {
+		instanceID := "unnamed-" + strings.ReplaceAll(reader, " ", "-")
+
+		err = vaultClient.Index(context.Background(), instanceID, map[string]interface{}{serviceIDKey: recordedNameService})
+		if err != nil {
+			t.Fatalf("failed to index the instance: %v", err)
+		}
+	}
+
+	for reader := range (&broker.Broker{}).CredentialReaders() {
+		t.Run(reader, func(t *testing.T) {
+			t.Parallel()
+
+			instanceID := "unnamed-" + strings.ReplaceAll(reader, " ", "-")
+
+			requireCredentialReadOf(t, reader, instanceID, recordedNameCurrent+"-"+instanceID, vaultClient, plan)
 		})
 	}
 }
