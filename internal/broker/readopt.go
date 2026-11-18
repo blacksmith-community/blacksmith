@@ -212,6 +212,10 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	logger.Info("Re-adoption listed %d folders, read %d records, claimed %d operations, and found %d finished records to mark and %d failed provisions owing their cleanup, in %v",
 		listed, len(candidates), len(claimed), len(migrations), len(cleanups), time.Since(started).Round(time.Millisecond))
 
+	for _, cleanup := range cleanups {
+		b.noteOwedCleanup(cleanup.instanceID)
+	}
+
 	if len(cleanups) > 0 {
 		b.track("cleanup of failed deployments owed at start", func() { //nolint:contextcheck // the cleanups outlive the boot call and run under the service context
 			b.runOwedCleanups(cleanups, logger)
@@ -1035,6 +1039,10 @@ func (b *Broker) writeReadoptedFailure(ctx context.Context, instanceID string, c
 		logger.Error("The failure of the %s of instance %s was not recorded: %s", current.Action, instanceID, err)
 
 		return false
+	}
+
+	if current.Action == operationTypeProvision {
+		b.noteOwedCleanup(instanceID)
 	}
 
 	return true

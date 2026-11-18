@@ -237,6 +237,9 @@ type Broker struct {
 	// cleanupAttention holds an interfaces.CleanupAttention for each
 	// instance whose owed cleanup was refused, keyed by instance ID.
 	cleanupAttention sync.Map
+
+	// sweep is the state the sweep of owed cleanups keeps between passes.
+	sweep cleanupSweep
 }
 
 // operationClaim is the claim an operation holds on an instance ID in
@@ -4194,6 +4197,10 @@ func (b *Broker) recordProvisionFailed(ctx context.Context, instanceID string, r
 	defer cancel()
 
 	err := b.Vault.TrackFailedCleanupPending(recordCtx, instanceID, operationTypeProvision, description, recorded.ContextID, taskID)
+	if err == nil || errors.Is(err, internalVault.ErrHistoryNotAppended) {
+		b.noteOwedCleanup(instanceID)
+	}
+
 	if err == nil {
 		return osbapi.LastOperationResponse{}, true
 	}
@@ -4319,6 +4326,10 @@ func (b *Broker) resumeOwedCleanup(ctx context.Context, instanceID, deploymentNa
 func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout())
 	defer cancel()
+
+	// Whatever this cleanup does, the sweep reads the record on its next
+	// pass, and tries the cleanup again while the record owes it.
+	b.noteOwedCleanup(instanceID)
 
 	unlock, err := b.lockSettle(cleanupCtx, instanceID)
 	if err != nil {

@@ -614,3 +614,25 @@ func SetDeprovisionSettleWait(d time.Duration) func() {
 
 	return func() { deprovisionSettleWaitOverride.Store(previous) }
 }
+
+// SweepOwedCleanupsOnce runs one pass of the sweep of owed cleanups, with
+// interval as the interval between passes.
+func (b *Broker) SweepOwedCleanupsOnce(ctx context.Context, interval time.Duration) {
+	b.sweepOwedCleanupsOnce(ctx, interval, logger.Get().Named("cleanup-sweep"))
+}
+
+// SetSweepClock replaces the clock the sweep of owed cleanups reads.
+func (b *Broker) SetSweepClock(clock func() time.Time) {
+	b.sweep.mu.Lock()
+	defer b.sweep.mu.Unlock()
+
+	b.sweep.clock = clock
+}
+
+// OwedCleanupSuspects returns the instances a pass of the sweep reads
+// between full scans.
+func (b *Broker) OwedCleanupSuspects() []string {
+	ids, _ := b.sweep.snapshot()
+
+	return ids
+}

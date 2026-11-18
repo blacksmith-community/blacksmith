@@ -2,11 +2,15 @@ package broker
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/settings"
 	"blacksmith/pkg/logger"
+	vaultPkg "blacksmith/pkg/vault"
 )
 
 const (
@@ -18,6 +22,10 @@ const (
 	// cleanupSweepMaxBackoff is the longest the sweep waits before it
 	// tries one instance's cleanup again.
 	cleanupSweepMaxBackoff = 6 * time.Hour
+
+	// cleanupSweepFullScanInterval is how often the sweep reads every
+	// instance's record rather than only the suspects'.
+	cleanupSweepFullScanInterval = 6 * time.Hour
 )
 
 // cleanupRetryIntervalOverride, when positive, replaces the interval the
@@ -33,18 +41,102 @@ type owedRetry struct {
 	next  time.Time
 }
 
+// cleanupSweep is the state the sweep of owed cleanups keeps between
+// passes. Its zero value is ready to use.
+//
+// suspects holds the instances that may owe a cleanup: every instance
+// whose failed provision was recorded with the mark, whose cleanup ran,
+// or that boot found owing one. A pass reads only their records, and
+// drops each one whose record no longer owes a cleanup. A full scan of
+// the index, the listing, and every record runs on the first pass and
+// then every cleanupSweepFullScanInterval, so an instance a suspect entry
+// missed waits at most that long.
+type cleanupSweep struct {
+	// pass serializes passes, and guards everything below mu's fields.
+	pass     sync.Mutex
+	lastFull time.Time
+	retries  map[string]*owedRetry
+
+	mu       sync.Mutex
+	suspects map[string]uint64
+	noted    uint64
+	clock    func() time.Time
+}
+
+// now reads the sweep's clock, which a spec may replace.
+func (s *cleanupSweep) now() time.Time {
+	s.mu.Lock()
+	clock := s.clock
+	s.mu.Unlock()
+
+	if clock == nil {
+		return time.Now()
+	}
+
+	return clock()
+}
+
+// note adds instanceID to the suspects.
+func (s *cleanupSweep) note(instanceID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.suspects == nil {
+		s.suspects = map[string]uint64{}
+	}
+
+	s.noted++
+	s.suspects[instanceID] = s.noted
+}
+
+// snapshot returns the suspects, sorted, with the note each was last
+// added under.
+func (s *cleanupSweep) snapshot() ([]string, map[string]uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	notes := make(map[string]uint64, len(s.suspects))
+	ids := make([]string, 0, len(s.suspects))
+
+	for instanceID, note := range s.suspects {
+		notes[instanceID] = note
+		ids = append(ids, instanceID)
+	}
+
+	sort.Strings(ids)
+
+	return ids, notes
+}
+
+// drop removes instanceID from the suspects, unless it was added again
+// since the snapshot that gave note.
+func (s *cleanupSweep) drop(instanceID string, note uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.suspects[instanceID] == note {
+		delete(s.suspects, instanceID)
+	}
+}
+
+// noteOwedCleanup tells the sweep that instanceID may owe a cleanup.
+func (b *Broker) noteOwedCleanup(instanceID string) {
+	b.sweep.note(instanceID)
+}
+
 // StartOwedCleanupSweep starts the sweep that tries again the cleanups
 // failed provisions still owe, such as one whose delete the director
 // refused or did not answer in time. The sweep runs until the service
 // context ends, and the shutdown waits for it. With no director there is
 // nothing to sweep.
 //
-// Each pass reads the index, the listing, and every record, and runs the
-// cleanup of each failed provision whose record still owes one, as a start
-// does. The cleanup reads the record again under the settle lock, so a
-// cleanup that a poll or a start ran first deletes nothing more. An
-// instance whose cleanup the sweep tried and that still owes it waits
-// twice as long each time, up to cleanupSweepMaxBackoff.
+// Each pass reads the records of the suspects, or of every instance on a
+// full scan, and runs the cleanup of each failed provision whose record
+// still owes one, as a start does. The cleanup reads the record again
+// under the settle lock, so a cleanup that a poll or a start ran first
+// deletes nothing more. An instance whose cleanup the sweep tried and
+// that still owes it waits twice as long each time, up to
+// cleanupSweepMaxBackoff.
 func (b *Broker) StartOwedCleanupSweep() {
 	if b.BOSH == nil {
 		return
@@ -59,7 +151,6 @@ func (b *Broker) StartOwedCleanupSweep() {
 func (b *Broker) sweepOwedCleanups() {
 	ctx := b.serviceContext()
 	logger := logger.Get().Named("cleanup-sweep")
-	retries := map[string]*owedRetry{}
 
 	for {
 		interval := b.cleanupRetryInterval(ctx, logger)
@@ -73,20 +164,44 @@ func (b *Broker) sweepOwedCleanups() {
 		case <-timer.C:
 		}
 
-		b.sweepOwedCleanupsOnce(ctx, interval, retries, logger)
+		b.sweepOwedCleanupsOnce(ctx, interval, logger)
 	}
 }
 
-// sweepOwedCleanupsOnce runs one pass. It forgets the retries of every
-// instance that no longer owes a cleanup, and runs each owed cleanup whose
-// backoff has passed.
-func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Duration, retries map[string]*owedRetry, logger logger.Logger) {
+// sweepOwedCleanupsOnce runs one pass. It reads the records of the
+// suspects, or of every instance when a full scan is due, forgets the
+// retries and the suspects of every instance read that no longer owes a
+// cleanup, and runs each owed cleanup whose backoff has passed.
+func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Duration, logger logger.Logger) {
+	sweep := &b.sweep
+
+	sweep.pass.Lock()
+	defer sweep.pass.Unlock()
+
+	if sweep.retries == nil {
+		sweep.retries = map[string]*owedRetry{}
+	}
+
+	now := sweep.now()
+	full := sweep.lastFull.IsZero() || now.Sub(sweep.lastFull) >= cleanupSweepFullScanInterval
+
 	passCtx, cancel := context.WithTimeout(ctx, cleanupSweepPassTimeout)
 	defer cancel()
 
 	store := b.readoptVaultStore()
+	suspects, notes := sweep.snapshot()
 
-	candidates, _, err := readoptListOnce(passCtx, store)
+	var (
+		candidates []*readoptCandidate
+		err        error
+	)
+
+	if full {
+		candidates, _, err = readoptListOnce(passCtx, store)
+	} else {
+		candidates, err = suspectCandidates(passCtx, store, suspects)
+	}
+
 	if err != nil {
 		logger.Warning("The sweep of owed cleanups could not read the instances from Vault, and reads them again in %v: %s", interval, err)
 
@@ -100,6 +215,10 @@ func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 		return
 	}
 
+	if full {
+		sweep.lastFull = now
+	}
+
 	cleanups := owedCleanups(candidates, logger)
 
 	owed := make(map[string]bool, len(cleanups))
@@ -107,33 +226,97 @@ func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 		owed[cleanup.instanceID] = true
 	}
 
-	for instanceID := range retries {
-		if !owed[instanceID] {
-			delete(retries, instanceID)
-		}
-	}
+	b.forgetSettledSuspects(candidates, owed, notes, full)
 
 	for _, cleanup := range cleanups {
 		if ctx.Err() != nil {
 			return
 		}
 
-		retry := retries[cleanup.instanceID]
-		if retry != nil && time.Now().Before(retry.next) {
+		retry := sweep.retries[cleanup.instanceID]
+		if retry != nil && now.Before(retry.next) {
 			continue
 		}
 
 		if retry == nil {
 			retry = &owedRetry{}
-			retries[cleanup.instanceID] = retry
+			sweep.retries[cleanup.instanceID] = retry
 		}
 
 		retry.tries++
-		retry.next = time.Now().Add(owedRetryBackoff(interval, retry.tries))
+		retry.next = now.Add(owedRetryBackoff(interval, retry.tries))
 
 		logger.Info("Instance %s: its failed provision still owes the delete of deployment %s, so the sweep tries the cleanup again", cleanup.instanceID, cleanup.deploymentName)
 		b.cleanupFailedDeployment(ctx, cleanup.instanceID, cleanup.deploymentName, logger)
 	}
+}
+
+// forgetSettledSuspects drops the suspects, the retries, and the
+// overview's attention entries of every instance the pass read that no
+// longer owes a cleanup. A full scan read every instance, so it also
+// drops those of an instance it did not find.
+func (b *Broker) forgetSettledSuspects(candidates []*readoptCandidate, owed map[string]bool, notes map[string]uint64, full bool) {
+	read := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		read[candidate.instanceID] = true
+	}
+
+	settled := func(instanceID string) bool {
+		return !owed[instanceID] && (full || read[instanceID])
+	}
+
+	for instanceID, note := range notes {
+		if settled(instanceID) {
+			b.sweep.drop(instanceID, note)
+		}
+	}
+
+	for instanceID := range b.sweep.retries {
+		if settled(instanceID) {
+			delete(b.sweep.retries, instanceID)
+		}
+	}
+
+	for _, entry := range b.CleanupAttention() {
+		if settled(entry.InstanceID) {
+			b.forgetCleanupAttention(entry.InstanceID)
+		}
+	}
+}
+
+// suspectCandidates reads the index and returns a candidate for each
+// suspect, indexed when the index names it.
+func suspectCandidates(ctx context.Context, store readoptStore, suspects []string) ([]*readoptCandidate, error) {
+	if len(suspects) == 0 {
+		return nil, nil
+	}
+
+	idx, err := store.GetIndex(ctx, "db")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the instance index: %w", err)
+	}
+
+	candidates := make([]*readoptCandidate, 0, len(suspects))
+
+	for _, instanceID := range suspects {
+		raw, indexed := idx.Data[instanceID]
+		if !indexed || raw == nil {
+			candidates = append(candidates, &readoptCandidate{instanceID: instanceID})
+
+			continue
+		}
+
+		entry := copyIndexEntry(raw)
+
+		candidates = append(candidates, &readoptCandidate{
+			instanceID:     instanceID,
+			indexed:        true,
+			entry:          entry,
+			deploymentName: vaultPkg.EntryDeploymentName(instanceID, entry),
+		})
+	}
+
+	return candidates, nil
 }
 
 // owedRetryBackoff is how long the sweep waits after its tries-th try of

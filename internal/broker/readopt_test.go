@@ -1026,24 +1026,74 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 	})
 
 	It("the cleanup sweep backs off from a cleanup the director keeps refusing", func() {
-		restore = append(restore, broker.SetCleanupRetryInterval(50*time.Millisecond))
-
 		indexInstance(nil)
 		Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
 
 		director.DeleteDeploymentFn = func(string) (*bosh.Task, error) { return nil, errDirectorUnreachable }
 
-		newBroker(director).StartOwedCleanupSweep()
+		brokerInstance := newBroker(director)
+		now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 
-		// Passes run every 50ms, and the tries wait 50, 100, 200, and
-		// 400ms after each other, so about four of the 24 passes in 1.2s
-		// try the cleanup.
-		Eventually(func() []string { return director.Calls(directorDeleteDeployment) }, 10*time.Second).ShouldNot(BeEmpty())
-		time.Sleep(1200 * time.Millisecond)
+		brokerInstance.SetSweepClock(func() time.Time { return now })
 
-		tries := len(director.Calls(directorDeleteDeployment))
-		Expect(tries).To(BeNumerically(">=", 2))
-		Expect(tries).To(BeNumerically("<=", 7), "the sweep must back off rather than try on every pass")
+		// Passes run a minute apart for fifteen minutes, and the tries
+		// wait 1, 2, 4, and 8 minutes after each other, so the passes at
+		// 0, 1, 3, 7, and 15 minutes try the cleanup.
+		for range 16 {
+			brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+			now = now.Add(time.Minute)
+		}
+
+		Expect(director.Calls(directorDeleteDeployment)).To(HaveLen(5), "the sweep must back off rather than try on every pass")
+		Expect(recorded().CleanupPending).To(BeTrue())
+	})
+
+	It("the cleanup sweep reads only the suspects between full scans, and a full scan finds an owed cleanup no suspect names", func() {
+		indexInstance(nil)
+
+		brokerInstance := newBroker(director)
+		now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+
+		brokerInstance.SetSweepClock(func() time.Time { return now })
+
+		// The first pass is a full scan, and finds nothing owed.
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		Expect(brokerInstance.OwedCleanupSuspects()).To(BeEmpty())
+
+		// A record written behind the broker's back is no suspect, so the
+		// passes before the next full scan do not read it.
+		Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
+
+		now = now.Add(time.Minute)
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+		now = now.Add(6*time.Hour - 2*time.Minute)
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		Expect(director.Calls(directorDeleteDeployment)).To(BeEmpty())
+
+		now = now.Add(time.Minute)
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		Expect(director.Calls(directorDeleteDeployment)).To(Equal([]string{deploymentName}))
+		Expect(recorded().CleanupPending).To(BeFalse())
+
+		// The cleanup made the instance a suspect, and the next pass
+		// finds it owes nothing and drops it.
+		Expect(brokerInstance.OwedCleanupSuspects()).To(Equal([]string{instanceID}))
+
+		now = now.Add(time.Minute)
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		Expect(brokerInstance.OwedCleanupSuspects()).To(BeEmpty())
+	})
+
+	It("boot makes each owed cleanup it finds a suspect, so the sweep's passes between full scans read it", func() {
+		indexInstance(nil)
+		Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
+
+		director.DeleteDeploymentFn = func(string) (*bosh.Task, error) { return nil, errDirectorUnreachable }
+
+		brokerInstance := boot(director)
+		Expect(brokerInstance.OwedCleanupSuspects()).To(ContainElement(instanceID))
+		Eventually(func() []string { return director.Calls(directorDeleteDeployment) }, 10*time.Second).Should(HaveLen(1))
 		Expect(recorded().CleanupPending).To(BeTrue())
 	})
 
