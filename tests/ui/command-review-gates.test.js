@@ -1,8 +1,8 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {expectNoAlerts}=require('./certificates/no-alerts.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const SECRET='echo SECRET-COMMAND-TEXT-7731';
 const KEY='key-SECRET-CREDENTIAL-8841';
@@ -40,12 +40,12 @@ async function setup(routes={}){
    return answer(routes.create||[201,{id:'task-1'}],o,j);
   }]);
  w.plansData={services:[{id:'valkey',name:'valkey'}]};
- await sleep(30);
+ await idle(w);
  w.serviceInstances={
   'val-a':{service_id:'valkey',plan_id:'small',plan:{id:'small',name:'small'}},
   'val-b':{service_id:'valkey',plan_id:'small',plan:{id:'small',name:'small'}}
  };
- await w.__T.initUpgradeTab();await sleep(10);
+ await w.__T.initUpgradeTab();await idle(w);
  return {...env,requests};
 }
 const type=(w,el,value)=>{el.value=value;el.dispatchEvent(new w.Event('input',{bubbles:true}));};
@@ -56,14 +56,14 @@ async function openInstances(env,ids=['val-a'],text=SECRET){
  w.__T.setBatchStep(1,false);
  type(w,d.getElementById('command-text'),text);
  w.__T.setBatchStep(2,false);
- await sleep(5);
+ await idle(w);
  ids.forEach(id=>pick(d,id));
 }
 // Clicks Next from the instance step and waits for the review to settle.
 async function review(env,ids,text){
  await openInstances(env,ids,text);
  env.d.getElementById('batch-flow-next').click();
- await sleep(20);
+ await idle(env);
 }
 const ack=(env,value)=>type(env.w,env.d.getElementById('batch-flow-ack'),value);
 const next=(env)=>env.d.getElementById('batch-flow-next');

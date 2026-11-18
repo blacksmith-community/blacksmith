@@ -1,8 +1,8 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {expectNoAlerts}=require('./certificates/no-alerts.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const AVAILABILITY_URL='/b/upgrade/commands/availability';
 const envs=[];
@@ -20,8 +20,8 @@ async function setup(limit){
   if(limit!==null) body.max_in_flight_limit=limit;
   return j(200,body);
  }]);
- await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
- await w.__T.initUpgradeTab();await sleep(10);
+ await idle(w);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await w.__T.initUpgradeTab();await idle(w);
  await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
  return env;
 }
@@ -138,13 +138,13 @@ t('a value held when a lower availability limit arrives late falls back with a n
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
  w.__routes.push([AVAILABILITY_URL,async(u,o,j)=>{await gate;return j(200,{enabled:true,allow_root:true,max_in_flight_limit:2});}]);
  try{
- await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
- await w.__T.initUpgradeTab();await sleep(10);
+ await idle(w);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await w.__T.initUpgradeTab();await idle(w);
  await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
  d.getElementById('command-parallel').click();
  d.getElementById('command-max-in-flight-3').click();
  expect(w.__T.commandState.maxInFlight).toBe('3');
- release();await sleep(30);
+ release();await idle(w);
  expect(radios(d).map(r=>r.value)).toEqual(['1','2']);
  expect(w.__T.commandState.maxInFlight).toBe('2');
  expect(checked(d)).toBe('2');
@@ -160,7 +160,7 @@ t('rebuilding the options builds the select once, not twice',async()=>{
  const watch=new w.MutationObserver((records)=>records.forEach((r)=>r.addedNodes.forEach((n)=>{ if(n.querySelectorAll) built+=(n.tagName==='SELECT'&&n.id==='command-max-in-flight-select'?1:0)+n.querySelectorAll('#command-max-in-flight-select').length; })));
  watch.observe(d.body,{childList:true,subtree:true});
  await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
- await sleep(10);
+ await idle(w);
  expect(selectOf(d)).not.toBeNull();
  expect(built).toBe(1);
  watch.disconnect();
