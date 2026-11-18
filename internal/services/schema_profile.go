@@ -50,7 +50,7 @@ import (
 // refusal names them.
 const profileKeywords = "$schema, $ref, definitions, type, properties, required, additionalProperties, items, " +
 	"enum, default, title, description, format, pattern, minimum, maximum, exclusiveMinimum, exclusiveMaximum, " +
-	"minLength, maxLength, minItems, maxItems, and uniqueItems"
+	"multipleOf, minLength, maxLength, minItems, maxItems, uniqueItems, minProperties, and maxProperties"
 
 // Keywords the profile gives a structure of its own.
 const (
@@ -247,7 +247,11 @@ func valueMember(key string, value any, path string) error {
 	case "exclusiveMinimum", "exclusiveMaximum", "uniqueItems":
 		_, valid = value.(bool)
 		problem, fix = "is not true or false", "write it as true or false"
-	case "minLength", "maxLength", "minItems", "maxItems":
+	case "multipleOf":
+		number, isNumber := value.(json.Number)
+		valid = isNumber && isPositiveNumber(number)
+		problem, fix = "is not a number greater than 0", "write it as a JSON number above 0"
+	case "minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties":
 		number, isNumber := value.(json.Number)
 		valid = isNumber && isRubyInteger(number) && !strings.HasPrefix(string(number), "-")
 		problem, fix = "is not an integer of at least 0", "write it as a whole number of 0 or more, with no decimal point or exponent"
@@ -261,6 +265,20 @@ func valueMember(key string, value any, path string) error {
 	}
 
 	return nil
+}
+
+// isPositiveNumber reports whether number, as JSON writes it, is above 0,
+// which it is when it has no minus sign and a digit other than 0 before
+// any exponent.
+func isPositiveNumber(number json.Number) bool {
+	text := string(number)
+	if strings.HasPrefix(text, "-") {
+		return false
+	}
+
+	mantissa, _, _ := strings.Cut(strings.ToLower(text), "e")
+
+	return strings.ContainsAny(mantissa, "123456789")
 }
 
 // unsupportedKeywordFix is what to do instead of a keyword outside the

@@ -294,10 +294,10 @@ const (
 // the profile's listed three times so that most draws stay inside it.
 func generatorKeywords() []string {
 	profile := strings.Fields(`type properties required additionalProperties items enum default title description
-		format pattern minimum maximum exclusiveMinimum exclusiveMaximum minLength maxLength minItems maxItems
-		uniqueItems $ref`)
+		format pattern minimum maximum exclusiveMinimum exclusiveMaximum multipleOf minLength maxLength minItems
+		maxItems uniqueItems minProperties maxProperties $ref`)
 	others := strings.Fields(`id $schema definitions patternProperties allOf anyOf oneOf not dependencies
-		additionalItems multipleOf extends disallow x-ui`)
+		additionalItems extends disallow x-ui`)
 
 	return append(append(append(append([]string{}, profile...), profile...), profile...), others...)
 }
@@ -471,7 +471,7 @@ func (g *schemaGenerator) plainValue(key string) any {
 		}
 
 		return g.chance(2)
-	case "minLength", "maxLength", "minItems", "maxItems":
+	case "minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties":
 		return g.pickAny([]any{0, 1, 5, 64, -1, 1.5, 1e300})
 	default:
 		if g.chance(25) {
@@ -515,7 +515,7 @@ func (g *schemaGenerator) list(member func() any) []any {
 }
 
 func (g *schemaGenerator) number() any {
-	return g.pickAny([]any{0, 1, -3, 2.5, 0.1, 1e300, -1e-7, "1"})
+	return g.pickAny([]any{0, 1, -3, 2.5, 0.1, 0.01, 1e300, 1e-7, -1e-7, "1"})
 }
 
 func (g *schemaGenerator) data() any {

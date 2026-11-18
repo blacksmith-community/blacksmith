@@ -128,7 +128,6 @@ func profileCases() []profileCase {
 		{"extends", draft4(`"extends": "https://example.com/base.json"`), services.ErrPlanSchemaUnsupported},
 		{"disallow", draft4(`"disallow": "string"`), services.ErrPlanSchemaUnsupported},
 		{"additional-items", draft4(`"additionalItems": false`), services.ErrPlanSchemaUnsupported},
-		{"multiple-of", draft4(`"multipleOf": 2`), services.ErrPlanSchemaUnsupported},
 		{"unknown-keyword", draft4(`"properties": {"a": {"x-display": "Name"}}`), services.ErrPlanSchemaUnsupported},
 		{"items-array", draft4(`"items": [{"type": "string"}]`), services.ErrPlanSchemaUnsupported},
 
@@ -146,6 +145,14 @@ func profileCases() []profileCase {
 		{"negative-max-items", draft4(`"maxItems": -1`), services.ErrPlanSchemaInvalid},
 		{"large-max-length", draft4(`"maxLength": 1e300`), services.ErrPlanSchemaInvalid},
 		{"string-minimum", draft4(`"minimum": "1"`), services.ErrPlanSchemaInvalid},
+		{"property-counts", draft4(`"type": "object", "minProperties": 1, "maxProperties": 1e1`), nil},
+		{"negative-min-properties", draft4(`"minProperties": -1`), services.ErrPlanSchemaInvalid},
+		{"decimal-max-properties", draft4(`"maxProperties": 2.5`), services.ErrPlanSchemaInvalid},
+		{"multiple-of", draft4(`"properties": {"a": {"type": "number", "multipleOf": 0.01}, "b": {"multipleOf": 1e-7},
+			"c": {"multipleOf": 3}}`), nil},
+		{"zero-multiple-of", draft4(`"multipleOf": 0.0`), services.ErrPlanSchemaInvalid},
+		{"negative-multiple-of", draft4(`"multipleOf": -2`), services.ErrPlanSchemaInvalid},
+		{"string-multiple-of", draft4(`"multipleOf": "2"`), services.ErrPlanSchemaInvalid},
 		{"unknown-type", draft4(`"type": "any"`), services.ErrPlanSchemaInvalid},
 		{"repeated-type", draft4(`"type": ["string", "string"]`), services.ErrPlanSchemaInvalid},
 		{"type-list", draft4(`"type": ["string", "null"]`), nil},
@@ -255,6 +262,7 @@ func TestValidateParameterSchema_NamesTheMember(t *testing.T) {
 	for schema, want := range map[string]string{
 		draft4(`"properties": {"a": {"minLength": -1}}`): "/properties/a/minLength is not an integer of at least 0",
 		draft4(`"enum": []`):                             "/enum is not an array of at least one unique value",
+		draft4(`"multipleOf": 0`):                        "/multipleOf is not a number greater than 0, so write it as a JSON number above 0",
 		draft4(`"id": "http://example.com/valkey-params", "$ref": "#/definitions/tls", "definitions": {"tls": {}}`): "/id is an id, " +
 			"so remove it, because Cloud Controller resolves references through ids it cached from earlier schemas",
 		draft4(`"properties": {"a/b": {"patternProperties": {}}}`): "/properties/a~1b/patternProperties is a keyword the " +
