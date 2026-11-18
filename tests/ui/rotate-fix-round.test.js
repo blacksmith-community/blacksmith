@@ -1,7 +1,8 @@
 const {test,expect}=require('bun:test');
 const {JSDOM}=require('./certificates/support.js');
 const {setupRotate,cert}=require('./rotate-flow-support.js');
-const t=JSDOM?test:test.skip;
+const {main:{idle,until,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const certs=[
  cert('/s/a_crt','a_crt',5,'inst-a','cache-a'),
  cert('/s/b_crt','b_crt',20,'inst-b','cache-b'),
@@ -11,10 +12,10 @@ const selected=(T)=>[...T.rotateSelection().keys()].sort();
 const next=(d)=>d.getElementById('batch-flow-next');
 
 t('the Certificates tab label goes away on the first manual change',async()=>{
- const {w,d,T,sleep}=await setupRotate({certs,start:false});try{
+ const {w,d,T}=await setupRotate({certs,start:false});try{
  const sel=w.blacksmithCerts.selection;
  sel.set('inst-a',new Set(['/s/a_crt']));sel.set('inst-b',new Set(['/s/b_crt']));
- expect(await w.blacksmithBatch.openRotate()).not.toBe(false);await sleep(100);
+ expect(await w.blacksmithBatch.openRotate()).not.toBe(false);await idle(w);
  const count=d.getElementById('batch-flow-context');
  expect(count.textContent).toBe('2 instances selected from the Certificates tab');
  d.querySelector('[data-instance-id="inst-c"] .upgrade-instance-id').click();
@@ -35,28 +36,28 @@ t('the unavailable Patch reason sits between the method tabs and their panel',as
  }finally{w.close();}
 });
 t('the Review count stays with the list that was previewed',async()=>{
- const {w,d,T,sleep,setInventory}=await setupRotate({certs});try{
+ const {w,d,T,setInventory}=await setupRotate({certs});try{
  w.__routes.unshift(['/b/certificates/rotation/preview',(u,o,j)=>j(400,{success:false,error:'stop here',code:'bad_request'})]);
  T.setBatchStep(2,false);
 d.querySelector('[data-instance-id="inst-a"] .upgrade-instance-id').click();
  d.querySelector('[data-instance-id="inst-b"] .upgrade-instance-id').click();
- expect(selected(T)).toEqual(['inst-a','inst-b']);await sleep(5);
- next(d).click();await sleep(80);
+ expect(selected(T)).toEqual(['inst-a','inst-b']);await idle(w);
+ next(d).click();await until(()=>T.batchFlow.step===3,'the Review step');
  expect(T.batchFlow.step).toBe(3);
  const count=d.getElementById('batch-flow-context');
  expect(count.textContent).toBe('2 instances selected');
  setInventory({certificates:certs.filter(c=>c.key!=='/s/a_crt')});
- await T.loadRotateInventory({silent:true});await sleep(30);
+ await T.loadRotateInventory({silent:true});await idle(w);
  expect(count.textContent).toBe('2 instances selected');
  }finally{w.close();}
 });
 t('rotate rows draw their boxes from the selection',async()=>{
- const {w,d,T,sleep}=await setupRotate({certs});try{
+ const {w,d,T}=await setupRotate({certs});try{
  T.setBatchStep(2,false);
  const box=(id)=>d.querySelector(`[data-instance-id="${id}"] input`);
- d.getElementById('upgrade-select-all').click();await sleep(5);
+ d.getElementById('upgrade-select-all').click();await idle(w);
  expect(box('inst-a').checked).toBe(true);expect(box('inst-c').checked).toBe(true);
- d.getElementById('upgrade-deselect-all').click();await sleep(5);
+ d.getElementById('upgrade-deselect-all').click();await idle(w);
  expect(box('inst-a').checked).toBe(false);
  d.querySelector('[data-instance-id="inst-b"] .upgrade-instance-id').click();
  expect(box('inst-b').checked).toBe(true);
@@ -64,10 +65,10 @@ t('rotate rows draw their boxes from the selection',async()=>{
  }finally{w.close();}
 });
 t('a handover from the Certificates tab skips the expiring preselection',async()=>{
- const {w,d,T,sleep}=await setupRotate({certs,start:false});try{
+ const {w,d,T}=await setupRotate({certs,start:false});try{
  const sel=w.blacksmithCerts.selection;
  sel.set('inst-b',new Set(['/s/b_crt']));sel.set('inst-c',new Set(['/s/c_crt']));
- expect(await w.blacksmithBatch.openRotate()).not.toBe(false);await sleep(100);
+ expect(await w.blacksmithBatch.openRotate()).not.toBe(false);await idle(w);
  expect(selected(T)).toEqual(['inst-b','inst-c']);
  expect(d.getElementById('batch-flow-context').textContent).toBe('2 instances selected from the Certificates tab');
  const box=(id)=>d.querySelector(`[data-instance-id="${id}"] input`);

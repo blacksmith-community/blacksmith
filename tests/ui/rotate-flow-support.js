@@ -1,6 +1,6 @@
 // A booted Batch Operations tab with a scripted certificate inventory, for
 // the suites that drive the rotation flow's steps.
-const {main:{boot,sleep,idle}}=require('./certificates/harness.js');
+const {main:{boot,idle}}=require('./certificates/harness.js');
 
 const DAY=86400000;
 const iso=(days)=>new Date(Date.now()+days*DAY).toISOString();
@@ -17,6 +17,6 @@ async function setupRotate({certs=[],caps={rotation:{enabled:true},patch_in_plac
   d.getElementById('upgrade').classList.add('active');
   await w.__T.initUpgradeTab();
   if(start){ await w.__T.requestOperation('rotate'); await idle(w); }
-  return {...env,T:w.__T,sleep,setInventory:(next)=>{inventory={...inventory,...next};}};
+  return {...env,T:w.__T,setInventory:(next)=>{inventory={...inventory,...next};}};
 }
-module.exports={setupRotate,cert,iso,sleep};
+module.exports={setupRotate,cert,iso};
