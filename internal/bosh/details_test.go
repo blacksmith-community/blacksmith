@@ -185,6 +185,38 @@ func vmListing() listingCall {
 	}}
 }
 
+// lostAnswerRequestTimeout is the request timeout of the test of a lost
+// answer. The timeout is real, because boshapi owns the timer, so it is long
+// enough that a slow machine cannot spend it before the request is sent.
+const lostAnswerRequestTimeout = time.Second
+
+// warmUpDeployment is the deployment warmAdapter reads, so that a test can
+// leave its requests out of what it checks.
+const warmUpDeployment = "warm-up"
+
+// warmAdapter makes the adapter find out how the director authenticates and
+// opens its connection, so that a test of bosh.request_timeout measures the
+// request it is about and not the setup before it. It reads a deployment the
+// director does not have, which only needs an answer, whatever the answer
+// is. A short timeout can run out during that setup on a slow machine, so
+// the read is made again until the director answers.
+func warmAdapter(t *testing.T, director bosh.Director) {
+	t.Helper()
+
+	deadline := time.Now().Add(30 * time.Second)
+
+	for {
+		_, err := director.GetDeployment(t.Context(), warmUpDeployment)
+		if err == nil || !strings.Contains(err.Error(), "bosh.request_timeout") {
+			return
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("the adapter never reached the director: %v", err)
+		}
+	}
+}
+
 // callWithin runs call and fails the test when it has not returned within
 // limit, so a call that ignores its context fails rather than hangs.
 func callWithin(t *testing.T, limit time.Duration, call func() error) error {
@@ -651,8 +683,9 @@ func TestVMDetailsLostAnswerNamesTheRequestTimeout(t *testing.T) {
 	t.Cleanup(func() { close(release) })
 
 	director := newReadAdapter(t, server.Director, func(config *bosh.Config) {
-		config.RequestTimeout = 150 * time.Millisecond
+		config.RequestTimeout = lostAnswerRequestTimeout
 	})
+	warmAdapter(t, director)
 
 	err := callWithin(t, 30*time.Second, func() error { return vmListing().call(t.Context(), director) })
 
@@ -660,7 +693,7 @@ func TestVMDetailsLostAnswerNamesTheRequestTimeout(t *testing.T) {
 		t.Fatalf("expected a DirectorCallError whose cause is a lost answer, got %T: %v", err, err)
 	}
 
-	if !strings.Contains(err.Error(), "no answer within the 150ms bosh.request_timeout") {
+	if !strings.Contains(err.Error(), "no answer within the "+lostAnswerRequestTimeout.String()+" bosh.request_timeout") {
 		t.Errorf("expected the error to name bosh.request_timeout and its value, got: %v", err)
 	}
 

@@ -347,6 +347,15 @@ func TestFetchLogsStreamsTheBundle(t *testing.T) {
 	})
 }
 
+// The slow bundle takes three gaps to stream, which is longer than the
+// request timeout the test sets. The timeout is real, because boshapi owns
+// the timer, so it is long enough that a slow machine cannot spend it before
+// the director's answer begins.
+const (
+	slowBodyRequestTimeout = time.Second
+	slowBundleGap          = 400 * time.Millisecond
+)
+
 // slowBundle streams a bundle one flushed entry at a time, so the whole
 // download takes longer than a request timeout.
 func slowBundle(t *testing.T) func(http.ResponseWriter, *http.Request) {
@@ -379,7 +388,7 @@ func slowBundle(t *testing.T) func(http.ResponseWriter, *http.Request) {
 			}
 
 			if index < len(files)-1 {
-				time.Sleep(150 * time.Millisecond)
+				time.Sleep(slowBundleGap)
 			}
 		}
 	}
@@ -390,9 +399,10 @@ func checkSlowBodyOutlivesTheRequestTimeout(t *testing.T) {
 
 	server := newLogsDirector(t, logsConfig{bundle: slowBundle(t)})
 	director := newReadAdapter(t, server.Director, func(config *bosh.Config) {
-		config.RequestTimeout = 250 * time.Millisecond
+		config.RequestTimeout = slowBodyRequestTimeout
 	})
 	bosh.SetTaskPollInterval(director, testPollInterval)
+	warmAdapter(t, director)
 
 	bundle := mustFetchLogs(t, director, nil)
 
@@ -416,7 +426,14 @@ func checkSlowBodyOutlivesTheRequestTimeout(t *testing.T) {
 		t.Errorf("a whole bundle skipped %v and stopped early = %v", bundle.Skipped, bundle.StoppedEarly)
 	}
 
-	requests := server.APIRequests()
+	var requests []boshtest.Request
+
+	for _, request := range server.APIRequests() {
+		if request.Path != "/deployments/"+warmUpDeployment {
+			requests = append(requests, request)
+		}
+	}
+
 	if len(requests) == 0 || requests[0].Method != http.MethodGet || requests[0].Path != logsStartPath || requests[0].RawQuery != "type=job" {
 		t.Fatalf("the first request was %+v, want GET %s?type=job", requests, logsStartPath)
 	}
