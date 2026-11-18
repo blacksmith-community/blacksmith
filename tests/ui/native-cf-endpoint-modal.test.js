@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -20,7 +20,7 @@ const start=async()=>{
  const {w,d}=env;
  w.eval(OAT);
  const opener=d.createElement('button');opener.id='cf-opener';opener.textContent='Add';d.body.appendChild(opener);
- await sleep(60);
+ await idle(w);
  opener.focus();
  const dialog=()=>d.getElementById('cf-endpoint-modal');
  const snapshot=()=>JSON.stringify({
@@ -81,9 +81,10 @@ paths.forEach(({name,close})=>{
 
 t('a draft survives every close except Discard draft',async()=>{
  const env=await start(); const {w,d,stubs}=env;
- w.showCFEndpointForm(); typeName(env,'keep'); env.key('Escape'); await stubs.settle(); await sleep(320);
+ // idle() also waits out the page removing the closed form.
+ w.showCFEndpointForm(); typeName(env,'keep'); env.key('Escape'); await idle(w);
  w.showCFEndpointForm(); expect(d.getElementById('cf-endpoint-name').value).toBe('keep');
- button(env,'Discard draft').click(); await stubs.settle(); await sleep(320);
+ button(env,'Discard draft').click(); await idle(w);
  w.showCFEndpointForm(); expect(d.getElementById('cf-endpoint-name').value).toBe('');
  w.hideCFEndpointForm(); await stubs.settle();
 });
@@ -121,7 +122,7 @@ t('a confirmation opened over the form returns to it, still modal, and Escape cl
  w.showCFEndpointForm();
  const field=d.getElementById('cf-endpoint-url'); field.focus();
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(w);
  expect(w.blacksmithSurfaces.size()).toBe(2);
  key('Escape');
  expect(await done).toBe(false);

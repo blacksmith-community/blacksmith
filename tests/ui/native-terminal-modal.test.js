@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -21,7 +21,7 @@ const start=async()=>{
  w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');}init(){return Promise.resolve(this);}focus(){}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(){this.readyState=0;}send(){}close(){}};
  const opener=d.createElement('button');opener.id='term-opener';opener.textContent='Open';d.body.appendChild(opener);
- await sleep(60);
+ await idle(w);
  opener.focus();
  const dialog=()=>d.getElementById('terminal-modal');
  const snapshot=()=>JSON.stringify({
@@ -49,7 +49,7 @@ t('the terminal opens as a native modal dialog and isolates the page behind it',
  expect(dialog().querySelector('.modal-content')).toBeNull();
  expect(dialog().hasAttribute('inert')).toBe(false);
  expect(JSON.parse(snapshot()).inert.length).toBeGreaterThan(0);
- mgr(env).closeAll(); await stubs.settle();
+ mgr(env).closeAll(); await idle(w);
  expect(dialog().open).toBe(false);
  expect(snapshot()).toBe(before);
 });
@@ -62,29 +62,29 @@ t('Escape does not close the terminal and is left for the shell',async()=>{
  const down=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});
  d.querySelector('.terminal-instance').dispatchEvent(down);
  expect(down.defaultPrevented).toBe(true);
- await stubs.settle();
+ await idle(w);
  expect(dialog().open).toBe(true);
- mgr(env).closeAll(); await stubs.settle();
+ mgr(env).closeAll(); await idle(w);
 });
 
 t('a click or touch on the backdrop leaves the terminal open',async()=>{
  const env=await start(); const {w,dialog,stubs,backdrop,touch}=env;
  openIt(env);
- backdrop(); touch(); await stubs.settle();
+ backdrop(); touch(); await idle(w);
  expect(dialog().open).toBe(true);
  expect(stubs.isModal(dialog())).toBe(true);
- mgr(env).closeAll(); await stubs.settle();
+ mgr(env).closeAll(); await idle(w);
 });
 
 t('a close that arrives while sessions remain reopens the terminal as a modal',async()=>{
  const env=await start(); const {w,dialog,stubs,snapshot}=env;
  openIt(env);
  const before=JSON.parse(snapshot()).inert.length;
- dialog().close(); await stubs.settle();
+ dialog().close(); await idle(w);
  expect(dialog().open).toBe(true);
  expect(stubs.isModal(dialog())).toBe(true);
  expect(JSON.parse(snapshot()).inert.length).toBe(before);
- mgr(env).closeAll(); await stubs.settle();
+ mgr(env).closeAll(); await idle(w);
  expect(dialog().open).toBe(false);
 });
 
@@ -93,7 +93,7 @@ t('the close button closes every session and restores the page and focus',async(
  const before=snapshot();
  openIt(env);
  dialog().querySelector('.modal-close').click();
- await stubs.settle(); await sleep(10);
+ await idle(w);
  expect(mgr(env).sessions.size).toBe(0);
  expect(dialog().open).toBe(false);
  expect(snapshot()).toBe(before);
@@ -105,7 +105,7 @@ t('closing the last tab closes the terminal',async()=>{
  const before=snapshot();
  openIt(env);
  d.querySelector('#terminal-tabs .tab-close').click();
- await stubs.settle();
+ await idle(w);
  expect(dialog().open).toBe(false);
  expect(snapshot()).toBe(before);
 });
@@ -115,18 +115,18 @@ t('minimize closes the dialog so the page is usable, focuses Restore, and Restor
  const before=snapshot();
  openIt(env);
  d.getElementById('minimize-btn').focus();
- mgr(env).minimizeAll(); await stubs.settle();
+ mgr(env).minimizeAll(); await idle(w);
  expect(dialog().open).toBe(false);
  expect(JSON.parse(snapshot()).inert).toEqual(JSON.parse(before).inert);
  expect(w.blacksmithSurfaces.size()).toBe(0);
  expect(d.getElementById('minimized-terminal-bar').classList.contains('active')).toBe(true);
  expect(d.activeElement.closest('#minimized-terminal-bar')).not.toBeNull();
  expect(d.activeElement.getAttribute('onclick')).toContain('restoreAll');
- mgr(env).restoreAll(); await stubs.settle();
+ mgr(env).restoreAll(); await idle(w);
  expect(dialog().open).toBe(true);
  expect(stubs.isModal(dialog())).toBe(true);
  expect(d.getElementById('minimized-terminal-bar').classList.contains('active')).toBe(false);
- mgr(env).closeAll(); await stubs.settle();
+ mgr(env).closeAll(); await idle(w);
  expect(JSON.parse(snapshot()).inert).toEqual(JSON.parse(before).inert);
  expect(w.blacksmithSurfaces.size()).toBe(0);
 });
@@ -137,15 +137,15 @@ t('a second session reuses the open dialog',async()=>{
  mgr(env).openWithContext('blacksmith','broker','node/1','node','broker');
  expect(mgr(env).sessions.size).toBe(2);
  expect(w.document.querySelectorAll('dialog[open]').length).toBe(1);
- mgr(env).closeAll(); await stubs.settle();
+ mgr(env).closeAll(); await idle(w);
 });
 
 t('toasts move into the terminal while it is open and back after',async()=>{
  const env=await start(); const {w,d,dialog,stubs}=env;
  openIt(env);
- w.showNotification('hello','info'); await sleep(10);
+ w.showNotification('hello','info'); await idle(w);
  const region=d.getElementById('blacksmith-live-region');
  expect(dialog().contains(region)).toBe(true);
- mgr(env).closeAll(); await stubs.settle();
+ mgr(env).closeAll(); await idle(w);
  expect(region.parentNode).toBe(d.body);
 });

@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -20,7 +20,7 @@ const start=async()=>{
  const {w,d}=env;
  w.eval(OAT);
  const opener=d.createElement('button');opener.id='dlg-opener';opener.textContent='Open';d.body.appendChild(opener);
- await sleep(60);
+ await idle(w);
  opener.focus();
  const dialog=()=>d.getElementById('dialog-modal');
  const role=(r)=>dialog().querySelector(`[data-dialog-role="${r}"]`);
@@ -40,46 +40,46 @@ const start=async()=>{
 // A confirmation that has been shown once leaves a closed dialog in the page.
 // A modal that opens afterwards must not leave that element inert.
 t('a confirmation opened over a modal that opened after the first one is usable and closes cleanly',async()=>{
- const env=await start(); const {w,d,dialog,role,stubs,snapshot}=env;
+ const env=await start(); const {w,d,dialog,role,snapshot}=env;
  const first=w.showConfirmDialog({title:'First',message:'First?'});
- await sleep(10);
- role('cancel').click(); await first; await stubs.settle();
+ await idle(w);
+ role('cancel').click(); await first; await idle(w);
  const before=snapshot();
  env.opener.focus();
  w.__T.CFRegistrationManager.showRegistrationModal();
- await sleep(20);
+ await idle(w);
  const reg=d.getElementById('registration-modal');
  expect(w.blacksmithSurfaces.size()).toBe(1);
  const field=d.getElementById('reg-name'); field.focus();
  const done=w.showConfirmDialog({title:'Second',message:'Second?'});
- await sleep(10);
+ await idle(w);
  expect(dialog().open).toBe(true);
  expect(dialog().hasAttribute('inert')).toBe(false);
  expect(reg.hasAttribute('inert')).toBe(true);
  expect(d.activeElement).toBe(role('cancel'));
  role('confirm').click();
  expect(await done).toBe(true);
- await stubs.settle();
+ await idle(w);
  expect(reg.hasAttribute('inert')).toBe(false);
  expect(w.blacksmithSurfaces.size()).toBe(1);
  expect(d.activeElement).toBe(field);
  w.__T.CFRegistrationManager.hideRegistrationModal();
- await stubs.settle();
+ await idle(w);
  expect(snapshot()).toBe(before);
 });
 
 t('a confirmation that was inert when it opened is inert again once it closes under an open surface',async()=>{
- const env=await start(); const {w,d,dialog,role,stubs}=env;
+ const env=await start(); const {w,d,dialog,role}=env;
  const first=w.showConfirmDialog({title:'First',message:'First?'});
- await sleep(10);
- role('cancel').click(); await first; await stubs.settle();
+ await idle(w);
+ role('cancel').click(); await first; await idle(w);
  const outer={close(){}};
  w.blacksmithSurfaces.push(outer);
  dialog().setAttribute('inert','');
  const done=w.showConfirmDialog({title:'Second',message:'Second?'});
- await sleep(10);
+ await idle(w);
  expect(dialog().hasAttribute('inert')).toBe(false);
- role('cancel').click(); await done; await stubs.settle();
+ role('cancel').click(); await done; await idle(w);
  expect(dialog().hasAttribute('inert')).toBe(true);
  w.blacksmithSurfaces.remove(outer);
 });
@@ -91,50 +91,50 @@ const toastBox=(d)=>d.querySelector('.toast-container');
 const live=(d)=>d.getElementById('blacksmith-live-region');
 
 t('toasts and the live region move into an open confirmation and back to the body when it closes',async()=>{
- const env=await start(); const {w,d,dialog,role,stubs}=env;
+ const env=await start(); const {w,d,dialog,role}=env;
  w.showNotification('Before','info');
- w.blacksmithNav.announce('Hello'); await sleep(70);
+ w.blacksmithNav.announce('Hello'); await idle(w);
  expect(toastBox(d).parentNode).toBe(d.body);
  expect(live(d).parentNode).toBe(d.body);
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(w);
  expect(toastBox(d).parentNode).toBe(dialog());
  expect(live(d).parentNode).toBe(dialog());
  w.showNotification('During','error');
  expect(toastBox(d).parentNode).toBe(dialog());
  expect(toastBox(d).querySelectorAll('output.toast').length).toBe(2);
- role('cancel').click(); await done; await stubs.settle();
+ role('cancel').click(); await done; await idle(w);
  expect(toastBox(d).parentNode).toBe(d.body);
  expect(live(d).parentNode).toBe(d.body);
  expect(toastBox(d).querySelectorAll('output.toast').length).toBe(2);
 });
 
 t('a toast container made while a modal is open is moved inside it, and a live region made then too',async()=>{
- const env=await start(); const {w,d,dialog,role,stubs}=env;
+ const env=await start(); const {w,d,dialog,role}=env;
  expect(toastBox(d)).toBeNull();
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(w);
  w.showNotification('First toast','success');
- w.blacksmithNav.announce('Fresh region'); await sleep(70);
+ w.blacksmithNav.announce('Fresh region'); await idle(w);
  expect(toastBox(d).parentNode).toBe(dialog());
  expect(live(d).parentNode).toBe(dialog());
  expect(live(d).textContent).toBe('Fresh region');
- role('cancel').click(); await done; await stubs.settle();
+ role('cancel').click(); await done; await idle(w);
  expect(toastBox(d).parentNode).toBe(d.body);
  expect(live(d).parentNode).toBe(d.body);
 });
 
 t('with two native modals open the announcers sit in the topmost one and return to the one beneath',async()=>{
- const env=await start(); const {w,d,role,stubs}=env;
+ const env=await start(); const {w,d,role}=env;
  w.showNotification('Base','info');
  w.showCFEndpointForm();
  const form=d.getElementById('cf-endpoint-modal');
  expect(toastBox(d).parentNode).toBe(form);
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(w);
  expect(toastBox(d).parentNode).toBe(d.getElementById('dialog-modal'));
- role('cancel').click(); await done; await stubs.settle();
+ role('cancel').click(); await done; await idle(w);
  expect(toastBox(d).parentNode).toBe(form);
- w.hideCFEndpointForm(); await stubs.settle();
+ w.hideCFEndpointForm(); await idle(w);
  expect(toastBox(d).parentNode).toBe(d.body);
 });

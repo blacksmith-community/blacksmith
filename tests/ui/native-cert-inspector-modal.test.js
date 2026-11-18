@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -20,7 +20,7 @@ const start=async()=>{
  const {w,d}=env;
  w.eval(OAT);
  const opener=d.createElement('button');opener.id='inspect-opener';opener.textContent='Add';d.body.appendChild(opener);
- await sleep(60);
+ await idle(w);
  opener.focus();
  const dialog=()=>d.querySelector('dialog[id^="cert-modal-"]');
  const snapshot=()=>JSON.stringify({
@@ -170,7 +170,7 @@ t('a confirmation opened over the inspector returns to it, still modal, and Esca
  open(env);
  const tab=dialog().querySelector('.cert-tab-btn[data-tab="text"]'); tab.focus();
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(w);
  expect(w.blacksmithSurfaces.size()).toBe(2);
  key('Escape');
  expect(await done).toBe(false);

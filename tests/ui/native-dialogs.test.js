@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 
@@ -63,7 +63,7 @@ flows.forEach((flow)=>{
  const hits=(env)=>env.calls.filter(c=>flow.match.test(c));
  const open=async()=>{
   const env=start(); if(flow.setup) flow.setup(env);
-  const done=flow.run(env); await sleep(10);
+  const done=flow.run(env); await idle(env);
   return {env,done};
  };
  t(`${flow.name} asks in the page dialog and focuses Cancel`,async()=>{
@@ -77,20 +77,20 @@ flows.forEach((flow)=>{
  });
  t(`${flow.name} does nothing on Cancel and returns focus`,async()=>{
   const {env,done}=await open(); const {d}=env;
-  overlayOf(d).querySelector('[data-dialog-role="cancel"]').click(); await done; await sleep(10);
+  overlayOf(d).querySelector('[data-dialog-role="cancel"]').click(); await done; await idle(env);
   expect(hits(env)).toEqual([]);
   expect(overlayOf(d).open).toBe(false);
   expect(d.activeElement).toBe(env.opener);
  });
  t(`${flow.name} does nothing on an overlay click`,async()=>{
   const {env,done}=await open(); const {d}=env;
-  overlayOf(d).click(); await done; await sleep(10);
+  overlayOf(d).click(); await done; await idle(env);
   expect(hits(env)).toEqual([]);
   expect(overlayOf(d).open).toBe(false);
  });
  t(`${flow.name} does nothing on Escape`,async()=>{
   const {env,done}=await open(); const {w,d}=env;
-  press(w,d,'Escape'); await done; await sleep(10);
+  press(w,d,'Escape'); await done; await idle(env);
   expect(hits(env)).toEqual([]);
   expect(overlayOf(d).open).toBe(false);
  });
@@ -98,14 +98,14 @@ flows.forEach((flow)=>{
   const {env,done}=await open(); const {d}=env;
   expect(hits(env)).toEqual([]);
   if(flow.ack) overlayOf(d).querySelector('.dialog-modal-ack-input').value=flow.ack;
-  overlayOf(d).querySelector('[data-dialog-role="confirm"]').click(); await done; await sleep(10);
+  overlayOf(d).querySelector('[data-dialog-role="confirm"]').click(); await done; await idle(env);
   expect(hits(env).length).toBe(1);
  });
 });
 
 t('the registration password is asked in a masked dialog field',async()=>{
  const env=start(); const {w,d}=env;
- const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await idle(env);
  const overlay=overlayOf(d); const input=overlay.querySelector('.dialog-modal-input');
  expect(overlay.open).toBe(true);
  expect(input.getAttribute('type')).toBe('password');
@@ -119,10 +119,10 @@ t('the registration password is asked in a masked dialog field',async()=>{
 });
 t('cancelling the password dialog sends nothing, clears the field, and returns focus',async()=>{
  const env=start(); const {w,d}=env;
- const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await idle(env);
  const input=overlayOf(d).querySelector('.dialog-modal-input');
  input.value='hunter2-secret';
- overlayOf(d).querySelector('[data-dialog-role="cancel"]').click(); await done; await sleep(10);
+ overlayOf(d).querySelector('[data-dialog-role="cancel"]').click(); await done; await idle(env);
  expect(env.calls.filter(c=>/registrations\/r1\/register/.test(c))).toEqual([]);
  expect(input.value).toBe('');
  expect(input.getAttribute('type')).toBe('text');
@@ -130,25 +130,25 @@ t('cancelling the password dialog sends nothing, clears the field, and returns f
 });
 t('Escape cancels the password dialog',async()=>{
  const env=start(); const {w,d}=env;
- const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await idle(env);
  overlayOf(d).querySelector('.dialog-modal-input').value='hunter2-secret';
- press(w,d,'Escape'); await done; await sleep(10);
+ press(w,d,'Escape'); await done; await idle(env);
  expect(env.calls.filter(c=>/register/.test(c))).toEqual([]);
  expect(overlayOf(d).querySelector('.dialog-modal-input').value).toBe('');
 });
 t('an empty password sends nothing',async()=>{
  const env=start(); const {w,d}=env;
- const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
- overlayOf(d).querySelector('[data-dialog-role="confirm"]').click(); await done; await sleep(10);
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await idle(env);
+ overlayOf(d).querySelector('[data-dialog-role="confirm"]').click(); await done; await idle(env);
  expect(env.calls.filter(c=>/register/.test(c))).toEqual([]);
 });
 t('the password goes only in the request body and never reaches the console or the URL',async()=>{
  const env=start(); const {w,d}=env;
  w.__routes.push([/registrations\/r1\/register/,(u,o,json)=>json(500,{error:'boom'})]);
- const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await idle(env);
  const input=overlayOf(d).querySelector('.dialog-modal-input');
  input.value='hunter2-secret';
- overlayOf(d).querySelector('[data-dialog-role="confirm"]').click(); await done; await sleep(10);
+ overlayOf(d).querySelector('[data-dialog-role="confirm"]').click(); await done; await idle(env);
  const sent=env.calls.filter(c=>/registrations\/r1\/register/.test(c));
  expect(sent.length).toBe(1);
  expect(sent[0].split(' ')[1]).not.toContain('hunter2');
@@ -160,21 +160,21 @@ t('the password goes only in the request body and never reaches the console or t
 });
 t('an overlay click clears the password field and sends nothing',async()=>{
  const env=start(); const {w,d}=env;
- const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await idle(env);
  const input=overlayOf(d).querySelector('.dialog-modal-input');
  input.value='hunter2-secret';
- overlayOf(d).click(); await done; await sleep(10);
+ overlayOf(d).click(); await done; await idle(env);
  expect(env.calls.filter(c=>/register/.test(c))).toEqual([]);
  expect(input.value).toBe('');
  expect(input.getAttribute('type')).toBe('text');
 });
 t('Enter confirms the password, sends it once, and clears the field',async()=>{
  const env=start(); const {w,d}=env;
- const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await idle(env);
  const input=overlayOf(d).querySelector('.dialog-modal-input');
  input.value='hunter2-secret';
  input.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
- await done; await sleep(10);
+ await done; await idle(env);
  const sent=env.calls.filter(c=>/registrations\/r1\/register/.test(c));
  expect(sent.length).toBe(1);
  expect(sent[0]).toContain('"password":"hunter2-secret"');

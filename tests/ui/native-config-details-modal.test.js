@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -19,7 +19,7 @@ const start=async(opts={})=>{
  const {w,d}=env;
  if(!opts.noOat) w.eval(OAT);
  const opener=d.createElement('button');opener.id='config-opener';opener.textContent='Config';d.body.appendChild(opener);
- await sleep(60);
+ await idle(env);
  opener.focus();
  const dialog=()=>d.getElementById('config-details-modal');
  const snapshot=()=>JSON.stringify({
@@ -32,7 +32,7 @@ const start=async(opts={})=>{
  const touch=()=>dialog().dispatchEvent(new w.Event('touchstart',{bubbles:true,cancelable:true}));
  return {...env,opener,dialog,snapshot,key,backdrop,touch};
 };
-const openIt=async(env)=>{ const p=env.w.showConfigVersions('cloud','default','42'); await sleep(60); return p; };
+const openIt=async(env)=>{ const p=env.w.showConfigVersions('cloud','default','42'); await idle(env); return p; };
 const closeIt=(env)=>env.w.hideConfigVersionsModal();
 
 t('the config details view stays usable when the tabs element never loads',async()=>{
@@ -115,7 +115,7 @@ t('a confirmation opened over the config details view returns to it, still modal
  const env=await start(); const {w,d,dialog,stubs,key}=env;
  await openIt(env);
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(w);
  expect(w.blacksmithSurfaces.size()).toBe(2);
  key('Escape');
  expect(await done).toBe(false);
@@ -132,7 +132,7 @@ t('a confirmation opened over the config details view returns to it, still modal
 t('the static config dialog also opens natively from the config ID link and closes with Escape',async()=>{
  const env=await start(); const {w,d,dialog,stubs,snapshot,key}=env;
  const before=snapshot();
- w.showConfigDetails('42'); await sleep(60);
+ w.showConfigDetails('42'); await idle(w);
  expect(dialog().open).toBe(true);
  expect(stubs.isModal(dialog())).toBe(true);
  expect(d.getElementById('config-name').textContent).toBe('default');
