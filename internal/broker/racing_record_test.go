@@ -139,6 +139,24 @@ type racingRecordPath struct {
 	record func(ctx context.Context, t *testing.T, client *internalVault.Vault, instanceID string)
 	// arm wires the director so the proxy arms at the right call.
 	arm func(director *testutil.ScriptedBOSHDirector, address string)
+	// settle runs the settle step. Without one, the step is a poll, which
+	// must not answer failed.
+	settle func(ctx context.Context, t *testing.T, failure *updateFailure, client *internalVault.Vault)
+}
+
+// recordProvisionTask records a provision accepted with
+// racingProvisionContextID whose create task is running.
+func recordProvisionTask(ctx context.Context, t *testing.T, client *internalVault.Vault, instanceID string) {
+	t.Helper()
+
+	err := client.TrackProgressWithContextID(ctx, instanceID, outcomeProvision, "Starting provisioning process", racingProvisionContextID, 0, nil)
+	if err == nil {
+		err = client.TrackProgress(ctx, instanceID, outcomeProvision, "BOSH deployment in progress (task "+strconv.Itoa(updateFailureCreateTaskID)+")", updateFailureCreateTaskID, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("failed to record the provision: %v", err)
+	}
 }
 
 func racingRecordPaths() []racingRecordPath {
@@ -146,25 +164,14 @@ func racingRecordPaths() []racingRecordPath {
 		// The poll reads the provision and its failed create task under
 		// the settle lock, twice, and the update lands before the failure
 		// is written.
-		{"failure written after an update is accepted", func(ctx context.Context, t *testing.T, client *internalVault.Vault, instanceID string) {
-			t.Helper()
-
-			err := client.TrackProgressWithContextID(ctx, instanceID, outcomeProvision, "Starting provisioning process", racingProvisionContextID, 0, nil)
-			if err == nil {
-				err = client.TrackProgress(ctx, instanceID, outcomeProvision, "BOSH deployment in progress (task "+strconv.Itoa(updateFailureCreateTaskID)+")", updateFailureCreateTaskID, nil)
-			}
-
-			if err != nil {
-				t.Fatalf("failed to record the provision: %v", err)
-			}
-		}, func(director *testutil.ScriptedBOSHDirector, address string) {
+		{"failure written after an update is accepted", recordProvisionTask, func(director *testutil.ScriptedBOSHDirector, address string) {
 			getTask := director.GetTaskFn
 			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
 				armRacingVault(address, 2)
 
 				return getTask(taskID)
 			}
-		}},
+		}, nil},
 		// The poll finds the provision's create task in the deployment's
 		// events, and the update lands before that task is recorded.
 		{"found task written after an update is accepted", func(ctx context.Context, t *testing.T, client *internalVault.Vault, instanceID string) {
@@ -180,6 +187,30 @@ func racingRecordPaths() []racingRecordPath {
 				armRacingVault(address, 0)
 
 				return getEvents(deployment)
+			}
+		}, nil},
+		// Re-adoption follows the create task of a provision whose index
+		// entry is gone and reads the record again under the settle lock,
+		// which reads it twice, and the update lands before the failure
+		// is written.
+		{"re-adopted failure written after an update is accepted", recordProvisionTask, func(director *testutil.ScriptedBOSHDirector, address string) {
+			waitForTask := director.WaitForTaskFn
+			director.WaitForTaskFn = func(taskID int) (*bosh.Task, error) {
+				armRacingVault(address, 2)
+
+				return waitForTask(taskID)
+			}
+		}, func(ctx context.Context, t *testing.T, failure *updateFailure, client *internalVault.Vault) {
+			t.Helper()
+
+			err := client.Index(ctx, failure.instanceID, nil)
+			if err != nil {
+				t.Fatalf("failed to remove the index entry: %v", err)
+			}
+
+			err = failure.broker.ReadoptInFlightOperations(ctx)
+			if err != nil {
+				t.Fatalf("re-adoption failed: %v", err)
 			}
 		}},
 	}
@@ -226,15 +257,19 @@ func TestProvisionSettle_LeavesARacingOperationAlone(t *testing.T) {
 			path.record(ctx, t, direct, instanceID)
 			path.arm(failure.director, proxy.URL)
 
-			response, pollErr := failure.broker.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
-				ServiceID: valkeyServiceID, PlanID: standalonePlanID, Operation: outcomeProvision,
-			})
-			if pollErr != nil {
-				t.Fatalf("the poll failed: %v", pollErr)
-			}
+			if path.settle != nil {
+				path.settle(ctx, t, failure, direct)
+			} else {
+				response, pollErr := failure.broker.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+					ServiceID: valkeyServiceID, PlanID: standalonePlanID, Operation: outcomeProvision,
+				})
+				if pollErr != nil {
+					t.Fatalf("the poll failed: %v", pollErr)
+				}
 
-			if response.State == osbapi.StateFailed {
-				t.Errorf("the poll answered failed over the update: %s", response.Description)
+				if response.State == osbapi.StateFailed {
+					t.Errorf("the poll answered failed over the update: %s", response.Description)
+				}
 			}
 
 			failure.requireNothingDeleted(ctx, t, updateFailureAction)
