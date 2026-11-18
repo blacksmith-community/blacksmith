@@ -1,7 +1,7 @@
 const {test,expect}=require('bun:test');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
-const {main:{idle,trackTimers,TEST_LIMIT}}=require('./certificates/harness.js');
+const {main:{idle,until,trackTimers,TEST_LIMIT}}=require('./certificates/harness.js');
 const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 const fs=require('fs'),path=require('path');
 const source=()=>fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8');
@@ -19,11 +19,12 @@ t('Back and Forward restore the destination entry focus and scroll',async()=>{
  await router.start();panel.scrollTop=14;
  await router.navigate({screen:'blacksmith',section:'plans'});panel.scrollTop=41;
  await router.navigate({screen:'services'});panel.scrollTop=87;
- w.history.back();await idle(w);
+ // jsdom delivers popstate on its own clock, so each step waits for the focus and scroll it should restore.
+ w.history.back();await until(()=>d.activeElement.id==='plans'&&panel.scrollTop===41,'the previous view to be restored');
  expect(d.activeElement.id).toBe('plans');expect(panel.scrollTop).toBe(41);
- w.history.back();await idle(w);
+ w.history.back();await until(()=>d.activeElement.id==='summary'&&panel.scrollTop===14,'the first view to be restored');
  expect(d.activeElement.id).toBe('summary');expect(panel.scrollTop).toBe(14);
- w.history.forward();await idle(w);
+ w.history.forward();await until(()=>d.activeElement.id==='plans'&&panel.scrollTop===41,'the next view to be restored');
  expect(d.activeElement.id).toBe('plans');expect(panel.scrollTop).toBe(41);
  router.destroy();w.close();
 });
@@ -64,16 +65,16 @@ t('aborting an older navigation cannot cancel a newer destination',async()=>{
 
 t('closing an inspection returns to its known source without creating another entry',async()=>{
  const {api,w}=boot();const router=api.create(w,{activate:async r=>r});await router.start();await router.navigate({screen:'blacksmith',section:'tasks'});
- await router.inspect({kind:'task',id:'42'});router.closeInspection();await idle(w);
+ await router.inspect({kind:'task',id:'42'});router.closeInspection();await until(()=>!router.current.inspection,'the inspection to close');await idle(w);
  expect(router.current).toEqual({screen:'blacksmith',section:'tasks'});
- w.history.back();await idle(w);expect(router.current.section).toBe('details');
- w.history.forward();await idle(w);expect(router.current.section).toBe('tasks');expect(router.current.inspection).toBeUndefined();
+ w.history.back();await until(()=>router.current.section==='details','the history to go back');expect(router.current.section).toBe('details');
+ w.history.forward();await until(()=>router.current.section==='tasks','the history to go forward');expect(router.current.section).toBe('tasks');expect(router.current.inspection).toBeUndefined();
  router.destroy();w.close();
 });
 t('direct inspection closes by replacing its entry and nested inspection returns to its opener',async()=>{
  const {api,w}=boot();w.history.replaceState(null,'','#/broker/tasks?inspect=task&id=42');const router=api.create(w,{activate:async r=>r});await router.start();const count=w.history.length;
  await router.closeInspection();expect(router.current.inspection).toBeUndefined();expect(w.history.length).toBe(count);expect(w.location.hash).toBe('#/broker/tasks');
- await router.inspect({kind:'task',id:'42'});await router.inspect({kind:'task',id:'43'});router.closeInspection();await idle(w);expect(router.current.inspection.id).toBe('42');
+ await router.inspect({kind:'task',id:'42'});await router.inspect({kind:'task',id:'43'});router.closeInspection();await until(()=>router.current.inspection&&router.current.inspection.id==='42','the earlier inspection to return');expect(router.current.inspection.id).toBe('42');
  router.destroy();w.close();
 });
 
@@ -94,8 +95,7 @@ t('the console renders the chosen instance section while the section loads',asyn
  d.body.insertAdjacentHTML('beforeend','<div class="tab-content"></div>');
  w.blacksmithViews={activate:async r=>{if(r.section==='instance-logs')await new Promise(resolve=>release=resolve);return r;}};
  d.dispatchEvent(new w.Event('blacksmith:ready'));
- await idle(w)
-;
+ await idle(w);
  await w.blacksmithRouter.navigate({screen:'services',instance:'abc',section:'certificates'});
  const last=()=>d.querySelector('#route-context nav li:last-child').textContent;
  expect(last()).toBe('Certificates');expect(d.title).toContain('Certificates');
@@ -110,8 +110,7 @@ t('the breadcrumb bar is the first row of the content column',async()=>{
  d.body.insertAdjacentHTML('beforeend','<main id="console-main"><div class="wrap" id="shell"><div class="tab-content"></div></div></main>');
  w.blacksmithViews={activate:async r=>r};
  d.dispatchEvent(new w.Event('blacksmith:ready'));
- await idle(w)
-;
+ await idle(w);
  await w.blacksmithRouter.navigate({screen:'services',instance:'abc',section:'certificates'});
  const bar=d.getElementById('route-context');
  expect(bar.nextElementSibling.classList.contains('tab-content')).toBe(true);

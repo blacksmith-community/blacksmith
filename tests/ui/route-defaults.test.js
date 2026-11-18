@@ -2,7 +2,7 @@ const {test,expect}=require('bun:test');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
 const fs=require('fs'),path=require('path');
-const {idle,trackTimers,TEST_LIMIT}=require('./certificates/harness.js').main;
+const {idle,until,trackTimers,TEST_LIMIT}=require('./certificates/harness.js').main;
 const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 const source=()=>fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8');
 function boot(hash='',activate){
@@ -74,7 +74,8 @@ t('a bare link to the route already showing is rewritten without rendering again
  await idle(w);
  expect(calls).toHaveLength(1);
  w.location.hash='#/instances/abc';
- await idle(w);
+ // jsdom delivers hashchange on its own clock, so wait for the rewrite and then let the page drain.
+ await until(()=>w.location.hash==='#/instances/abc/summary','the bare link to be rewritten');await idle(w);
  expect(w.location.hash).toBe('#/instances/abc/summary');
  expect(calls).toHaveLength(1);
  expect(w.blacksmithRouter.current).toEqual({screen:'services',instance:'abc',section:'details'});
