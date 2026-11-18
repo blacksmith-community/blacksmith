@@ -3598,10 +3598,10 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 	}
 
 	// Prefer the deployment name recorded at provision time. Deriving it from
-	// PlanID is only a fallback for instances indexed before that field existed:
-	// the reconciler can rewrite PlanID, and a plan ID that extends another one
-	// (valkey-standalone vs valkey-standalone-classic) then yields the name of a
-	// deployment that was never created, so LastOperation polls forever.
+	// PlanID is only a fallback for instances indexed before that field
+	// existed. PlanID names the plan the instance is on now, so after a plan
+	// change a name built from it names a deployment that was never created,
+	// and LastOperation would poll forever.
 	deploymentName := instance.DeploymentNameFor(instanceID)
 	if instance.DeploymentName == "" {
 		logger.Debug("no deployment_name recorded for instance %s; derived %s from plan ID", instanceID, deploymentName)

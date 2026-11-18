@@ -11,10 +11,11 @@ type Instance struct {
 	ID        string `json:"instance_id,omitempty"`
 	ServiceID string `json:"service_id,omitempty"`
 	PlanID    string `json:"plan_id,omitempty"`
-	// DeploymentName is recorded at provision time from the requested plan ID.
-	// It is authoritative: PlanID can later be rewritten by the reconciler, so
-	// recomputing the deployment name from it can point at a deployment that
-	// does not exist.
+	// DeploymentName is recorded at provision time from the requested plan
+	// ID, and the deployment keeps that name for life. PlanID names the plan
+	// the instance is on now, which a plan change moves away from the name,
+	// so a name built from PlanID can point at a deployment that does not
+	// exist. Read the name through DeploymentNameFor.
 	DeploymentName string `json:"deployment_name,omitempty"`
 	// Status and Deleted are the two marks the reconciler writes on an
 	// entry for an instance that is gone, which leaves a tombstone.

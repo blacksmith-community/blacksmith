@@ -897,7 +897,7 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 	// it was created under, which a plan change leaves behind.
 	err = r.keepRecordedPlans(instances)
 	if err != nil {
-		return fmt.Errorf("phase 3 failed: %w", err)
+		return fmt.Errorf("keeping the recorded plans failed: %w", err)
 	}
 
 	// Phase 4: Update Vault with rate limiting
