@@ -219,6 +219,74 @@ func runWithDeadline(t *testing.T, runner *boshssh.Runner, stdin io.Reader) {
 	}
 }
 
+// deadlineOnTrigger is a context whose deadline passes when the test says
+// so, and not after a fixed time. A test that needs the deadline to pass
+// only once a step has happened uses it, because a timer can pass first on
+// a machine that is slow to reach the step.
+type deadlineOnTrigger struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func newDeadlineOnTrigger() *deadlineOnTrigger {
+	return &deadlineOnTrigger{done: make(chan struct{})}
+}
+
+func (c *deadlineOnTrigger) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+func (c *deadlineOnTrigger) Value(any) any { return nil }
+
+func (c *deadlineOnTrigger) Done() <-chan struct{} { return c.done }
+
+func (c *deadlineOnTrigger) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+// pass makes the deadline pass.
+func (c *deadlineOnTrigger) pass() { c.once.Do(func() { close(c.done) }) }
+
+// runUntilDeadline runs cat on runner, lets the deadline pass once when
+// closes, and fails the test unless Run returns context.DeadlineExceeded.
+// The limit on the wait is only a watchdog for a Run that ignores its
+// context.
+func runUntilDeadline(t *testing.T, runner *boshssh.Runner, stdin io.Reader, when <-chan struct{}) {
+	t.Helper()
+
+	ctx := newDeadlineOnTrigger()
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := runner.Run(ctx, catProgram, nil, stdin, 0)
+		done <- err
+	}()
+
+	select {
+	case <-when:
+		ctx.pass()
+	case err := <-done:
+		t.Fatalf("Run returned %v before the deadline passed", err)
+	case <-time.After(watchdogLimit):
+		t.Fatal("the step the deadline waits for never happened")
+	}
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Run returned %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(watchdogLimit):
+		t.Fatal("Run was still running after its deadline passed")
+	}
+}
+
+// watchdogLimit bounds a wait that a passing run ends at once.
+const watchdogLimit = 10 * time.Second
+
 // A VM that stops answering as the exec request arrives never answers it,
 // and Run still returns at its deadline. The deadline costs the runner
 // its connection, so a later run is refused.
@@ -269,7 +337,7 @@ func TestRunnerDeadlineWhenVMStopsMidRun(t *testing.T) {
 
 	runner := boshssh.NewRunner(fakeVM.dialVia(t, proxy.addr()), &runnerLog{})
 
-	runWithDeadline(t, runner, stdin)
+	runUntilDeadline(t, runner, stdin, stdin.held)
 
 	expectNoLateRead(t, stdin)
 }
