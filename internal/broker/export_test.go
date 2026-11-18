@@ -459,6 +459,21 @@ func (b *Broker) NoTaskInAnswer(operation, deploymentName, contextID string) err
 	return b.noTaskInAnswer(operation, deploymentName, contextID)
 }
 
+// SetCleanupRetryInterval replaces the interval between passes of the
+// sweep of owed cleanups, whatever the settings say, and returns a
+// function that restores the previous one.
+func SetCleanupRetryInterval(d time.Duration) func() {
+	previous := cleanupRetryIntervalOverride.Swap(int64(d))
+
+	return func() { cleanupRetryIntervalOverride.Store(previous) }
+}
+
+// OwedRetryBackoff exposes how long the sweep of owed cleanups waits
+// after its tries-th try of one cleanup.
+func OwedRetryBackoff(interval time.Duration, tries int) time.Duration {
+	return owedRetryBackoff(interval, tries)
+}
+
 // SetReadoptIntervals replaces the backoff between Vault reads and the
 // interval between checks of a re-adopted operation, and returns a
 // function that restores the previous ones.

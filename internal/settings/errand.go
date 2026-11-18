@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"strings"
 	"time"
 
@@ -57,92 +56,31 @@ func ParseErrandTimeout(raw string) (time.Duration, error) {
 	return min(parsed, MaxErrandWait), nil
 }
 
+// errandSetting is the errand wait as a runtime setting.
+//
+//nolint:gochecknoglobals // a fixed description of the setting, never changed
+var errandSetting = durationSetting{
+	key:           ErrandTimeoutKey,
+	environment:   SourceEnvironment,
+	configuration: SourceConfig,
+	fallback:      config.DefaultErrandTimeout,
+	parse:         ParseErrandTimeout,
+	invalid:       ErrInvalidErrandTimeout,
+}
+
 // ErrandWait picks the errand wait from the Vault settings, then the
 // BLACKSMITH_ERRAND_TIMEOUT environment variable, then broker.errand_timeout
 // as configured, then the default. A layer whose value is refused is
 // skipped and reported, and the next layer decides. A nil store skips the
 // Vault layer.
 func ErrandWait(ctx context.Context, store Store, configured *time.Duration) ErrandChoice {
-	var refused []Refusal
+	wait, source, refused := errandSetting.choose(ctx, store, configured)
 
-	for _, layer := range []struct {
-		source string
-		raw    func() (string, bool, error)
-	}{
-		{SourceVault, func() (string, bool, error) { return savedErrandTimeout(ctx, store) }},
-		{SourceEnvironment, func() (string, bool, error) {
-			value := os.Getenv(config.ErrandTimeoutEnvKey)
-
-			return value, strings.TrimSpace(value) != "", nil
-		}},
-		{SourceConfig, func() (string, bool, error) {
-			if configured == nil {
-				return "", false, nil
-			}
-
-			return configured.String(), true, nil
-		}},
-	} {
-		raw, present, err := layer.raw()
-		if err != nil {
-			refused = append(refused, Refusal{Source: layer.source, Err: err})
-
-			continue
-		}
-
-		if !present {
-			continue
-		}
-
-		wait, err := ParseErrandTimeout(raw)
-		if err != nil {
-			refused = append(refused, Refusal{Source: layer.source, Err: err})
-
-			continue
-		}
-
-		return ErrandChoice{Wait: wait, Source: layer.source, Refused: refused}
-	}
-
-	return ErrandChoice{Wait: config.DefaultErrandTimeout, Source: SourceDefault, Refused: refused}
-}
-
-// savedErrandTimeout reads the errand wait saved in Vault. A value that
-// isn't text comes back as an error, so it is refused and reported.
-func savedErrandTimeout(ctx context.Context, store Store) (string, bool, error) {
-	if store == nil {
-		return "", false, nil
-	}
-
-	record, err := Read(ctx, store)
-	if err != nil {
-		return "", false, err
-	}
-
-	raw, found := record[ErrandTimeoutKey]
-	if !found {
-		return "", false, nil
-	}
-
-	text, isText := raw.(string)
-	if !isText {
-		return "", false, fmt.Errorf("%w (the saved value is a %T)", ErrInvalidErrandTimeout, raw)
-	}
-
-	return text, true, nil
+	return ErrandChoice{Wait: wait, Source: source, Refused: refused}
 }
 
 // SaveErrandTimeout saves the errand wait to Vault as a duration, after it
 // checks the value. Every other saved setting stays as it was.
 func SaveErrandTimeout(ctx context.Context, store Store, raw string) error {
-	wait, err := ParseErrandTimeout(raw)
-	if err != nil {
-		return err
-	}
-
-	if store == nil {
-		return ErrNoStore
-	}
-
-	return Save(ctx, store, ErrandTimeoutKey, wait.String())
+	return errandSetting.save(ctx, store, raw)
 }

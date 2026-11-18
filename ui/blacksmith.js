@@ -10969,6 +10969,8 @@
     const errandSource = settings.errand_timeout_source ? ` Now set by: ${settings.errand_timeout_source}.` : '';
     const updateRollback = settings.update_rollback === true;
     const rollbackSource = settings.update_rollback_source ? ` Now set by: ${settings.update_rollback_source}.` : '';
+    const cleanupRetry = settings.cleanup_retry_interval || '';
+    const cleanupRetrySource = settings.cleanup_retry_interval_source ? ` Now set by: ${settings.cleanup_retry_interval_source}.` : '';
 
     let html = '<div class="blacksmith-settings">';
 
@@ -11015,6 +11017,15 @@
           <span id="help-update-rollback" class="settings-hint">When on, the broker redeploys the last good manifest once after a failed instance update. Off by default. The broker doesn't accept instance updates yet, so this has no effect until it does. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(rollbackSource)}</span>
           <span id="feedback-update-rollback" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settings-cleanup-retry-interval">Cleanup Retry Interval</label>
+          <div class="settings-input-group">
+            <input type="text" id="settings-cleanup-retry-interval" class="settings-input" value="${escapeAttribute(String(cleanupRetry))}" placeholder="e.g. 15m, 1h" aria-describedby="help-cleanup-retry-interval feedback-cleanup-retry-interval" />
+            <button type="button" id="apply-cleanup-retry-interval" class="settings-apply-btn" aria-label="Apply cleanup retry interval">Apply</button>
+          </div>
+          <span id="help-cleanup-retry-interval" class="settings-hint">How often the broker tries again to delete the deployment of a failed provision whose delete did not go through (minimum 1m). An instance that keeps failing waits twice as long each time, up to six hours. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(cleanupRetrySource)}</span>
+          <span id="feedback-cleanup-retry-interval" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
+        </div>
       </div>
     `;
 
@@ -11043,7 +11054,8 @@
       {id:'max-versions', key:'vault_max_versions', name:'Vault maximum versions', number:true},
       {id:'reconciler-interval', key:'reconciler_interval', name:'Reconciler interval', empty:'Enter an interval, for example 1h, 30m, or 5m.'},
       {id:'errand-timeout', key:'errand_timeout', name:'Errand timeout', empty:'Enter a duration, for example 30m or 1h.'},
-      {id:'update-rollback', key:'update_rollback', name:'Update rollback', boolean:true}
+      {id:'update-rollback', key:'update_rollback', name:'Update rollback', boolean:true},
+      {id:'cleanup-retry-interval', key:'cleanup_retry_interval', name:'Cleanup retry interval', empty:'Enter an interval of at least 1m, for example 15m or 1h.'}
     ];
     fields.forEach(field => {
       const input = document.getElementById(`settings-${field.id}`);

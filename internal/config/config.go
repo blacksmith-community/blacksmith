@@ -26,6 +26,9 @@ var (
 	ErrBOSHTaskWatchMaxNegative   = errors.New("bosh.task_watch_max must not be negative")
 	// ErrBrokerErrandTimeoutNotPositive means broker.errand_timeout was set to zero or less.
 	ErrBrokerErrandTimeoutNotPositive = errors.New("broker.errand_timeout must be greater than zero")
+	// ErrBrokerCleanupRetryIntervalTooShort means
+	// broker.cleanup_retry_interval was set below MinCleanupRetryInterval.
+	ErrBrokerCleanupRetryIntervalTooShort = errors.New("broker.cleanup_retry_interval must be at least one minute")
 	// ErrBOSHDirectorWorkersTooFew is the error a bosh.director_workers of 1 or
 	// less loads with, other than 0.
 	ErrBOSHDirectorWorkersTooFew = errors.New("bosh.director_workers must be at least 2")
@@ -260,6 +263,12 @@ type BrokerConfig struct {
 	// a failed instance update. Absent means off. A value saved in the
 	// Vault settings or set in BLACKSMITH_UPDATE_ROLLBACK comes first.
 	UpdateRollback *bool `yaml:"update_rollback,omitempty"`
+	// CleanupRetryInterval is how often the broker tries again to delete
+	// the deployments of failed provisions whose cleanup is still owed, as
+	// a duration such as 15m. Absent means 15 minutes, and a value under
+	// one minute fails the load. A value saved in the Vault settings or
+	// set in BLACKSMITH_CLEANUP_RETRY_INTERVAL comes first.
+	CleanupRetryInterval *time.Duration `yaml:"cleanup_retry_interval,omitempty"`
 }
 
 // DefaultErrandTimeout is the errand wait when broker.errand_timeout is
@@ -274,6 +283,19 @@ const ErrandTimeoutEnvKey = "BLACKSMITH_ERRAND_TIMEOUT"
 // after a failed update on or off, below a value saved in the Vault
 // settings and above broker.update_rollback.
 const UpdateRollbackEnvKey = "BLACKSMITH_UPDATE_ROLLBACK"
+
+// DefaultCleanupRetryInterval is how often the broker retries owed
+// cleanups when no layer sets the interval.
+const DefaultCleanupRetryInterval = 15 * time.Minute
+
+// MinCleanupRetryInterval is the shortest interval between retries of owed
+// cleanups, because each pass reads every instance's record.
+const MinCleanupRetryInterval = time.Minute
+
+// CleanupRetryIntervalEnvKey is the environment variable that sets the
+// interval between retries of owed cleanups, below a value saved in the
+// Vault settings and above broker.cleanup_retry_interval.
+const CleanupRetryIntervalEnvKey = "BLACKSMITH_CLEANUP_RETRY_INTERVAL"
 
 // ErrandWait returns the longest the broker waits for an errand.
 func (b BrokerConfig) ErrandWait() time.Duration {
@@ -422,6 +444,11 @@ func ReadConfig(path string) (Config, error) {
 
 	if config.Broker.ErrandTimeout != nil && *config.Broker.ErrandTimeout <= 0 {
 		return config, fmt.Errorf("%w: it is %v, and it must be a duration such as 30m, or absent for the default of %v", ErrBrokerErrandTimeoutNotPositive, *config.Broker.ErrandTimeout, DefaultErrandTimeout)
+	}
+
+	if config.Broker.CleanupRetryInterval != nil && *config.Broker.CleanupRetryInterval < MinCleanupRetryInterval {
+		return config, fmt.Errorf("%w: it is %v, and it must be a duration such as 15m, or absent for the default of %v",
+			ErrBrokerCleanupRetryIntervalTooShort, *config.Broker.CleanupRetryInterval, DefaultCleanupRetryInterval)
 	}
 
 	err = setBOSHDefaults(&config)

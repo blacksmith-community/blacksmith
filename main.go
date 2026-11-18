@@ -1698,6 +1698,14 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 		return err
 	}
 
+	// The sweep of owed cleanups tries again, after each interval, the
+	// cleanups of failed provisions whose delete did not go through. Its
+	// first pass comes one interval after the start, once re-adoption has
+	// run the cleanups owed at start.
+	if boshDirector != nil {
+		brokerInstance.StartOwedCleanupSweep()
+	}
+
 	err = backfillDeploymentNames(ctx, brokerInstance, boshDirector, logger)
 	if err != nil {
 		return err

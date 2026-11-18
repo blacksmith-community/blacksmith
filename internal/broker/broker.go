@@ -4099,7 +4099,8 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 	// accepted without the settle lock, so the write lands only while the
 	// record still holds this provision, and no cleanup starts unless it
 	// lands. A write that lands while its answer is lost leaves the mark,
-	// and the next poll or start runs the cleanup from it.
+	// and the next poll, the next start, or the sweep of owed cleanups
+	// runs the cleanup from it.
 	unrecorded, recordedFailure := b.recordProvisionFailed(ctx, instanceID, recorded, description, taskID, logger)
 	if !recordedFailure {
 		return unrecorded, nil
@@ -4263,9 +4264,11 @@ func (b *Broker) resumeOwedCleanup(ctx context.Context, instanceID, deploymentNa
 // The settle lock is held until the cleanup is done, so of the cleanups a
 // failure, its polls, and a start may begin, only the first sends the
 // delete. Once the delete is sent, or the director says the deployment is
-// gone, the mark comes off the record. When the director cannot be asked
-// or refuses the delete, the mark stays, and the next poll or start tries
-// again.
+// gone, the mark comes off the record. When the director cannot be asked,
+// refuses the delete, or does not answer in time, the mark stays. A poll
+// of the provision runs the cleanup again, and so do the next start and
+// the sweep of owed cleanups, which tries it after each
+// cleanup_retry_interval with a backoff that doubles up to six hours.
 func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout())
 	defer cancel()
@@ -4295,7 +4298,7 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploy
 
 	err = b.Vault.ClearCleanupPending(clearCtx, instanceID, operationTypeProvision, recorded.ContextID)
 	if err != nil {
-		logger.Error("Instance %s: the cleanup of deployment %s is done, and the record still says it is owed, so a later poll or start sends the delete again: %s",
+		logger.Error("Instance %s: the cleanup of deployment %s is done, and the record still says it is owed, so the sweep of owed cleanups sends the delete again: %s",
 			instanceID, deploymentName, err)
 	}
 }

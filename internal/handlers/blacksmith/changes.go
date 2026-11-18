@@ -14,10 +14,11 @@ const (
 	// settingsTarget names the broker's own settings in a change record.
 	settingsTarget = "broker"
 
-	settingVaultMaxVersions   = "vault_max_versions"
-	settingReconcilerInterval = "reconciler_interval"
-	settingErrandTimeout      = "errand_timeout"
-	settingUpdateRollback     = "update_rollback"
+	settingVaultMaxVersions     = "vault_max_versions"
+	settingReconcilerInterval   = "reconciler_interval"
+	settingErrandTimeout        = "errand_timeout"
+	settingUpdateRollback       = "update_rollback"
+	settingCleanupRetryInterval = "cleanup_retry_interval"
 
 	// defaultChangeList is how many changes a page shows unless it asks
 	// for another number.

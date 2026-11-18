@@ -12,6 +12,10 @@ import (
 // errorKey is the key of the message in a refused save's answer.
 const errorKey = "error"
 
+// errandTimeoutRefusal is the answer to an errand_timeout that is not a
+// duration above zero.
+const errandTimeoutRefusal = "errand_timeout must be a duration above zero, such as '45m' or '1h30m'"
+
 // errandChoice is the errand wait in effect, from the Vault settings, the
 // environment, the configuration, or the default.
 func (h *Handler) errandChoice(ctx context.Context) settings.ErrandChoice {
@@ -38,9 +42,7 @@ func (h *Handler) saveErrandTimeout(ctx context.Context, responseWriter http.Res
 	wait, err := settings.ParseErrandTimeout(raw)
 	if err != nil {
 		responseWriter.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(responseWriter, map[string]interface{}{
-			errorKey: "errand_timeout must be a duration above zero, such as '45m' or '1h30m'",
-		}, nil)
+		response.HandleJSON(responseWriter, map[string]interface{}{errorKey: errandTimeoutRefusal}, nil)
 
 		return false
 	}

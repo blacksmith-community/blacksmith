@@ -490,6 +490,10 @@ func (h *Handler) GetSettings(responseWriter http.ResponseWriter, req *http.Requ
 	result[settingUpdateRollback] = rollback.On
 	result[settingUpdateRollback+"_source"] = rollback.Source
 
+	cleanupRetry := h.cleanupRetryChoice(ctx)
+	result[settingCleanupRetryInterval] = cleanupRetry.Interval.String()
+	result[settingCleanupRetryInterval+"_source"] = cleanupRetry.Source
+
 	response.HandleJSON(responseWriter, result, nil)
 }
 
@@ -571,16 +575,21 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 		return
 	}
 
+	if body.CleanupRetryInterval != nil && !h.saveCleanupRetryInterval(ctx, responseWriter, *body.CleanupRetryInterval, result) {
+		return
+	}
+
 	response.HandleJSON(responseWriter, result, nil)
 }
 
 // settingsRequest is the body of a settings update. A nil field is left
 // alone.
 type settingsRequest struct {
-	VaultMaxVersions   *int    `json:"vault_max_versions"`
-	ReconcilerInterval *string `json:"reconciler_interval"`
-	ErrandTimeout      *string `json:"errand_timeout"`
-	UpdateRollback     *bool   `json:"update_rollback"`
+	VaultMaxVersions     *int    `json:"vault_max_versions"`
+	ReconcilerInterval   *string `json:"reconciler_interval"`
+	ErrandTimeout        *string `json:"errand_timeout"`
+	UpdateRollback       *bool   `json:"update_rollback"`
+	CleanupRetryInterval *string `json:"cleanup_retry_interval"`
 }
 
 // Cleanup reports that the manual cleanup job does not exist. The reconciler
@@ -1143,6 +1152,26 @@ func (h *Handler) formatManifestResponse(manifestYAML string) map[string]interfa
 	}
 }
 
+// refusedSettingDuration returns the refusal of the first duration in body
+// that the Vault settings would not keep, or "" when there is none.
+func refusedSettingDuration(body *settingsRequest) string {
+	if body.ErrandTimeout != nil {
+		_, err := settings.ParseErrandTimeout(*body.ErrandTimeout)
+		if err != nil {
+			return errandTimeoutRefusal
+		}
+	}
+
+	if body.CleanupRetryInterval != nil {
+		_, err := settings.ParseCleanupRetryInterval(*body.CleanupRetryInterval)
+		if err != nil {
+			return cleanupRetryRefusal
+		}
+	}
+
+	return ""
+}
+
 // validateSettings refuses a request that holds a bad value, or that names a
 // setting whose store is missing, before anything is saved. It answers the
 // request itself and returns false on a refusal.
@@ -1165,14 +1194,11 @@ func (h *Handler) validateSettings(responseWriter http.ResponseWriter, body *set
 		}
 	}
 
-	if body.ErrandTimeout != nil {
-		_, err := settings.ParseErrandTimeout(*body.ErrandTimeout)
-		if err != nil {
-			return refuse(http.StatusBadRequest, "errand_timeout must be a duration above zero, such as '45m' or '1h30m'")
-		}
+	if message := refusedSettingDuration(body); message != "" {
+		return refuse(http.StatusBadRequest, message)
 	}
 
-	if (body.VaultMaxVersions != nil || body.ErrandTimeout != nil || body.UpdateRollback != nil) && h.vault == nil {
+	if (body.VaultMaxVersions != nil || body.ErrandTimeout != nil || body.UpdateRollback != nil || body.CleanupRetryInterval != nil) && h.vault == nil {
 		return refuse(http.StatusServiceUnavailable, "vault is not available")
 	}
 

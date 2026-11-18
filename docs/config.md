@@ -188,6 +188,7 @@ broker:
   idle_timeout: 300             # HTTP idle timeout (seconds)
   errand_timeout: 30m           # Longest wait for a BOSH errand (duration)
   update_rollback: false        # Redeploy the last good manifest after a failed update
+  cleanup_retry_interval: 15m   # How often owed cleanups of failed provisions are retried
   tls:                          # TLS configuration (see TLS section)
     enabled: true
     port: "443"
@@ -268,6 +269,23 @@ The broker takes the setting from the first of these that holds a usable value, 
 - The default of `false`
 
 The environment variable takes `true` or `false`, and the other forms Go's `strconv.ParseBool` reads, such as `1` and `0`. A layer whose value isn't a boolean is skipped, and the broker writes a warning to its log that names the layer and the reason. A value in the configuration file that isn't a boolean fails the load. When the Vault settings can't be read, the rollback counts as off rather than falling through to a lower layer, because a rollback is a redeploy and the broker never redeploys on a guess. The Settings page and the settings API show the value now in effect, and the layer it comes from.
+
+#### `cleanup_retry_interval` (duration)
+**Default:** `15m`
+
+When a provision fails after its deploy was sent, the broker deletes the deployment it left and marks the instance's record until the delete goes through. If the director refuses the delete or doesn't answer in time, the mark stays. A sweep in the broker then tries the cleanup again after each interval, and an instance whose cleanup keeps failing waits twice as long after each try, up to six hours. Each try reads the record again under the instance's lock, so once one cleanup has sent the delete, no later try sends it again. The sweep deletes only a deployment that the instance's index entry or record names as minted for that instance.
+
+The broker takes the interval from the first of these that holds a usable value, in this order:
+
+- The runtime setting `cleanup_retry_interval`, saved in Vault from the Settings page or with a POST to `/b/blacksmith/settings`
+
+- The environment variable `BLACKSMITH_CLEANUP_RETRY_INTERVAL`
+
+- This `broker.cleanup_retry_interval` setting in the configuration file
+
+- The default of `15m`
+
+Every layer takes a duration of at least `1m`, so a bare number is refused, and so is a shorter value. A layer that is refused is skipped, and the broker writes a warning to its log that names the layer and the reason. A refused value in the configuration file also fails the load. The sweep reads the interval again before each wait, so a saved change takes effect after the current wait without a restart. The Settings page and the settings API show the interval now in effect, and the layer it comes from.
 
 #### `tls` (TLSConfig)
 **Default:** See TLS Configuration section

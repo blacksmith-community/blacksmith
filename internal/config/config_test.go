@@ -764,6 +764,29 @@ func TestBrokerErrandTimeoutRejectsBadValues(t *testing.T) {
 	}
 }
 
+// broker.cleanup_retry_interval is a duration of at least a minute. It
+// loads as written, and one under a minute fails the load and names the
+// setting.
+func TestBrokerCleanupRetryIntervalLoadsAndRefusesShortValues(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.ReadConfig(writeBOSHConfig(t, "broker:\n  cleanup_retry_interval: 20m\n"))
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	if got := cfg.Broker.CleanupRetryInterval; got == nil || *got != 20*time.Minute {
+		t.Errorf("CleanupRetryInterval = %v, want 20m", got)
+	}
+
+	for _, value := range []string{"0s", "-5m", "59s"} {
+		_, err := config.ReadConfig(writeBOSHConfig(t, "broker:\n  cleanup_retry_interval: "+value+"\n"))
+		if !errors.Is(err, config.ErrBrokerCleanupRetryIntervalTooShort) || !strings.Contains(err.Error(), "cleanup_retry_interval") {
+			t.Errorf("a broker.cleanup_retry_interval of %q loaded with %v, want ErrBrokerCleanupRetryIntervalTooShort", value, err)
+		}
+	}
+}
+
 // A bosh.ssh block that sets only a connect timeout or only websocket
 // fields still moves to the top-level ssh block.
 func TestLegacySSHBlockWithOnlyConnectOrWebSocketFieldsMigrates(t *testing.T) {

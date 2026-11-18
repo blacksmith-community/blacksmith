@@ -982,6 +982,58 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Consistently(func() []string { return director.Calls(directorDeleteDeployment) }, 200*time.Millisecond).Should(HaveLen(1))
 	})
 
+	It("the cleanup sweep retries a delete the director timed out on, and deletes the deployment once", func() {
+		restore = append(restore, broker.SetCleanupRetryInterval(50*time.Millisecond))
+
+		indexInstance(nil)
+		Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
+
+		var attempts, accepted atomic.Int32
+
+		director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {
+			if attempts.Add(1) == 1 {
+				return nil, fmt.Errorf("deleting the deployment: %w", context.DeadlineExceeded)
+			}
+
+			accepted.Add(1)
+
+			return &bosh.Task{ID: cleanupTask, State: outcomeTaskDone, Description: outcomeDeleteDeployment}, nil
+		}
+
+		brokerInstance := newBroker(director)
+		brokerInstance.CleanupFailedDeployment(ctx, instanceID, deploymentName)
+		Expect(recorded().CleanupPending).To(BeTrue(), "a delete that timed out leaves the cleanup owed")
+
+		brokerInstance.StartOwedCleanupSweep()
+
+		Eventually(func() bool { return recorded().CleanupPending }, 10*time.Second).Should(BeFalse())
+		Consistently(accepted.Load, 500*time.Millisecond).Should(Equal(int32(1)))
+		Expect(director.Calls(directorDeleteDeployment)).To(Equal([]string{deploymentName, deploymentName}))
+		Expect(recorded().State).To(Equal("failed"))
+	})
+
+	It("the cleanup sweep backs off from a cleanup the director keeps refusing", func() {
+		restore = append(restore, broker.SetCleanupRetryInterval(50*time.Millisecond))
+
+		indexInstance(nil)
+		Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
+
+		director.DeleteDeploymentFn = func(string) (*bosh.Task, error) { return nil, errDirectorUnreachable }
+
+		newBroker(director).StartOwedCleanupSweep()
+
+		// Passes run every 50ms, and the tries wait 50, 100, 200, and
+		// 400ms after each other, so about four of the 24 passes in 1.2s
+		// try the cleanup.
+		Eventually(func() []string { return director.Calls(directorDeleteDeployment) }, 10*time.Second).ShouldNot(BeEmpty())
+		time.Sleep(1200 * time.Millisecond)
+
+		tries := len(director.Calls(directorDeleteDeployment))
+		Expect(tries).To(BeNumerically(">=", 2))
+		Expect(tries).To(BeNumerically("<=", 7), "the sweep must back off rather than try on every pass")
+		Expect(recorded().CleanupPending).To(BeTrue())
+	})
+
 	It("boot re-adoption fails a provision whose index entry is gone and whose record names no deployment, and deletes nothing", func() {
 		recordProvision(createTaskID)
 		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
@@ -1010,7 +1062,9 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 
 		boot(director)
 
-		Consistently(func() int { return len(director.Calls("GetDeployment")) + len(director.Calls(directorDeleteDeployment)) }, 300*time.Millisecond).Should(BeZero())
+		Consistently(func() int {
+			return len(director.Calls("GetDeployment")) + len(director.Calls(directorDeleteDeployment))
+		}, 300*time.Millisecond).Should(BeZero())
 		Expect(recorded().CleanupPending).To(BeTrue())
 	})
 
