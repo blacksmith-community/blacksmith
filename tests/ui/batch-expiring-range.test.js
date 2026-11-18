@@ -1,7 +1,8 @@
 const {test,expect,afterEach}=require('bun:test');
+const {main:{idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {setupRotate,cert}=require('./rotate-flow-support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const envs=[];
 afterEach(()=>{while(envs.length){const env=envs.pop();expect(env.alerts).toEqual([]);env.w.close();}});
 const certs=[
@@ -19,11 +20,11 @@ const open=async(list=certs)=>{
  return env;
 };
 const change=(w,el,value)=>{el.value=value;el.dispatchEvent(new w.Event('change',{bubbles:true}));};
-const choose=async(env,value)=>{change(env.w,env.d.getElementById('batch-expiring'),value);await env.sleep(10);};
+const choose=async(env,value)=>{change(env.w,env.d.getElementById('batch-expiring'),value);await idle(env);};
 const range=async(env,from,to)=>{
  change(env.w,env.d.getElementById('batch-expiring-from'),from);
  change(env.w,env.d.getElementById('batch-expiring-to'),to);
- await env.sleep(10);
+ await idle(env);
 };
 
 t('Custom range is the last choice and opens two labelled date fields',async()=>{
@@ -121,8 +122,8 @@ t('a custom range comes back with the rotate draft after another operation',asyn
  const env=await open();const {d,T}=env;
  await choose(env,'custom');
  await range(env,dateOf(20),dateOf(100));
- await T.requestOperation('upgrade');await env.sleep(20);
- await T.requestOperation('rotate');await env.sleep(40);
+ await T.requestOperation('upgrade');await idle(env);
+ await T.requestOperation('rotate');await idle(env);
  expect(d.getElementById('batch-expiring').value).toBe('custom');
  expect(d.getElementById('batch-expiring-from').value).toBe(dateOf(20));
  expect(d.getElementById('batch-expiring-to').value).toBe(dateOf(100));

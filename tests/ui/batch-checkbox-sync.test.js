@@ -1,14 +1,14 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 async function setup(){
  const env=boot(),{w,d}=env;
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
- await sleep(30);
+ await idle(w);
  w.serviceInstances=Object.fromEntries(Array.from({length:60},(_,i)=>[`inst-${String(i).padStart(3,'0')}`,{service_id:'valkey',plan_id:'cluster',name:`Cache ${i}`}]));
  d.getElementById('upgrade').classList.add('active');
- await w.__T.initUpgradeTab();await sleep(30);
+ await w.__T.initUpgradeTab();await idle(w);
  w.__T.setBatchStep(2,false);
  return env;
 }

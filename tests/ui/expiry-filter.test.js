@@ -1,7 +1,8 @@
 const {test,expect}=require('bun:test');
+const {main:{idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {setupRotate,cert}=require('./rotate-flow-support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const certs=[
  cert('/s/a_crt','a_crt',5,'inst-a','cache-a'),
  cert('/s/b_crt','b_crt',20,'inst-b','cache-b'),
@@ -30,32 +31,32 @@ t('the filter sits with the other filters and adds no heading or description',as
  }finally{w.close();}
 });
 t('the filter narrows the list, counts expired certificates, and selects nothing',async()=>{
- const {w,d,T,sleep}=await setupRotate({certs});try{
+ const {w,d,T}=await setupRotate({certs});try{
  T.setBatchStep(2,false);
  expect(shown(d)).toEqual(['inst-a','inst-b','inst-c','inst-d','inst-e']);
- setFilter(w,d,'30');await sleep(10);
+ setFilter(w,d,'30');await idle(w);
  expect(shown(d)).toEqual(['inst-a','inst-b','inst-e']);
  expect(selected(T)).toEqual([]);
- setFilter(w,d,'7');await sleep(10);
+ setFilter(w,d,'7');await idle(w);
  expect(shown(d)).toEqual(['inst-a','inst-e']);
  expect(selected(T)).toEqual([]);
  }finally{w.close();}
 });
 t('Select all matching takes only the filtered instances',async()=>{
- const {w,d,T,sleep}=await setupRotate({certs});try{
+ const {w,d,T}=await setupRotate({certs});try{
  T.setBatchStep(2,false);
- setFilter(w,d,'30');await sleep(10);
- d.getElementById('batch-select-matching').click();await sleep(10);
+ setFilter(w,d,'30');await idle(w);
+ d.getElementById('batch-select-matching').click();await idle(w);
  expect(selected(T)).toEqual(['inst-a','inst-b','inst-e']);
  }finally{w.close();}
 });
 t('clearing the filter restores the list and keeps the selection in agreement',async()=>{
- const {w,d,T,sleep}=await setupRotate({certs});try{
+ const {w,d,T}=await setupRotate({certs});try{
  T.setBatchStep(2,false);
- setFilter(w,d,'30');await sleep(10);
+ setFilter(w,d,'30');await idle(w);
  d.querySelector('[data-instance-id="inst-a"] .upgrade-instance-id').click();
- setFilter(w,d,'7');await sleep(10);
- setFilter(w,d,'');await sleep(10);
+ setFilter(w,d,'7');await idle(w);
+ setFilter(w,d,'');await idle(w);
  expect(shown(d)).toEqual(['inst-a','inst-b','inst-c','inst-d','inst-e']);
  expect(selected(T)).toEqual(['inst-a']);
  const row=(id)=>d.querySelector(`[data-instance-id="${id}"]`);
@@ -65,20 +66,20 @@ t('clearing the filter restores the list and keeps the selection in agreement',a
  expect(row('inst-b').classList.contains('selected')).toBe(false);
  expect(d.getElementById('batch-flow-context').textContent).toBe('1 instance selected');
  // a selection the filter hides stays selected and counted
- setFilter(w,d,'90');await sleep(10);
+ setFilter(w,d,'90');await idle(w);
  d.querySelector('[data-instance-id="inst-b"] .upgrade-instance-id').click();
- setFilter(w,d,'7');await sleep(10);
+ setFilter(w,d,'7');await idle(w);
  expect(shown(d)).toEqual(['inst-a','inst-e']);
  expect(selected(T)).toEqual(['inst-a','inst-b']);
  expect(d.getElementById('batch-flow-context').textContent).toBe('2 instances selected · 1 hidden by filters');
  }finally{w.close();}
 });
 t('an inventory refresh recomputes the filtered list',async()=>{
- const {w,d,T,sleep,setInventory}=await setupRotate({certs});try{
+ const {w,d,T,setInventory}=await setupRotate({certs});try{
  T.setBatchStep(2,false);
- setFilter(w,d,'30');await sleep(10);
+ setFilter(w,d,'30');await idle(w);
  setInventory({certificates:certs.filter(c=>c.key!=='/s/a_crt')});
- await T.loadRotateInventory({silent:true});await sleep(30);
+ await T.loadRotateInventory({silent:true});await idle(w);
  expect(shown(d)).toEqual(['inst-b','inst-e']);
  }finally{w.close();}
 });

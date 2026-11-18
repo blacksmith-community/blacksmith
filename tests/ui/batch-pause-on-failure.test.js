@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {expectNoAlerts}=require('./certificates/no-alerts.js');
 const {setupRotate,cert}=require('./rotate-flow-support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // Every env a test boots, checked once the test ends so a dialog call that
 // the UI code swallows still fails it, along with any console error.
@@ -19,10 +19,10 @@ async function setupUpgrade(){
   ['/b/upgrade/preview',(u,o,j)=>j(200,{id:'p1',diverged:[]})],
   [/\/b\/upgrade\/tasks\/task-1$/,(u,o,j)=>j(200,{id:'task-1',kind:'upgrade',status:'running',total_count:1,instances:[]})],
   [/\/b\/upgrade\/tasks$/,(u,o,j)=>o.method==='POST'?j(201,{id:'task-1'}):j(200,[])]);
- await sleep(30);
+ await idle(w);
  w.plansData={services:[{id:'valkey',name:'valkey'}]};w.serviceInstances={cache:{service_id:'valkey',plan_id:'small',deployment_name:'small-cache',plan:{id:'small',releases:[]}}};
  d.getElementById('upgrade').classList.add('active');
- await w.__T.initUpgradeTab();await sleep(60);
+ await w.__T.initUpgradeTab();await idle(w);
  return env;
 }
 const pick=(w,el,v)=>{el.value=v;el.dispatchEvent(new w.Event('change',{bubbles:true}));};
@@ -33,12 +33,12 @@ const reviewUpgrade=async(env)=>{
  const {w,d}=env;
  pick(w,d.getElementById('upgrade-advrel-bpm'),'1.4.26');
  w.__T.selectedUpgradeInstances.add('cache');w.__T.updateUpgradeButton();
- w.__T.runBatchReview();await sleep(60);
+ w.__T.runBatchReview();await idle(w);
  expect(d.getElementById('batch-review-pause')!==null).toBe(true);
 };
 const createUpgrade=async(env)=>{
  await reviewUpgrade(env);
- env.d.getElementById('batch-flow-next').click();await sleep(60);
+ env.d.getElementById('batch-flow-next').click();await idle(env);
  return posts(env.calls,/\/b\/upgrade\/tasks /);
 };
 
@@ -105,15 +105,15 @@ async function openRotate(settings){
  if(settings) setInventory({settings:{warning_days:30,critical_days:7,...settings}});
  w.__routes.unshift(['/b/certificates/rotation/preview',(u,o,j)=>j(200,{preview_id:'pv-1',expires_at:'2027-01-01T00:00:00Z',instances:[pvInst],warnings:[]})],
   [/\/b\/upgrade\/tasks$/,(u,o,j)=>o.method==='POST'?j(201,{id:'task-1'}):j(200,[])]);
- await w.__T.requestOperation('rotate');await sleep(80);
+ await w.__T.requestOperation('rotate');await idle(w);
  return env;
 }
 const createRotate=async(env)=>{
  const {w,d,T,calls}=env;
- w.blacksmithCerts.selection.set('inst-a',new Set([K]));T.renderRotateInstances();T.updateOperationFooter();await sleep(20);
+ w.blacksmithCerts.selection.set('inst-a',new Set([K]));T.renderRotateInstances();T.updateOperationFooter();await idle(w);
  d.getElementById('rotate-preview').click();
- for(let i=0;i<50&&!d.querySelector('#dialog-modal[open]');i++) await sleep(10);
- d.querySelector('#dialog-modal [data-dialog-role="confirm"]').click();await sleep(80);
+ for(let i=0;i<50&&!d.querySelector('#dialog-modal[open]');i++) await idle(w);
+ d.querySelector('#dialog-modal [data-dialog-role="confirm"]').click();await idle(w);
  return posts(calls,/\/b\/upgrade\/tasks /);
 };
 
@@ -156,7 +156,7 @@ t('an unticked certificate box goes back to the setting for the next job once th
  tick(w,d.getElementById('rotate-pause-on-failure'),false);
  const first=await createRotate(env);
  expect(first.map(b=>b.pause_on_failure)).toEqual([false]);
- await w.__T.requestOperation('rotate');await sleep(80);
+ await w.__T.requestOperation('rotate');await idle(w);
  expect(d.getElementById('rotate-pause-on-failure').checked).toBe(true);
  const both=await createRotate(env);
  expect(both.map(b=>b.pause_on_failure)).toEqual([false,true]);
@@ -166,9 +166,9 @@ t('an unticked certificate box goes back to the setting for the next job once th
 t('a command job shows fixed text that it always pauses, with no checkbox',async()=>{
  const env=boot(BOOT),{w,d}=env;envs.push(env);try{
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
- await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
- await w.__T.initUpgradeTab();await sleep(10);
- await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);await sleep(10);
+ await idle(w);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await w.__T.initUpgradeTab();await idle(w);
+ await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);await idle(w);
  const fixed=d.getElementById('command-pause-on-failure');
  expect(fixed.textContent).toContain('this job always pauses before the next deployment');
  expect(d.getElementById('rotate-pause-on-failure')).toBe(null);
@@ -180,8 +180,8 @@ const detail=(over={})=>({id:'task-9',kind:'upgrade',status:'paused',target_stem
 async function renderDetail(task){
  const env=boot(BOOT),{w,d}=env;envs.push(env);
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
- await sleep(30);w.plansData={services:[]};
- await w.__T.initUpgradeTab();await sleep(10);
+ await idle(w);w.plansData={services:[]};
+ await w.__T.initUpgradeTab();await idle(w);
  w.__T.renderTaskDetail(task);
  return {...env,summary:d.querySelector('#upgrade .task-detail-summary'),buttons:[...d.querySelectorAll('#upgrade .job-control-btn')].map(b=>b.textContent)};
 }
