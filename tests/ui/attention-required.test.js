@@ -173,3 +173,46 @@ test('a refused schema reason and plan name are escaped in the box',()=>{
   expect(section(host).querySelector('[data-attention="plan-schemas"]').textContent).toContain(evil);
  }finally{w.close();}
 });
+
+// A failed provision whose owed cleanup the broker refused is named in the
+// box with the deployment and the reason, so an operator can act on it. The
+// row holds off the all-clear, and what it shows is escaped.
+const refusedCleanups=(entries)=>({...quiet(),cleanup_attention:entries});
+
+test('a refused cleanup is listed by instance with its reason, and nothing is called clear',async()=>{
+ const {w,d}=boot({routes:[inventory([]),...settled]});
+ try{
+  const reason='Deployment standalone-another-instance was not named for this instance, so the broker does not delete it';
+  const input=refusedCleanups([{instance_id:'inst-9',deployment_name:'standalone-another-instance',reason,since:'2026-11-18T10:00:00Z'}]);
+  const host=mount(w,d,input);
+  await w.__T.refreshAttentionRequired(host,input);
+  const row=section(host).querySelector('[data-attention="cleanups"]');
+  expect(row).not.toBeNull();
+  expect(row.getAttribute('data-tone')).toBe('critical');
+  expect(row.textContent).toContain('1 failed provision whose cleanup the broker refused');
+  expect(row.textContent).toContain('inst-9');
+  expect(row.textContent).toContain('standalone-another-instance');
+  expect(row.textContent).toContain(reason);
+  expect(section(host).textContent).not.toContain('Nothing needs attention');
+ }finally{w.close();}
+});
+
+test('a refused cleanup is escaped, and its row adds no control and no data attribute that carries its values',()=>{
+ const {w,d}=boot();try{
+  const evil='"><img src=x onerror=alert(1)>';
+  const host=mount(w,d,refusedCleanups([{instance_id:evil,deployment_name:evil,reason:evil},{instance_id:'inst-2',reason:'Neither the record nor an index entry names a deployment'}]));
+  const row=section(host).querySelector('[data-attention="cleanups"]');
+  expect(section(host).querySelector('img')).toBeNull();
+  expect(row.textContent).toContain(evil);
+  expect(row.textContent).toContain('2 failed provisions whose cleanup the broker refused');
+  expect(row.querySelectorAll('a,button,input,select,textarea').length).toBe(0);
+  for(const node of row.querySelectorAll('*')) for(const attr of node.attributes) expect(attr.value).not.toContain('inst-');
+ }finally{w.close();}
+});
+
+test('an entry that is not an object is skipped, and a list of none adds no row',()=>{
+ const {w,d}=boot();try{
+  expect(section(mount(w,d,refusedCleanups([null,'x',7]))).querySelector('[data-attention="cleanups"]')).toBeNull();
+  expect(section(mount(w,d,refusedCleanups('x'))).querySelector('[data-attention="cleanups"]')).toBeNull();
+ }finally{w.close();}
+});

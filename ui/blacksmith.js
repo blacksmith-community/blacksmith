@@ -2872,7 +2872,11 @@
     // A plan whose parameter schema Cloud Controller would refuse is
     // published without it, and /b/status says why.
     const refusedSchemas = Object.values(data.plans || {}).filter(plan => plan && typeof plan.schema_refused === 'string' && plan.schema_refused);
-    if (!alerts.length && !refusedSchemas.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && !tasksUnsettled && attentionHealth.status === 'ready' && attentionOrphans.status === 'ready' && !attentionOrphans.orphans.length && !attentionOrphans.unclaimed.length) {
+    // A failed provision whose owed cleanup the broker refused, because
+    // nothing proves the deployment is the instance's own, waits for an
+    // operator, and /b/status names it.
+    const refusedCleanups = (Array.isArray(data.cleanup_attention) ? data.cleanup_attention : []).filter(item => item && typeof item === 'object');
+    if (!alerts.length && !refusedSchemas.length && !refusedCleanups.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && !tasksUnsettled && attentionHealth.status === 'ready' && attentionOrphans.status === 'ready' && !attentionOrphans.orphans.length && !attentionOrphans.unclaimed.length) {
       return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${unclaimedNote}${fetched(cert.fetchedAt)}`);
     }
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -2902,6 +2906,10 @@
       tier1.push(row('orphans', 'warning', parts.join('')));
     } else if (attentionOrphans.status === 'unknown') tier1.push(row('orphans', 'notice', '<p>Orphaned instances: <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">The orphan request failed</span></p>'));
     else if (attentionOrphans.status !== 'ready') tier1.push(row('orphans', 'notice', '<p>Orphaned instances: <span class="entity-attention-unknown">Loading</span></p>'));
+    if (refusedCleanups.length) {
+      const items = refusedCleanups.map(item => `<li>${escapeHtml(String(item.instance_id || ''))}${item.deployment_name ? ` <span class="entity-attention-state">${escapeHtml(String(item.deployment_name))}</span>` : ''} <span class="entity-attention-reason">${escapeHtml(String(item.reason || ''))}</span></li>`).join('');
+      tier1.push(row('cleanups', 'critical', `<p>${refusedCleanups.length === 1 ? '1 failed provision' : `${refusedCleanups.length} failed provisions`} whose cleanup the broker refused, left for you to review</p><ul>${items}</ul>`));
+    }
     if (refusedSchemas.length) {
       const items = refusedSchemas.map(plan => `<li>${escapeHtml([plan.service?.name, plan.name || plan.id].filter(Boolean).map(String).join(' '))} <span class="entity-attention-reason">${escapeHtml(plan.schema_refused)}</span></li>`).join('');
       tier1.push(row('plan-schemas', 'warning', `<p>${plural(refusedSchemas.length, 'plan')} published without ${refusedSchemas.length === 1 ? 'its' : 'their'} parameter schema</p><ul>${items}</ul>`));

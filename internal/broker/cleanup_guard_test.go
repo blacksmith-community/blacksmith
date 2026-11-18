@@ -35,12 +35,24 @@ type cleanupGuardRecord struct {
 	deletes bool
 }
 
-// recordFailedProvisionOwingCleanup records a provision that failed in
-// task 7 and still owes the delete of its deployment.
+// recordFailedProvisionOwingCleanup records a provision of the standalone
+// plan that failed in task 7 and still owes the delete of its deployment,
+// which its record names.
 func recordFailedProvisionOwingCleanup(ctx context.Context, vaultClient *internalVault.Vault, instanceID string) error {
-	err := vaultClient.TrackProgress(ctx, instanceID, outcomeProvision, "BOSH deployment in progress (task 7)", 7, nil)
+	return recordFailedProvisionNaming(ctx, vaultClient, instanceID, standalonePlanID+"-"+instanceID)
+}
+
+// recordFailedProvisionNaming records a provision that failed in task 7
+// and still owes the delete of its deployment, with deploymentName on its
+// record, or none when deploymentName is empty.
+func recordFailedProvisionNaming(ctx context.Context, vaultClient *internalVault.Vault, instanceID, deploymentName string) error {
+	err := vaultClient.TrackProgressWithDeployment(ctx, instanceID, outcomeProvision, "Creating BOSH deployment", "context-7", deploymentName, 0, nil)
 	if err == nil {
-		err = vaultClient.TrackFailedCleanupPending(ctx, instanceID, outcomeProvision, "BOSH deployment task 7 is error", "", 7)
+		err = vaultClient.TrackProgress(ctx, instanceID, outcomeProvision, "BOSH deployment in progress (task 7)", 7, nil)
+	}
+
+	if err == nil {
+		err = vaultClient.TrackFailedCleanupPending(ctx, instanceID, outcomeProvision, "BOSH deployment task 7 is error", "context-7", 7)
 	}
 
 	if err != nil {
@@ -255,5 +267,119 @@ func TestCleanupFailedDeployment_ClearsTheMarkAfterASlowDelete(t *testing.T) { /
 
 	if deletes := len(director.Calls(directorDeleteDeployment)); deletes != 1 || recorded.CleanupPending {
 		t.Fatalf("the cleanup sent %d deletes and left the mark %v, want 1 and false", deletes, recorded.CleanupPending)
+	}
+}
+
+// cleanupOwnership is a deployment a cleanup is asked to delete, the name
+// the instance's record holds, and whether the instance is indexed under
+// the standalone plan.
+type cleanupOwnership struct {
+	name     string
+	recorded func(instanceID string) string
+	asked    func(instanceID string) string
+	indexed  bool
+	deletes  bool
+}
+
+// The cleanup deletes only the instance's own deployment. The name it is
+// asked to delete must be the one recorded for the instance, which is the
+// record's, or the index entry's when the record holds none, and it must
+// be a name minted for the instance. Otherwise it deletes nothing, asks
+// the director nothing, and leaves the refusal where an operator sees it.
+func TestCleanupFailedDeployment_DeletesOnlyTheInstancesOwnDeployment(t *testing.T) {
+	t.Parallel()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start Vault: %v", err)
+	}
+
+	t.Cleanup(server.Close)
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+	ctx := context.Background()
+
+	own := func(instanceID string) string { return standalonePlanID + "-" + instanceID }
+	other := func(string) string { return standalonePlanID + "-another-instance" }
+	otherPlan := func(instanceID string) string { return "other-plan-" + instanceID }
+	none := func(string) string { return "" }
+
+	cases := []cleanupOwnership{
+		{"the record names the instance's deployment", own, own, false, true},
+		{"the record names another instance's deployment", other, other, false, false},
+		{"the cleanup is asked for another instance's deployment", own, other, false, false},
+		{"the cleanup is asked for a deployment the record does not name", own, otherPlan, false, false},
+		{"an unnamed record of an indexed instance", none, own, true, true},
+		{"an unnamed record of an indexed instance asked for another name", none, otherPlan, true, false},
+		{"an unnamed record with no index entry", none, own, false, false},
+	}
+
+	for index, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			instanceID := "cleanup-owner-" + strconv.Itoa(index)
+
+			err := recordFailedProvisionNaming(ctx, vaultClient, instanceID, entry.recorded(instanceID))
+			if err != nil {
+				t.Fatalf("failed to write the record: %v", err)
+			}
+
+			if entry.indexed {
+				err = vaultClient.Index(ctx, instanceID, map[string]interface{}{recordedPlanKey: standalonePlanID, serviceIDKey: recordedNameService})
+				if err != nil {
+					t.Fatalf("failed to index the instance: %v", err)
+				}
+			}
+
+			director := cleanupGuardDirector()
+			cleaner := &broker.Broker{BOSH: director, Vault: vaultClient}
+			asked := entry.asked(instanceID)
+
+			cleaner.CleanupFailedDeployment(ctx, instanceID, asked)
+
+			requireCleanupOwnership(ctx, t, cleaner, director, instanceID, asked, entry.deletes)
+		})
+	}
+}
+
+// requireCleanupOwnership checks that a cleanup asked for asked either
+// deleted it once and left nothing for an operator, or, when deletes is
+// false, asked the director nothing, left one attention entry naming the
+// instance and asked, and kept the mark on the record.
+func requireCleanupOwnership(ctx context.Context, t *testing.T, cleaner *broker.Broker, director *testutil.ScriptedBOSHDirector, instanceID, asked string, deletes bool) {
+	t.Helper()
+
+	deleted := director.Calls(directorDeleteDeployment)
+	attention := cleaner.CleanupAttention()
+
+	switch {
+	case deletes && (len(deleted) != 1 || deleted[0] != asked):
+		t.Fatalf("expected %s to be deleted once, got %v", asked, deleted)
+	case deletes && len(attention) != 0:
+		t.Fatalf("a cleanup that deleted its own deployment left %v for an operator", attention)
+	case deletes:
+		return
+	case len(deleted) != 0 || len(director.Calls("GetDeployment")) != 0:
+		t.Fatalf("the cleanup deleted %v and asked for %v, want no director call", deleted, director.Calls("GetDeployment"))
+	case len(attention) != 1 || attention[0].InstanceID != instanceID || attention[0].DeploymentName != asked || attention[0].Reason == "":
+		t.Fatalf("the refusal left %+v for an operator, want one entry for %s and %s", attention, instanceID, asked)
+	}
+
+	requireMarkKept(ctx, t, cleaner, instanceID)
+}
+
+// requireMarkKept checks that the record of instanceID still owes its
+// cleanup.
+func requireMarkKept(ctx context.Context, t *testing.T, cleaner *broker.Broker, instanceID string) {
+	t.Helper()
+
+	recorded, err := cleaner.RecordedOperation(ctx, instanceID)
+	if err != nil {
+		t.Fatalf("failed to read the record: %v", err)
+	}
+
+	if !recorded.CleanupPending {
+		t.Fatal("a refused cleanup took the mark off the record")
 	}
 }

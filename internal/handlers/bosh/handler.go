@@ -365,6 +365,14 @@ func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Reques
 		"plans":       plans,
 	}
 
+	// A failed provision whose owed cleanup the broker refused is named
+	// for the Attention required box, so an operator can act on it.
+	if reporter, ok := h.broker.(interfaces.CleanupAttentionReporter); ok {
+		if refused := reporter.CleanupAttention(); len(refused) > 0 {
+			status["cleanup_attention"] = refused
+		}
+	}
+
 	response.HandleJSON(responseWriter, status, nil)
 }
 

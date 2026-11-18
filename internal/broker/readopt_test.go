@@ -982,6 +982,19 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Consistently(func() []string { return director.Calls(directorDeleteDeployment) }, 200*time.Millisecond).Should(HaveLen(1))
 	})
 
+	It("boot fails an unindexed in-flight provision whose record names another instance's deployment, and deletes nothing", func() {
+		recordNamedProvision(createTaskID, planID+"-another-instance")
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
+
+		brokerInstance := boot(director)
+
+		Eventually(recordState, 10*time.Second).Should(Equal("failed"))
+		Eventually(brokerInstance.CleanupAttention, 10*time.Second).Should(HaveLen(1))
+		Expect(brokerInstance.CleanupAttention()[0].InstanceID).To(Equal(instanceID))
+		Consistently(func() []string { return director.Calls(directorDeleteDeployment) }, 500*time.Millisecond).Should(BeEmpty(), "it deletes another instance's deployment")
+		Expect(recorded().CleanupPending).To(BeTrue())
+	})
+
 	It("the cleanup sweep retries a delete the director timed out on, and deletes the deployment once", func() {
 		restore = append(restore, broker.SetCleanupRetryInterval(50*time.Millisecond))
 

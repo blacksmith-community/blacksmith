@@ -233,6 +233,10 @@ type Broker struct {
 	// readoptVault, when set, replaces Vault as the store the first phase
 	// of ReadoptInFlightOperations reads.
 	readoptVault readoptStore
+
+	// cleanupAttention holds an interfaces.CleanupAttention for each
+	// instance whose owed cleanup was refused, keyed by instance ID.
+	cleanupAttention sync.Map
 }
 
 // operationClaim is the claim an operation holds on an instance ID in
@@ -4259,7 +4263,10 @@ func (b *Broker) resumeOwedCleanup(ctx context.Context, instanceID, deploymentNa
 // and it asks the director nothing unless that record holds a provision
 // recorded as failed that still owes its cleanup. A record it cannot
 // read, or one that holds any other action, an unknown one, or none,
-// deletes nothing.
+// deletes nothing. It takes no caller's word for which deployment to
+// delete either: deploymentName must be minted for the instance and must
+// be the name recorded for it, as cleanupOwnsDeployment checks, or the
+// refusal is logged and shown on the overview and nothing is deleted.
 //
 // The settle lock is held until the cleanup is done, so of the cleanups a
 // failure, its polls, and a start may begin, only the first sends the
@@ -4283,6 +4290,12 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploy
 
 	recorded, owed := b.recordOwesCleanup(cleanupCtx, instanceID, deploymentName, logger)
 	if !owed {
+		b.forgetCleanupAttention(instanceID)
+
+		return
+	}
+
+	if !b.cleanupOwnsDeployment(cleanupCtx, instanceID, deploymentName, recorded, logger) {
 		return
 	}
 
@@ -4333,6 +4346,55 @@ func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentNa
 	}
 
 	return recorded, true
+}
+
+// cleanupOwnsDeployment reports whether deploymentName is the instance's
+// own deployment, which a cleanup may delete. The name must be minted for
+// the instance, and it must be the name recorded for the instance, which
+// is the one its record holds, or the one its index entry gives when the
+// record holds none. A record with no name and no index entry names no
+// deployment. Each refusal is logged and noted for the overview, and the
+// mark stays on the record. An index that cannot be read is a refusal the
+// next try may not repeat, so it is logged and nothing more.
+func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) bool {
+	recordedName := recorded.DeploymentName
+
+	if recordedName == "" {
+		readCtx, cancelRead := recordContext(ctx)
+		instance, indexed, err := b.Vault.FindInstance(readCtx, instanceID)
+
+		cancelRead()
+
+		if err != nil {
+			logger.Error("Refusing to delete deployment %s for instance %s: its record names no deployment, and its index entry could not be read: %s", deploymentName, instanceID, err)
+
+			return false
+		}
+
+		if indexed && instance != nil {
+			recordedName = instance.DeploymentNameFor(instanceID)
+		}
+	}
+
+	var reason string
+
+	switch {
+	case !mintedFor(deploymentName, instanceID):
+		reason = fmt.Sprintf("Deployment %s was not named for this instance, so the broker does not delete it", deploymentName)
+	case recordedName == "":
+		reason = fmt.Sprintf("Neither the record nor an index entry names a deployment for this instance, so the broker does not delete %s", deploymentName)
+	case recordedName != deploymentName:
+		reason = fmt.Sprintf("The cleanup was asked to delete %s, but the deployment recorded for this instance is %s, so the broker deletes neither", deploymentName, recordedName)
+	default:
+		b.forgetCleanupAttention(instanceID)
+
+		return true
+	}
+
+	logger.Error("Refusing to delete deployment %s for instance %s: %s. The record still says the cleanup is owed", deploymentName, instanceID, reason)
+	b.noteCleanupAttention(instanceID, deploymentName, reason)
+
+	return false
 }
 
 // deleteFailedDeployment sends the delete of a failed deployment when the

@@ -3,6 +3,7 @@ package interfaces
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
@@ -161,3 +162,19 @@ type RedisService interface {
 // Director interface for BOSH director operations.
 // This is an alias to the bosh.Director interface.
 type Director = bosh.Director
+
+// CleanupAttention is a failed provision whose owed cleanup the broker
+// will not run on its own, because nothing proves that the deployment it
+// would delete belongs to the instance. An operator decides what to do.
+type CleanupAttention struct {
+	InstanceID     string    `json:"instance_id"`
+	DeploymentName string    `json:"deployment_name,omitempty"`
+	Reason         string    `json:"reason"`
+	Since          time.Time `json:"since"`
+}
+
+// CleanupAttentionReporter is a broker that reports the owed cleanups it
+// refused to run.
+type CleanupAttentionReporter interface {
+	CleanupAttention() []CleanupAttention
+}
