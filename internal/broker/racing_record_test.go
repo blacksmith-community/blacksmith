@@ -37,6 +37,8 @@ type racingVault struct {
 	armed  bool
 	skip   int
 	landed bool
+	// refusing makes Vault refuse every write of the task record.
+	refusing bool
 }
 
 func newRacingVault(t *testing.T, target, instanceID string, land func()) *httptest.Server {
@@ -74,12 +76,39 @@ func armRacingVault(address string, skip int) {
 	racing.skip = skip
 }
 
+// refuseTaskWrites makes the proxy at address refuse, or pass again,
+// every write of the task record.
+func refuseTaskWrites(address string, refuse bool) {
+	value, _ := racingVaults.Load(address)
+
+	racing, _ := value.(*racingVault)
+
+	racing.mu.Lock()
+	defer racing.mu.Unlock()
+
+	racing.refusing = refuse
+}
+
 func (r *racingVault) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet && strings.HasSuffix(request.URL.Path, r.taskPath) && r.refuses() {
+		http.Error(writer, `{"errors":["write refused by the test"]}`, http.StatusBadRequest)
+
+		return
+	}
+
 	if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, r.taskPath) && r.due() {
 		r.land()
 	}
 
 	r.proxy.ServeHTTP(writer, request)
+}
+
+// refuses reports whether writes of the task record are refused.
+func (r *racingVault) refuses() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.refusing
 }
 
 // due reports whether the write lands before this read.

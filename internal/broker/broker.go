@@ -4126,9 +4126,12 @@ func (b *Broker) recordSucceeded(ctx context.Context, instanceID, description st
 // recordProvisionFailed records the provision that recorded holds, which
 // ran as taskID, as failed, and reports true when the write landed. The
 // write lands only while the record still holds that provision unsettled.
-// When it does not land, it returns the answer to give instead. A record
-// that now holds another operation is left to that operation, and the
-// answer is in progress.
+// When it does not land, it returns the in progress answer to give
+// instead. A record that now holds another operation is left to that
+// operation. A write that failed is tried again by the next poll, which
+// finds the same failed task, because Cloud Controller stops polling on a
+// failed answer and nothing else would record the failure or start the
+// cleanup.
 func (b *Broker) recordProvisionFailed(ctx context.Context, instanceID string, recorded recordedOperation, description string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
@@ -4147,9 +4150,12 @@ func (b *Broker) recordProvisionFailed(ctx context.Context, instanceID string, r
 		}, false
 	}
 
-	logger.Error("Instance %s: task %d of its provision failed, and the failure could not be recorded, so nothing is deleted: %s", instanceID, taskID, err)
+	logger.Error("Instance %s: task %d of its provision failed, and the failure could not be recorded, so nothing is deleted until a later poll records it: %s", instanceID, taskID, err)
 
-	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, false
+	return osbapi.LastOperationResponse{
+		State:       osbapi.StateInProgress,
+		Description: fmt.Sprintf("BOSH task %d failed, and the failure is not recorded yet", taskID),
+	}, false
 }
 
 // settledProvision reads the instance's record again and returns it. It
