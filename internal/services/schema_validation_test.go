@@ -22,7 +22,7 @@ func draft4(members string) string {
 // Controller refuses a whole catalog when any one schema in it is larger
 // than 64 KB, has no $schema, fails the draft-04 meta-schema, or raises
 // an error when the json-schema gem checks it, as a $ref outside the
-// schema does.
+// schema does, so the broker publishes only a schema inside its profile.
 func schemaPlans() map[string]struct {
 	schema    string
 	published bool
@@ -32,8 +32,8 @@ func schemaPlans() map[string]struct {
 		published bool
 	}{
 		"valid": {draft4(`"type": "object",
-			"properties": {"maxmemory": {"type": "integer", "minimum": 1}}, "definitions": {"policy": {"type": "string"}},
-			"additionalProperties": false, "patternProperties": {"^x-": {"$ref": "#/definitions/policy"}}`), true},
+			"properties": {"maxmemory": {"type": "integer", "minimum": 1}, "policy": {"$ref": "#/definitions/policy"}},
+			"definitions": {"policy": {"type": "string"}}, "additionalProperties": false`), true},
 		"draft-07":     {`{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"}`, false},
 		"remote-ref":   {draft4(`"type": "object", "properties": {"policy": {"$ref": "https://example.com/policy.json"}}`), false},
 		"bad-type":     {draft4(`"type": "object", "properties": {"policy": {"type": 5}}`), false},
@@ -47,11 +47,17 @@ func schemaPlans() map[string]struct {
 
 		// Cloud Controller doesn't compile a pattern, and JSON Schema
 		// patterns are ECMA-262, which has lookarounds and backreferences
-		// that Go's regexp lacks.
+		// that Go's regexp lacks. It does compile a patternProperties key,
+		// which the profile leaves out.
 		"lookahead-pattern": {draft4(`"type": "object", "properties": {"password": {"type": "string",
 			"pattern": "^(?=.*[A-Z])(?=.*\\d).{12,}$"}}`), true},
 		"backreference-pattern": {draft4(`"type": "object", "properties": {"pair": {"type": "string", "pattern": "^(a+)\\1$"}}`), true},
-		"lookahead-property":    {draft4(`"type": "object", "patternProperties": {"^(?!x-)": {"type": "string"}}`), true},
+		"lookahead-property":    {draft4(`"type": "object", "patternProperties": {"^(?!x-)": {"type": "string"}}`), false},
+
+		// An id lets Cloud Controller resolve a $ref through a schema it
+		// cached from an earlier catalog.
+		"id": {draft4(`"id": "http://example.com/params", "type": "object", "$ref": "#/definitions/base",
+			"definitions": {"base": {"type": "object"}}`), false},
 
 		// The draft-04 meta-schema is named with or without its fragment.
 		"draft-04-no-fragment": {`{"$schema": "http://json-schema.org/draft-04/schema", "type": "object"}`, true},

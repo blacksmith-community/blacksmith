@@ -491,7 +491,8 @@ func ReadPlans(dir string, service Service) ([]Plan, error) {
 }
 
 // dropInvalidSchema leaves a plan's parameter schema out of the catalog
-// when it is not a schema Cloud Controller accepts. Cloud Controller
+// when it falls outside the profile of schemas Cloud Controller always
+// accepts. Cloud Controller
 // refuses the whole catalog over one bad schema, which would block every
 // service the broker offers, so the plan is still published without its
 // schema, the error names the forge and the plan, and the plan keeps the

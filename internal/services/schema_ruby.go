@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -51,34 +52,6 @@ func (hash *rubyHash) has(key string) bool {
 	_, ok := hash.values[key]
 
 	return ok
-}
-
-// merge is Ruby's Hash#merge, which keeps hash's order and appends the
-// members of other that hash lacks.
-func (hash *rubyHash) merge(other *rubyHash) *rubyHash {
-	merged := newRubyHash()
-	for _, key := range hash.keys {
-		merged.set(key, hash.values[key])
-	}
-
-	for _, key := range other.keys {
-		merged.set(key, other.values[key])
-	}
-
-	return merged
-}
-
-// without is a copy of hash with one member deleted.
-func (hash *rubyHash) without(drop string) *rubyHash {
-	copied := newRubyHash()
-
-	for _, key := range hash.keys {
-		if key != drop {
-			copied.set(key, hash.values[key])
-		}
-	}
-
-	return copied
 }
 
 // servedSchema is schema as Cloud Controller reads it from the catalog.
@@ -294,4 +267,78 @@ func decimalParts(number json.Number) (bool, string, int) {
 	point := len(whole) + exponent - (len(whole+fraction) - len(digits))
 
 	return negative, strings.TrimRight(digits, "0"), point
+}
+
+// rubyUnique reports whether no two members of list are eql? in Ruby,
+// which is what Array#uniq! compares, so 1 and 1.0 differ.
+func rubyUnique(list []any) bool {
+	seen := map[string]bool{}
+
+	for _, member := range list {
+		key := rubyEqlKey(member)
+		if seen[key] {
+			return false
+		}
+
+		seen[key] = true
+	}
+
+	return true
+}
+
+// rubyEqlKey is a string two values share exactly when they are eql? in
+// Ruby. A hash's members are compared regardless of their order.
+func rubyEqlKey(value any) string {
+	switch typed := value.(type) {
+	case *rubyHash:
+		members := make([]string, 0, len(typed.keys))
+		for _, key := range typed.keys {
+			members = append(members, rubyEqlKey(key)+":"+rubyEqlKey(typed.values[key]))
+		}
+
+		slices.Sort(members)
+
+		return "{" + strings.Join(members, ",") + "}"
+	case []any:
+		members := make([]string, 0, len(typed))
+		for _, member := range typed {
+			members = append(members, rubyEqlKey(member))
+		}
+
+		return "[" + strings.Join(members, ",") + "]"
+	case string:
+		return strconv.Quote(typed)
+	case json.Number:
+		return canonicalNumber(typed)
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+// canonicalNumber is a number's class and value, written one way, so an
+// Integer and a BigDecimal never share it, and two BigDecimals of equal
+// value always do.
+func canonicalNumber(number json.Number) string {
+	text := string(number)
+	if isRubyInteger(number) {
+		sign := ""
+		if strings.HasPrefix(text, "-") {
+			sign = "-"
+			text = text[1:]
+		}
+
+		digits := strings.TrimLeft(text, "0")
+		if digits == "" {
+			return "i0"
+		}
+
+		return "i" + sign + digits
+	}
+
+	negative, digits, point := decimalParts(number)
+	if digits == "" {
+		return "d0"
+	}
+
+	return fmt.Sprintf("d%t0.%se%d", negative, digits, point)
 }

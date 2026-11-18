@@ -7,11 +7,14 @@ import (
 
 // The OSB spec asks for JSON Schema draft-04, and Cloud Controller
 // refuses a whole catalog when one schema in it fails any of its checks.
-// A plan whose schema Cloud Controller would refuse is published without
-// it, so the broker runs the same checks, in the same order, and refuses
-// a schema exactly when Cloud Controller does. Where the broker can't
-// tell, it refuses, so it never publishes a schema Cloud Controller
-// refuses.
+// So the broker publishes a plan's schema only when it falls inside a
+// strict draft-04 profile, which schema_profile.go defines, where every
+// rule is enough on its own for Cloud Controller to accept the schema in
+// any process, whatever schemas that process has cached before. A schema
+// outside the profile is published without, and the refusal names the
+// member that broke the rule and what to change. The profile refuses some
+// schemas Cloud Controller would accept, such as ones with an id, a
+// remote $ref, or another draft, which is the safe direction.
 const (
 	maxParameterSchemaLen = 64 * 1024
 
@@ -20,26 +23,28 @@ const (
 	maxSchemaNesting = 32
 )
 
+// draft4MetaSchemaURI is the $schema a published schema names. The
+// profile also takes it without its trailing #.
+const draft4MetaSchemaURI = "http://json-schema.org/draft-04/schema#"
+
 // Errors a parameter schema is refused with.
 var (
 	ErrPlanSchemaTooLarge    = errors.New("the parameter schema is longer than 65,536 characters of JSON")
 	ErrPlanSchemaNoMeta      = errors.New("the parameter schema has no $schema key naming its meta-schema")
-	ErrPlanSchemaUnknownMeta = errors.New("the parameter schema names a meta-schema Cloud Controller doesn't know")
+	ErrPlanSchemaUnknownMeta = errors.New("the parameter schema doesn't name the draft-04 meta-schema")
 	ErrPlanSchemaExternal    = errors.New("the parameter schema refers to a schema outside itself")
 	ErrPlanSchemaNotEncoded  = errors.New("the parameter schema cannot be encoded as JSON")
 	ErrPlanSchemaInvalid     = errors.New("the parameter schema is not a valid JSON Schema draft-04 schema")
-	ErrPlanSchemaUnusable    = errors.New("the parameter schema makes Cloud Controller raise an error")
-	ErrPlanSchemaUnverified  = errors.New("the broker can't verify that Cloud Controller accepts the parameter schema")
+	ErrPlanSchemaUnsupported = errors.New("the parameter schema uses JSON Schema the broker doesn't publish")
 )
 
-// ValidateParameterSchema checks schema the way Cloud Controller checks
-// a catalog schema. Its JSON, as Cloud Controller writes it back, must be
-// at most 65,536 characters. Its $schema must be neither missing, null,
-// nor false. It must be valid against the draft-04 meta-schema. And an
-// empty object validated against it must raise nothing but a validation
-// error, so every meta-schema it names is one the json-schema gem knows,
-// every $ref the gem follows resolves inside it, and every
-// patternProperties key the gem compiles is a Ruby regular expression.
+// ValidateParameterSchema checks schema the way the broker decides to
+// publish it. Its JSON, as Cloud Controller writes it back, must be at
+// most 65,536 characters, which is Cloud Controller's own limit. Its
+// $schema must be neither missing, null, nor false, which Cloud
+// Controller also checks. And it must fall inside the profile, which is
+// enough for Cloud Controller's meta-schema check and its validation of
+// an empty object against the schema to pass.
 func ValidateParameterSchema(schema map[string]interface{}) error {
 	served, err := servedSchema(schema)
 	if err != nil {
@@ -47,61 +52,53 @@ func ValidateParameterSchema(schema map[string]interface{}) error {
 	}
 
 	if length := rubyJSONLength(served); length > maxParameterSchemaLen {
-		return fmt.Errorf("%w: it is %d characters", ErrPlanSchemaTooLarge, length)
+		return fmt.Errorf("%w: it is %d characters, so shorten its descriptions or move repeated parts into definitions",
+			ErrPlanSchemaTooLarge, length)
 	}
 
 	if !truthy(served.get("$schema")) {
-		return ErrPlanSchemaNoMeta
+		return fmt.Errorf("%w: add \"$schema\": %q at the root", ErrPlanSchemaNoMeta, draft4MetaSchemaURI)
 	}
 
-	if nesting(served) > maxSchemaNesting {
-		return fmt.Errorf("%w: its JSON nests more than %d deep", ErrPlanSchemaUnverified, maxSchemaNesting)
+	if path, deep := tooDeep(served, "", 0); deep {
+		return profileFault(ErrPlanSchemaUnsupported, path,
+			fmt.Sprintf("nests more than %d levels deep", maxSchemaNesting),
+			"move the inner part into the root's definitions and refer to it with $ref")
 	}
 
-	err = checkDraft4Meta(served, "")
-	if err != nil {
-		return schemaRefusal(err)
-	}
-
-	return schemaRefusal(gemAccepts(served))
+	return checkProfile(served)
 }
 
-// schemaRefusal is the error a plan's schema is refused with for what
-// the gem raised, and nil for nothing.
-func schemaRefusal(err error) error {
-	if err == nil || errors.Is(err, ErrPlanSchemaInvalid) {
-		return err
-	}
-
-	switch faultKindOf(err) {
-	case faultUnknownMeta:
-		return fmt.Errorf("%w: %w", ErrPlanSchemaUnknownMeta, err)
-	case faultReadRefused:
-		return fmt.Errorf("%w: %w", ErrPlanSchemaExternal, err)
-	case faultUnmodelled:
-		return fmt.Errorf("%w: %w", ErrPlanSchemaUnverified, err)
-	case faultRaised, faultValidation, faultSchema, faultStack:
-	}
-
-	return fmt.Errorf("%w: %w", ErrPlanSchemaUnusable, err)
+// truthy is Ruby's truth, where only nil and false are false.
+func truthy(value any) bool {
+	return value != nil && value != false
 }
 
-// nesting is how deeply value's JSON nests.
-func nesting(value any) int {
-	deepest := 0
-
+// tooDeep reports the path of the first value in value's JSON that sits
+// deeper than maxSchemaNesting, where value is at depth.
+func tooDeep(value any, path string, depth int) (string, bool) {
 	switch typed := value.(type) {
 	case *rubyHash:
+		if depth >= maxSchemaNesting {
+			return path, true
+		}
+
 		for _, key := range typed.keys {
-			deepest = max(deepest, nesting(typed.values[key]))
+			if found, deep := tooDeep(typed.values[key], path+"/"+pointerToken(key), depth+1); deep {
+				return found, true
+			}
 		}
 	case []any:
-		for _, member := range typed {
-			deepest = max(deepest, nesting(member))
+		if depth >= maxSchemaNesting {
+			return path, true
 		}
-	default:
-		return 0
+
+		for index, member := range typed {
+			if found, deep := tooDeep(member, fmt.Sprintf("%s/%d", path, index), depth+1); deep {
+				return found, true
+			}
+		}
 	}
 
-	return deepest + 1
+	return "", false
 }
