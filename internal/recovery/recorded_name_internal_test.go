@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/broker"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
@@ -72,8 +73,13 @@ func TestDeploymentName_ReadsRecordedName(t *testing.T) {
 		t.Fatalf("failed to seed the index: %v", err)
 	}
 
+	director := testutil.NewScriptedBOSHDirector()
+	director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+		return nil, fmt.Errorf("deployment %s: %w", name, bosh.ErrDeploymentNotFound)
+	}
+
 	brokerInstance := &broker.Broker{
-		BOSH:  testutil.NewScriptedBOSHDirector(),
+		BOSH:  director,
 		Plans: map[string]services.Plan{serviceID + "/" + currentPlan: {ID: currentPlan, Name: "large"}},
 	}
 
@@ -83,11 +89,12 @@ func TestDeploymentName_ReadsRecordedName(t *testing.T) {
 
 	_, _ = recovery.recoverFromBOSH(t.Context(), instanceID)
 
-	logged := lines.joined()
-	if !strings.Contains(logged, recorded) {
-		t.Errorf("recovery never named the recorded deployment %s; it logged:\n%s", recorded, logged)
+	fetched := director.Calls("GetDeployment")
+	if len(fetched) != 1 || fetched[0] != recorded {
+		t.Errorf("recovery fetched the manifests of %v, want only the recorded deployment %s", fetched, recorded)
 	}
 
+	logged := lines.joined()
 	if strings.Contains(logged, minted) {
 		t.Errorf("recovery named %s, a deployment built from the current plan; it logged:\n%s", minted, logged)
 	}
