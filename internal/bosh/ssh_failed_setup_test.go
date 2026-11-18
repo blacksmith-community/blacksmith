@@ -240,12 +240,12 @@ func TestSSHSetupCleansUpOnEveryFailurePath(t *testing.T) {
 // A setup the director has started runs to its end even after a cancel,
 // so the cleanup waits until the cancelled setup task has ended.
 func TestSSHCleanupWaitsForACancelledSetupToEnd(t *testing.T) {
-	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
-		return boshtest.SSHAnswer{State: boshtest.TaskProcessing}
-	})
-
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+
+	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
+		return boshtest.SSHAnswer{State: boshtest.TaskProcessing, OnRead: cancel}
+	})
 
 	_ = failSetup(t, ctx, director)
 
@@ -313,13 +313,13 @@ func TestSSHCleanupAfterALostAnswerWaitsForTheSetupToLeave(t *testing.T) {
 // A setup task that never ends within the settle bound gets no cleanup.
 // Its record stays for the sweep, and the log says so.
 func TestSSHSetupThatNeverSettlesIsLeftToItsRecord(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
 	server, director, store, logger := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
-		return boshtest.SSHAnswer{State: boshtest.TaskProcessing}
+		return boshtest.SSHAnswer{State: boshtest.TaskProcessing, OnRead: cancel}
 	})
 	bosh.SetSSHSetupSettle(director, testLostSetupGrace, 100*time.Millisecond)
-
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
 
 	_ = failSetup(t, ctx, director)
 
@@ -348,12 +348,12 @@ func TestSSHSetupThatNeverSettlesIsLeftToItsRecord(t *testing.T) {
 // A shutdown spares a read-only task, but a setup task creates a user, so
 // its wait still cancels it.
 func TestSSHSetupWaitCancelsEvenWhenTheBrokerIsShuttingDown(t *testing.T) {
-	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
-		return boshtest.SSHAnswer{State: boshtest.TaskQueued}
-	})
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
 
-	ctx, cancel := context.WithTimeoutCause(t.Context(), 100*time.Millisecond, bosh.ErrBrokerShuttingDown)
-	defer cancel()
+	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
+		return boshtest.SSHAnswer{State: boshtest.TaskQueued, OnRead: func() { cancel(bosh.ErrBrokerShuttingDown) }}
+	})
 
 	err := failSetup(t, ctx, director)
 
