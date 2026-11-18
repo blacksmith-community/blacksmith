@@ -347,37 +347,39 @@ func TestFetchLogsStreamsTheBundle(t *testing.T) {
 	})
 }
 
-// The slow bundle takes three gaps to stream, which is longer than the
-// request timeout the test sets. The timeout is real, because boshapi owns
-// the timer, so it is long enough that a slow machine cannot spend it before
-// the director's answer begins.
-const (
-	slowBodyRequestTimeout = 3 * time.Second
-	slowBundleGap          = 1200 * time.Millisecond
-)
+// slowBodyRequestTimeout is the request timeout of the slow body test.
+const slowBodyRequestTimeout = 250 * time.Millisecond
 
-// slowBundle streams a bundle one flushed entry at a time, so the whole
-// download takes longer than a request timeout.
-func slowBundle(t *testing.T) func(http.ResponseWriter, *http.Request) {
+// slowBundle streams a bundle in two parts. It answers with the first entry
+// and flushes it, so the director's answer has begun, and then holds the rest
+// until the request timeout has certainly passed, since the client's timer
+// started before this handler did. Load can only delay the second part, so
+// the download takes longer than the timeout on any machine.
+func slowBundle(t *testing.T, timeout time.Duration, began *atomic.Bool) func(http.ResponseWriter, *http.Request) {
 	t.Helper()
 
-	return func(writer http.ResponseWriter, _ *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		arrived := time.Now()
 		bundle := newBundleWriter(t, writer, gzip.DefaultCompression)
+
 		defer bundle.close()
 
 		flusher, _ := writer.(http.Flusher)
 
-		files := []bundleFile{
-			logFile("./node/node.stdout.log", "first\n"),
-			logFile("./node/node.stderr.log", "second\n"),
-			logFile("./notes/readme.txt", "not a log"),
-			logFile("./node/log/startup", "third\n"),
+		parts := [][]bundleFile{
+			{logFile("./node/node.stdout.log", "first\n")},
+			{
+				logFile("./node/node.stderr.log", "second\n"),
+				logFile("./notes/readme.txt", "not a log"),
+				logFile("./node/log/startup", "third\n"),
+			},
 		}
 
-		for index, file := range files {
-			err := bundle.add(file)
-			if err != nil {
-				return
+		for index, part := range parts {
+			for _, file := range part {
+				if bundle.add(file) != nil {
+					return
+				}
 			}
 
 			_ = bundle.tw.Flush()
@@ -387,24 +389,57 @@ func slowBundle(t *testing.T) func(http.ResponseWriter, *http.Request) {
 				flusher.Flush()
 			}
 
-			if index < len(files)-1 {
-				time.Sleep(slowBundleGap)
+			if index > 0 {
+				return
+			}
+
+			began.Store(true)
+
+			select {
+			case <-time.After(time.Until(arrived.Add(timeout + timeout/2))):
+			case <-request.Context().Done():
+				return
 			}
 		}
 	}
 }
 
+// checkSlowBodyOutlivesTheRequestTimeout runs the scenario, and runs it
+// again when the timeout passed before the director's answer began, which
+// boshapi's timer covers and a machine too slow to deliver the answer in
+// time makes happen. An error after the answer began is a real failure.
 func checkSlowBodyOutlivesTheRequestTimeout(t *testing.T) {
 	t.Helper()
 
-	server := newLogsDirector(t, logsConfig{bundle: slowBundle(t)})
-	director := newReadAdapter(t, server.Director, func(config *bosh.Config) {
-		config.RequestTimeout = slowBodyRequestTimeout
-	})
-	bosh.SetTaskPollInterval(director, testPollInterval)
-	warmAdapter(t, director)
+	for range maxStarvedAttempts {
+		var began atomic.Bool
 
-	bundle := mustFetchLogs(t, director, nil)
+		server := newLogsDirector(t, logsConfig{bundle: slowBundle(t, slowBodyRequestTimeout, &began)})
+		director := newReadAdapter(t, server.Director, func(config *bosh.Config) {
+			config.RequestTimeout = slowBodyRequestTimeout
+		})
+		bosh.SetTaskPollInterval(director, testPollInterval)
+		warmAdapter(t, director)
+
+		bundle, err := fetchLogs(t, director, nil)
+		if err != nil && !began.Load() && strings.Contains(err.Error(), "bosh.request_timeout") {
+			continue
+		}
+
+		checkSlowBody(t, server, bundle, err)
+
+		return
+	}
+
+	t.Fatalf("the director's answer never began within %s, in %d attempts", slowBodyRequestTimeout, maxStarvedAttempts)
+}
+
+func checkSlowBody(t *testing.T, server *logsDirector, bundle *bosh.LogBundle, err error) {
+	t.Helper()
+
+	if err != nil || bundle == nil {
+		t.Fatalf("expected the log fetch to succeed, got: %v", err)
+	}
 
 	want := map[string]string{
 		"node/node.stdout.log": "first\n",

@@ -186,9 +186,16 @@ func vmListing() listingCall {
 }
 
 // lostAnswerRequestTimeout is the request timeout of the test of a lost
-// answer. The timeout is real, because boshapi owns the timer, so it is long
-// enough that a slow machine cannot spend it before the request is sent.
-const lostAnswerRequestTimeout = 2 * time.Second
+// answer. The handler never answers, so only the timeout ends the request,
+// and a slow machine can only delay the error.
+const lostAnswerRequestTimeout = 150 * time.Millisecond
+
+// maxStarvedAttempts is how many times a test of bosh.request_timeout runs
+// its scenario again when the timer passed before the request left the
+// client. boshapi owns that timer, so a machine that stalls the client for
+// longer than the timeout makes the scenario never happen, and the only
+// honest answer is to run it again.
+const maxStarvedAttempts = 25
 
 // warmUpDeployment is the deployment warmAdapter reads, so that a test can
 // leave its requests out of what it checks.
@@ -672,15 +679,30 @@ func runLostAnswerIsNotOutcomeUnknown(t *testing.T, listing listingCall) {
 // answer, and its error names the setting that bounded it. The caller's own
 // context is still live, so the error does not read as its deadline.
 func TestVMDetailsLostAnswerNamesTheRequestTimeout(t *testing.T) {
-	release := make(chan struct{})
+	for range maxStarvedAttempts {
+		if checkLostAnswerNamesTheRequestTimeout(t) {
+			return
+		}
+	}
+
+	t.Fatalf("the client never sent the request within %s, in %d attempts", lostAnswerRequestTimeout, maxStarvedAttempts)
+}
+
+// checkLostAnswerNamesTheRequestTimeout runs the scenario once, and reports
+// false when the request never reached the director, because the timeout
+// passed first on a machine too slow to send it.
+func checkLostAnswerNamesTheRequestTimeout(t *testing.T) bool {
+	t.Helper()
+
+	var arrived atomic.Bool
 
 	server := newDetailsDirector(t, detailsConfig{list: func(_ http.ResponseWriter, request *http.Request) {
-		select {
-		case <-request.Context().Done():
-		case <-release:
-		}
+		arrived.Store(true)
+
+		// The director never answers, so only the client's timeout ends
+		// the request.
+		<-request.Context().Done()
 	}})
-	t.Cleanup(func() { close(release) })
 
 	director := newReadAdapter(t, server.Director, func(config *bosh.Config) {
 		config.RequestTimeout = lostAnswerRequestTimeout
@@ -688,6 +710,10 @@ func TestVMDetailsLostAnswerNamesTheRequestTimeout(t *testing.T) {
 	warmAdapter(t, director)
 
 	err := callWithin(t, 30*time.Second, func() error { return vmListing().call(t.Context(), director) })
+
+	if !arrived.Load() {
+		return false
+	}
 
 	if _, _, lost := bosh.AnswerLostRequest(err); !lost {
 		t.Fatalf("expected a DirectorCallError whose cause is a lost answer, got %T: %v", err, err)
@@ -705,6 +731,8 @@ func TestVMDetailsLostAnswerNamesTheRequestTimeout(t *testing.T) {
 	if gets := requestsTo(server.Director, http.MethodGet, listPath); len(gets) != 1 {
 		t.Fatalf("expected exactly one GET %s, got %d", listPath, len(gets))
 	}
+
+	return true
 }
 
 // boshapi tells the reader of a lost answer to a task-starting request to
