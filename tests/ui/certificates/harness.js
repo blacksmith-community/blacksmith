@@ -126,6 +126,10 @@ const until=async(condition,label,limit=UNTIL_LIMIT)=>{
 // Waits until the page has nothing left to run on a short timer or animation frame, and the promise work that came
 // before it has drained. Use it where a test used to sleep for the page to settle after a click, a boot, or a scripted
 // response. It takes the window, the document, or the env boot returned. It waits on the page itself, so a loaded machine only makes it wait longer.
+// It does not see a timer longer than SHORT_TIMER, such as a one second or two second page timer, and it does not see the
+// events jsdom delivers for history changes on its own clock. So idle cannot prove that nothing happens against a long
+// timer, and a test that depends on one of those events waits for its result with until(). To prove a negative against a
+// long timer, move the clock forward and run the timers by hand, as wterm-terminal.test.js does with advance().
 const tick=()=>new Promise(r=>setTimeout(r,0));
 const idle=async(page,label='the page to settle',limit=UNTIL_LIMIT)=>{
   const w=page.w||page.defaultView||page;
