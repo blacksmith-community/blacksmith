@@ -67,11 +67,19 @@ realpath() {
 
 // runSlotCount is how many scripts the tests run at once. Every test is
 // parallel and bash reads the script from stdin a byte at a time, so a
-// loaded host that runs them all together can leave one waiting past its
-// deadline. A slot is taken before the deadline starts, so waiting for one
-// never counts against it, and the deadline stays a hard ceiling on a
-// script that is really stuck.
+// loaded host that runs them all together slows every one of them. A slot
+// is taken before the backstop starts, so waiting for one never counts
+// against it, and the backstop stays a ceiling on a script that is really
+// stuck.
 const runSlotCount = 4
+
+// runBackstop is how long one script may run before the harness gives up
+// on it as hung. A script ends when its process does, and the tests wait
+// for that. This limit only keeps a script that is really stuck from
+// holding the run, so it is far past the second or so a script takes when
+// the host is idle, and a loaded host cannot reach it. The kill path of
+// exec waits 11 seconds on purpose, which a tighter limit would cut off.
+const runBackstop = 2 * time.Minute
 
 var runSlots = make(chan struct{}, runSlotCount)
 
@@ -270,7 +278,7 @@ func (r *runTree) run(t *testing.T, stdin io.Reader, args ...string) (int, strin
 
 	defer takeRunSlot(t)()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), runBackstop)
 	defer cancel()
 
 	argv := append([]string{"-s", "--"}, args...)
@@ -284,7 +292,7 @@ func (r *runTree) run(t *testing.T, stdin io.Reader, args ...string) (int, strin
 	cmd.Stderr = &stderr
 
 	// A command that outlives the script, such as a sleep, would
-	// otherwise hold the output pipes open past the deadline.
+	// otherwise hold the output pipes open past the backstop.
 	cmd.WaitDelay = 2 * time.Second
 
 	if r.setpgid {
@@ -293,7 +301,7 @@ func (r *runTree) run(t *testing.T, stdin io.Reader, args ...string) (int, strin
 
 	err := cmd.Run()
 	if ctx.Err() != nil {
-		t.Fatalf("%v blocked until its deadline", args)
+		t.Fatalf("%v blocked until its backstop", args)
 	}
 
 	if err == nil {
@@ -351,7 +359,7 @@ func (r *runTree) snippet(t *testing.T, noRoot bool, text string) (int, string) 
 
 	defer takeRunSlot(t)()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), runBackstop)
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
@@ -372,12 +380,12 @@ func (r *runTree) snippet(t *testing.T, noRoot bool, text string) (int, string) 
 	cmd.Stderr = &stderr
 
 	// A process the snippet leaves behind would otherwise hold the output
-	// pipes open past the deadline.
+	// pipes open past the backstop.
 	cmd.WaitDelay = 2 * time.Second
 
 	err := cmd.Run()
 	if ctx.Err() != nil {
-		t.Fatal("the snippet blocked until its deadline")
+		t.Fatal("the snippet blocked until its backstop")
 	}
 
 	if err == nil {
@@ -1321,7 +1329,7 @@ func TestWriteRefusesSpecialFiles(t *testing.T) {
 		}
 
 		// Without the refusal, the open of the FIFO blocks until the
-		// 20 second deadline of the run.
+		// backstop of the run.
 		code, _ := tree.snippet(t, false, `echo "new" | _rc_write "`+link+`"`+"\n")
 		if code == 0 {
 			t.Errorf("%s: _rc_write succeeded", name)
