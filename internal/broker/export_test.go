@@ -221,8 +221,8 @@ func (b *Broker) DeleteDeploymentWithRetry(ctx context.Context, instanceID, depl
 }
 
 // CleanupFailedDeployment exposes the best-effort delete of a failed deployment.
-func (b *Broker) CleanupFailedDeployment(ctx context.Context, deploymentName string) {
-	b.cleanupFailedDeployment(ctx, deploymentName, logger.Get().Named("broker"))
+func (b *Broker) CleanupFailedDeployment(ctx context.Context, action, deploymentName string) {
+	b.cleanupFailedDeployment(ctx, action, deploymentName, logger.Get().Named("broker"))
 }
 
 // TearDownAbandonedDeployment exposes the delete of a deployment whose

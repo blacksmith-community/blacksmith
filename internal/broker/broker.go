@@ -4009,7 +4009,7 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 	// The cleanup outlives this poll; it keeps the values of cleanupCtx
 	// and sets its own deadline.
 	b.track("cleanup of failed deployment "+deploymentName, func() {
-		b.cleanupFailedDeployment(cleanupCtx, deploymentName, logger)
+		b.cleanupFailedDeployment(cleanupCtx, operationTypeProvision, deploymentName, logger)
 	})
 
 	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
@@ -4088,7 +4088,18 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 // cleanupFailedDeployment deletes a failed deployment on a best-effort basis.
 // It keeps the values of ctx but not its cancellation, and gives up after
 // failedDeploymentCleanupTimeout.
-func (b *Broker) cleanupFailedDeployment(ctx context.Context, deploymentName string, logger logger.Logger) {
+//
+// Deleting the deployment is right only for a provision that never produced
+// a usable instance, so the cleanup refuses every other action before it
+// asks the director anything. A failed update or deprovision leaves a
+// deployment that holds a tenant's data, and nothing may route it here.
+func (b *Broker) cleanupFailedDeployment(ctx context.Context, action, deploymentName string, logger logger.Logger) {
+	if action != operationTypeProvision {
+		logger.Error("Refusing to delete deployment %s: the cleanup of a failed deployment runs only for a provision, not for a %q", deploymentName, action)
+
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failedDeploymentCleanupTimeout)
 	defer cancel()
 
