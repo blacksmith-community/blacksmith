@@ -31,22 +31,25 @@ func (b *Broker) CleanupAttention() []interfaces.CleanupAttention {
 }
 
 // noteCleanupAttention records that the owed cleanup of instanceID was
-// refused for reason. An entry already held for the same deployment and
-// reason keeps the time it was first noted.
-func (b *Broker) noteCleanupAttention(instanceID, deploymentName, reason string) {
+// refused for reason, and reports whether the refusal is new. It is new
+// unless an entry is already held for the same deployment and reason,
+// and that entry keeps the time it was first noted.
+func (b *Broker) noteCleanupAttention(instanceID, deploymentName, reason string) bool {
 	entry := interfaces.CleanupAttention{InstanceID: instanceID, DeploymentName: deploymentName, Reason: reason, Since: time.Now().UTC()}
 
 	held, loaded := b.cleanupAttention.LoadOrStore(instanceID, entry)
 	if !loaded {
-		return
+		return true
 	}
 
 	previous, ok := held.(interfaces.CleanupAttention)
 	if ok && previous.DeploymentName == deploymentName && previous.Reason == reason {
-		return
+		return false
 	}
 
 	b.cleanupAttention.Store(instanceID, entry)
+
+	return true
 }
 
 // forgetCleanupAttention drops the entry of instanceID, once its cleanup

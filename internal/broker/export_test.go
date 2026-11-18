@@ -226,6 +226,12 @@ func (b *Broker) CleanupFailedDeployment(ctx context.Context, instanceID, deploy
 	b.cleanupFailedDeployment(ctx, instanceID, deploymentName, logger.Get().Named("broker"))
 }
 
+// CleanupFailedDeploymentLogged runs the cleanup as CleanupFailedDeployment
+// does, logging to log.
+func (b *Broker) CleanupFailedDeploymentLogged(ctx context.Context, instanceID, deploymentName string, log logger.Logger) {
+	b.cleanupFailedDeployment(ctx, instanceID, deploymentName, log)
+}
+
 // TearDownAbandonedDeployment exposes the delete of a deployment whose
 // instance was deprovisioned while the deploy was running, for a deploy
 // whose task is not known.

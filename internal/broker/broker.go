@@ -4476,8 +4476,10 @@ func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentNa
 // deleted, so every later cleanup finds it there.
 //
 // Each refusal is logged and noted for the overview, and the mark stays
-// on the record. An index that cannot be read is a refusal the next try
-// may not repeat, so it is logged and nothing more.
+// on the record. It is logged at Error when it is new or its deployment
+// or reason changed, and at Warning when a later try repeats it. An index
+// that cannot be read is a refusal the next try may not repeat, so it is
+// logged at Error and nothing more.
 func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (string, bool) {
 	recordedName := recorded.DeploymentName
 
@@ -4530,8 +4532,14 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 		return deploymentName, true
 	}
 
-	logger.Error("Refusing to delete deployment %s for instance %s: %s. The record still says the cleanup is owed", deploymentName, instanceID, reason)
-	b.noteCleanupAttention(instanceID, deploymentName, reason)
+	// The sweep tries a refused cleanup again on its backoff, and the
+	// overview's row already shows the refusal, so only a new refusal, or
+	// one whose deployment or reason changed, is logged at Error.
+	if b.noteCleanupAttention(instanceID, deploymentName, reason) {
+		logger.Error("Refusing to delete deployment %s for instance %s: %s. The record still says the cleanup is owed", deploymentName, instanceID, reason)
+	} else {
+		logger.Warning("Still refusing to delete deployment %s for instance %s, as the overview shows: %s", deploymentName, instanceID, reason)
+	}
 
 	return "", false
 }
