@@ -16,6 +16,7 @@ require (
 	github.com/onsi/gomega v1.44.0
 	github.com/rabbitmq/amqp091-go v1.16.0
 	github.com/redis/go-redis/v9 v9.23.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/sony/gobreaker/v2 v2.4.0
 	go.uber.org/zap v1.28.0

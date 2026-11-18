@@ -468,6 +468,8 @@ func ReadPlans(dir string, service Service) ([]Plan, error) {
 				return plans, err
 			}
 
+			dropInvalidSchema(&planData, service, log)
+
 			planData.ID = service.ID + "-" + planData.ID
 			log.Debug("Set plan ID to: %s (service.ID=%s + plan.ID=%s)", planData.ID, service.ID, planData.ID)
 			planData.Service = &service
@@ -481,6 +483,24 @@ func ReadPlans(dir string, service Service) ([]Plan, error) {
 	log.Info("Successfully read %d plans for service %s", len(plans), service.Name)
 
 	return plans, nil
+}
+
+// dropInvalidSchema leaves a plan's parameter schema out of the catalog
+// when it is not a schema Cloud Controller accepts. Cloud Controller
+// refuses the whole catalog over one bad schema, which would block every
+// service the broker offers, so the plan is still published without its
+// schema, and the error names the forge and the plan.
+func dropInvalidSchema(plan *Plan, service Service, log logger.Logger) {
+	if plan.Schemas == nil || plan.Schemas.Parameters == nil {
+		return
+	}
+
+	err := ValidateParameterSchema(plan.Schemas.Parameters)
+	if err != nil {
+		log.Error("forge %s plan %s publishes no parameter schema, because its schema is refused: %s", service.Name, plan.Name, err)
+
+		plan.Schemas = nil
+	}
 }
 
 func ReadService(path string) (Service, error) {
