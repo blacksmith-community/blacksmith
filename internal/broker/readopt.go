@@ -178,7 +178,7 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	}
 
 	operations, migrations := sortReadoptCandidates(candidates, logger)
-	cleanups := owedCleanups(candidates, logger)
+	cleanups := owedCleanups(candidates)
 
 	loaded := time.Now()
 	claimed := make([]readoptOperation, 0, len(operations))
@@ -569,13 +569,14 @@ func sortReadoptCandidates(candidates []*readoptCandidate, logger logger.Logger)
 
 // owedCleanups returns the failed provisions whose records still owe the
 // delete of their deployments. An indexed instance's deployment is the one
-// its index entry names. An instance whose index entry is gone goes to the
-// cleanup with the name its record holds when that name was minted for
-// it, and with no name when the record holds none, so the cleanup can
-// recover the name from the provision's task or refuse. A record whose
-// name was not minted for the instance is left alone, because nothing
-// then proves the broker owns the deployment.
-func owedCleanups(candidates []*readoptCandidate, logger logger.Logger) []owedCleanup {
+// its index entry names, and an instance whose index entry is gone goes
+// to the cleanup with the name its record holds, or with no name when the
+// record holds none. Every one of them goes to the cleanup, which decides
+// under the settle lock whether the broker owns the deployment. A name
+// that was not minted for the instance, or no name the cleanup can
+// recover, is refused there, and the refusal stays on the overview while
+// the record owes the cleanup.
+func owedCleanups(candidates []*readoptCandidate) []owedCleanup {
 	var cleanups []owedCleanup
 
 	for _, candidate := range candidates {
@@ -587,17 +588,8 @@ func owedCleanups(candidates []*readoptCandidate, logger logger.Logger) []owedCl
 		}
 
 		deploymentName := candidate.deploymentName
-
 		if !candidate.indexed {
-			// A record with no name is still handed to the cleanup, which
-			// recovers the name from the provision's task or refuses.
 			deploymentName = recorded.DeploymentName
-
-			if deploymentName != "" && !mintedFor(deploymentName, candidate.instanceID) {
-				logger.Warning("Instance %s has no index entry, and its failed provision owes a cleanup, but its record names no deployment minted for it, so no deployment is deleted", candidate.instanceID)
-
-				continue
-			}
 		}
 
 		cleanups = append(cleanups, owedCleanup{instanceID: candidate.instanceID, deploymentName: deploymentName})

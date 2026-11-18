@@ -995,6 +995,36 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Expect(recorded().CleanupPending).To(BeTrue())
 	})
 
+	It("a sweep pass keeps the Attention row of a failed provision whose record names another instance's deployment", func() {
+		recordNamedProvision(createTaskID, planID+"-another-instance")
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
+
+		brokerInstance := boot(director)
+
+		Eventually(brokerInstance.CleanupAttention, 10*time.Second).Should(HaveLen(1))
+		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
+		Expect(brokerInstance.OwedCleanupSuspects()).To(ContainElement(instanceID))
+
+		now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+
+		brokerInstance.SetSweepClock(func() time.Time { return now })
+
+		// The first pass is a full scan, and the second reads only the
+		// suspects. Neither may take the refusal off the overview.
+		for range 2 {
+			brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+			now = now.Add(time.Minute)
+
+			Expect(brokerInstance.CleanupAttention()).To(HaveLen(1), "a sweep pass dropped the refusal from the overview")
+			Expect(brokerInstance.CleanupAttention()[0].InstanceID).To(Equal(instanceID))
+			Expect(brokerInstance.OwedCleanupSuspects()).To(ContainElement(instanceID), "a sweep pass dropped the refused cleanup from the suspects")
+		}
+
+		Expect(recorded().CleanupPending).To(BeTrue())
+		Expect(director.Calls(directorDeleteDeployment)).To(BeEmpty(), "it deletes another instance's deployment")
+	})
+
 	It("the cleanup sweep retries a delete the director timed out on, and deletes the deployment once", func() {
 		restore = append(restore, broker.SetCleanupRetryInterval(50*time.Millisecond))
 
@@ -1169,16 +1199,18 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Eventually(func() bool { return recorded().CleanupPending }, 10*time.Second).Should(BeFalse())
 	})
 
-	It("boot leaves the owed cleanup of a failed provision without an index entry whose record names another instance's deployment", func() {
+	It("boot leaves the owed cleanup of a failed provision without an index entry whose record names another instance's deployment, and lists it under Attention required", func() {
 		recordNamedProvision(createTaskID, planID+"-another-instance")
 		Expect(vaultClient.TrackFailedCleanupPending(ctx, instanceID, outcomeProvision, "BOSH deployment task is error", contextID, createTaskID)).To(Succeed())
 
-		boot(director)
+		brokerInstance := boot(director)
 
 		Consistently(func() int {
 			return len(director.Calls("GetDeployment")) + len(director.Calls(directorDeleteDeployment))
 		}, 300*time.Millisecond).Should(BeZero())
 		Expect(recorded().CleanupPending).To(BeTrue())
+		Eventually(brokerInstance.CleanupAttention, 10*time.Second).Should(HaveLen(1), "boot must list the refused cleanup under Attention required")
+		Expect(brokerInstance.CleanupAttention()[0].DeploymentName).To(Equal(planID + "-another-instance"))
 	})
 
 	It("ReadoptInFlightOperations retries a failed listing and claims nothing until it succeeds", func() {

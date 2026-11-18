@@ -229,7 +229,7 @@ func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 		sweep.lastFull = now
 	}
 
-	cleanups := owedCleanups(candidates, logger)
+	cleanups := owedCleanups(candidates)
 
 	owed := make(map[string]bool, len(cleanups))
 	for _, cleanup := range cleanups {
