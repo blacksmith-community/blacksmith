@@ -3,9 +3,9 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
-const {boot,sleep,EVIL} = H.main;
+const {boot,sleep,idle,until,TEST_LIMIT,EVIL} = H.main;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const mk=(id,key,variable,inst,name,days,exp,extra={})=>({id,key,variable,kind:'leaf',days_left:days,expiry:exp,health:'ok',owners:[{kind:'instance',instance_id:inst,instance_name:name}],rotation:{allowed:true,reasons:[]},findings:[],...extra});
 t('instance rotation and overview', async () => {
@@ -22,15 +22,15 @@ t('instance rotation and overview', async () => {
     [/rotation\/preview$/,(u,o,j)=>previewStatus===200?j(200,{preview_id:'pv1',instances:[{instance_id:'inst-a',instance_name:'a',vms:1,gate:'g',selected:[{name:'/s/a_crt',days_left:5}],additional:[],blocked:null,impact:'Restarts.'}],warnings:[]}):j(previewStatus,{error:'boom '+EVIL,code:'rotation_disabled'})],
     [/\/b\/upgrade\/tasks\/[^/]+$/,(u,o,j)=>j(200,holdTasks[0])],
     [/\/b\/upgrade\/tasks$/,(u,o,j)=>o.method==='POST'?j(createStatus,{id:'t-new',name:'n',kind:'certificates',status:'pending'}):j(200,holdTasks.map(t=>({id:t.id,status:t.status,kind:t.kind,name:t.name})))]);
-  w.serviceInstances={}; await sleep(50); w.plansData={services:[]};
+  w.serviceInstances={}; await idle(w); w.plansData={services:[]};
   // The sub-tab strip of the instance, which the rotation watch listens to.
   d.body.insertAdjacentHTML('beforeend','<bs-tabs id="watch-strip"><div role="tablist" aria-label="Fixture" id="service-cert-tablist-inst-a"><button type="button" role="tab" data-tab="one">One</button><button type="button" role="tab" data-tab="two">Two</button></div><div role="tabpanel">One</div><div role="tabpanel">Two</div></bs-tabs>');
-  await sleep(20);
+  await idle(w);
   const watchTabs=[...d.querySelectorAll('#watch-strip [role=tab]')];
   const R=w.blacksmithRotate;
   ok(!!R&&typeof R.openInstanceDialog==='function'&&typeof R.readHolders==='function'&&typeof R.availability==='function','blacksmithRotate exposes dialog, holders, availability');
   ok(!!w.blacksmithBatch&&typeof w.blacksmithBatch.openRotate==='function','blacksmithBatch.openRotate exists');
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const waitDialog=async()=>{ await until(()=>!!d.querySelector('#dialog-modal[open]'),'the dialog to open'); return true; };
   const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
   const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
   const live=()=>d.getElementById('blacksmith-live-region').textContent;
@@ -50,11 +50,11 @@ t('instance rotation and overview', async () => {
   // ---- instance overview
   const host=d.createElement('div'); d.body.appendChild(host);
   let threw=null; try{ await T.CertOverview.mountInstance(host,'inst-a'); }catch(e){threw=e;}
-  await sleep(50);
+  await idle(w);
   ok(!threw,'overview mounts without throwing '+(threw&&threw.message));
   let rb=host.querySelector('.cert-ov-rotate');
   ok(rb&&!rb.disabled&&rb.textContent==='Rotate...','overview: Rotate enabled when rotation is on and a certificate is eligible');
-  rb.focus(); rb.click(); await sleep(20);
+  rb.focus(); rb.click(); await idle(w);
   const dlg=host.querySelector('.cert-rotate-dialog');
   ok(!!dlg,'overview: Rotate opens the dialog');
   const boxes=[...dlg.querySelectorAll('input[type=checkbox]')];
@@ -70,7 +70,7 @@ t('instance rotation and overview', async () => {
   dlg.querySelector('.cert-rotate-reason input').value='  because '+EVIL+' ';
   // error mapping: preview fails
   previewStatus=403;
-  prev.click(); await sleep(120);
+  prev.click(); await idle(w);
   const pb=bodyOf(lastPost(/rotation\/preview( |$)/));
   ok(pb.mode==='redeploy'&&pb.selections.length===1&&pb.selections[0].instance_id==='inst-a'&&pb.selections[0].variables.join()==='/s/a_crt,/s/b_crt','preview body: redeploy, instance, chosen full variable names');
   const panel=host.querySelector('.cert-rotate-result [role=alert], .cert-rotate-result [tabindex]')||host.querySelector('.cert-rotate-result');
@@ -81,18 +81,18 @@ t('instance rotation and overview', async () => {
   previewStatus=200;
   host.querySelector('.cert-rotate-preview').focus();
   host.querySelector('.cert-rotate-preview').click(); await waitDialog();
-  cancelBtn().click(); await sleep(80);
+  cancelBtn().click(); await idle(w);
   const np=posts().length;
   ok(d.activeElement===host.querySelector('.cert-rotate-preview')&&!posts().some(c=>/\/b\/upgrade\/tasks( |$)/.test(c)),'cancel: no create posted, focus back on Preview rotation');
   // success path
   host.querySelector('.cert-rotate-preview').click(); await waitDialog();
-  confirmBtn().click(); await sleep(150);
+  confirmBtn().click(); await idle(w);
   const cb=bodyOf(lastPost(/\/b\/upgrade\/tasks( |$)/));
   ok(cb.kind==='certificates'&&cb.preview_id==='pv1'&&UUID.test(cb.client_request_id)&&cb.reason==='because '+EVIL,'create body: kind, preview_id, client_request_id, trimmed reason');
   ok(!host.querySelector('.cert-rotate-form')&&host.querySelector('.cert-rotate-result').children.length>0,'success: form removed, result panel kept');
   ok(d.activeElement===host.querySelector('.cert-ov-rotate'),'success: focus returns to the Rotate control');
   // reopen keeps choices
-  host.querySelector('.cert-ov-rotate').click(); await sleep(20);
+  host.querySelector('.cert-ov-rotate').click(); await idle(w);
   const again=[...host.querySelectorAll('.cert-rotate-dialog input[type=checkbox]')];
   ok(again.length===2&&again[0].checked&&again[1].checked,'reopen keeps what the operator chose');
   host.querySelector('.cert-rotate-cancel').click();
@@ -102,59 +102,59 @@ t('instance rotation and overview', async () => {
   { let st='running'; w.__routes.unshift([/\/b\/upgrade\/tasks\/t-new$/,(u,o,j)=>j(200,{id:'t-new',status:st})]);
     const instGets=()=>calls.filter(c=>/GET .*certificates\/instances\/inst-a$/.test(c)).length;
     const g0=instGets(); const tg0=calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length;
-    await sleep(30); ok(instGets()===g0&&calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg0,'overview: no polling while the operator stays on the page');
-    w.document.dispatchEvent(new w.Event('visibilitychange')); await sleep(60);
+    await idle(w); ok(instGets()===g0&&calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg0,'overview: no polling while the operator stays on the page');
+    w.document.dispatchEvent(new w.Event('visibilitychange')); await idle(w);
     ok(calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg0+1&&instGets()===g0,'overview: returning reads the task once and keeps the view while it runs');
-    watchTabs[1].click(); await sleep(60);
+    watchTabs[1].click(); await idle(w);
     ok(calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg0+2&&instGets()===g0,'overview: changing the sub-tab reads the task once and keeps the view while it runs');
-    st='completed'; w.document.dispatchEvent(new w.Event('visibilitychange')); await sleep(120);
+    st='completed'; w.document.dispatchEvent(new w.Event('visibilitychange')); await idle(w);
     ok(instGets()===g0+1,'overview: returning after the task ended scans the instance again');
     const tg1=calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length;
-    w.document.dispatchEvent(new w.Event('visibilitychange')); await sleep(60);
+    w.document.dispatchEvent(new w.Event('visibilitychange')); await idle(w);
     ok(calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg1,'overview: the watch is gone once it refreshed');
-    watchTabs[0].click(); await sleep(60);
+    watchTabs[0].click(); await idle(w);
     ok(calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg1,'overview: a sub-tab change after the watch ended reads nothing');
     w.__routes.shift(); }
   // overview busy / off
   holdTasks=[{id:'tk',name:'N',kind:'certificates',status:'running',instances:[{instance_id:'inst-a',status:'running'}]}];
   const host2=d.createElement('div'); d.body.appendChild(host2);
-  await T.CertOverview.mountInstance(host2,'inst-a'); await sleep(50);
+  await T.CertOverview.mountInstance(host2,'inst-a'); await idle(w);
   rb=host2.querySelector('.cert-ov-rotate');
   ok(rb.disabled&&rb.textContent==='Busy'&&host2.querySelector('.cert-ov-rotate-note').textContent.includes('rotation "N"'),'overview: held instance shows Busy with the holder');
   holdTasks=[]; caps={rotation:{enabled:false,reason:'Rotation is not enabled'}};
   const host3=d.createElement('div'); d.body.appendChild(host3);
-  await T.CertOverview.mountInstance(host3,'inst-a'); await sleep(50);
+  await T.CertOverview.mountInstance(host3,'inst-a'); await idle(w);
   rb=host3.querySelector('.cert-ov-rotate');
   ok(rb.disabled&&host3.querySelector('.cert-ov-rotate-note').textContent==='Rotation is not enabled'&&rb.getAttribute('aria-describedby')==='cert-ov-rotate-note','overview: rotation off shows the reason');
   caps={rotation:{enabled:true}};
 
   // ---- fleet
   d.getElementById('certificates').classList.add('active');
-  await T.CertsFleet.init(); await sleep(150);
+  await T.CertsFleet.init(); await idle(w);
   const rs=d.querySelector('.cert-rotate-selected');
   ok(!!rs&&rs.disabled&&d.querySelector('.cert-rotate-selected-note').textContent.includes('Select certificates'),'fleet: Rotate selected disabled with a visible reason when nothing is selected');
   const sel=w.blacksmithCerts.selection; sel.clear();
   const cbxs=[...d.querySelectorAll('.cert-row input[type=checkbox]')]; cbxs[0].click(); cbxs[2].click();
-  await sleep(30);
+  await idle(w);
   ok(!rs.disabled&&d.querySelector('.cert-rotate-selected-note').textContent==='','fleet: Rotate selected enabled with a selection');
-  rs.click(); await sleep(150);
+  rs.click(); await idle(w);
   ok(d.getElementById('upgrade').dataset.operation==='rotate'||(T.rotateState&&true),'fleet: Rotate selected opens Batch in rotate mode');
   ok(d.activeElement&&d.activeElement.id==='rotate-op-rotate','fleet: focus lands on the rotate mode radio');
   const imported=T.rotateSelection();
   ok(imported&&imported.size===2&&[...imported.get('inst-a')].join()==='/s/a_crt'&&[...imported.get('inst-b')].join()==='/s/c_crt','fleet: Batch holds exactly the shared selection');
   caps={rotation:{enabled:false,reason:'Off for now'}};
-  await w.blacksmithCerts.refresh({silent:true}); await sleep(100);
+  await w.blacksmithCerts.refresh({silent:true}); await idle(w);
   ok(d.querySelector('.cert-rotate-selected').disabled&&d.querySelector('.cert-rotate-selected-note').textContent.includes('Off for now'),'fleet: rotation off disables Rotate selected with the reason');
   caps={rotation:{enabled:true}};
-  await w.blacksmithCerts.refresh({silent:true}); await sleep(100);
+  await w.blacksmithCerts.refresh({silent:true}); await idle(w);
 
   // ---- drawer
   w.blacksmithCerts.selection.clear();
   let openGate; itemGate=new Promise(r=>{openGate=r;});
-  const row=d.querySelector('.cert-row'); row.click(); await sleep(150);
+  const row=d.querySelector('.cert-row'); row.click(); await idle(w);
   const dr=d.querySelector('.cert-drawer-rotate');
   ok(dr&&!dr.disabled&&dr.textContent==='Rotate...','drawer: Rotate enabled for a rotatable certificate');
-  dr.focus(); dr.click(); await sleep(150);
+  dr.focus(); dr.click(); await idle(w);
   ok(!d.querySelector('.cert-fleet-drawer .cert-rotate-dialog'),'drawer: Rotate opens no dialog of its own');
   const hand=w.blacksmithCerts.selection;
   ok(hand.size===1&&[...hand.get('inst-a')].join()==='/s/a_crt','drawer: this certificate is the whole shared selection');

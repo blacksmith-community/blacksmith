@@ -1,9 +1,9 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs'),path=require('path');
-const {main:{boot,sleep,now,day,iso}}=require('./certificates/harness.js');
+const {main:{boot,sleep,now,day,iso,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const cert=(i,attention)=>({id:'c'+i,key:'k'+i,kind:'leaf',common_name:'cn'+i,health:'ok',attention,coverage:{complete:true},
  effective_not_after:iso(now+400*day),days_left:400,expiry:'ok',owners:[{kind:'instance',instance_id:'i'+(i%2),instance_name:'inst'+(i%2)}],observations:[],findings:[]});
@@ -16,7 +16,7 @@ const inventory=(u,o,json)=>{
 };
 const start=async()=>{
  const env=boot({noDialogs:true,routes:[['/b/certificates/inventory',inventory],['/v2/catalog',(u,o,j)=>j(200,{services:[]})],['/b/status',(u,o,j)=>j(200,{env:'lab',deployment:'blacksmith',instances:{},plans:{}})]]});
- await sleep(80);
+ await idle(env);
  return env;
 };
 const chip=(d)=>[...d.querySelectorAll('#cert-strip-attention .cert-strip-btn')].find(b=>b.textContent.includes('Needs attention'));
@@ -50,13 +50,13 @@ t('entering by the attention URL filters the rows and the chip agrees, and toggl
   expect(w.blacksmithViews.read('certificates')).toEqual({screen:'certificates',attention:true});
   expect(notified).toBe(0);
 
-  chip(d).click();await sleep(80);
+  chip(d).click();await idle(w);
   expect(chip(d).getAttribute('aria-pressed')).toBe('false');
   expect(rows(d)).toBe(5);
   expect(w.blacksmithViews.read('certificates')).toEqual({screen:'certificates',attention:false});
   expect(notified).toBe(1);
 
-  chip(d).click();await sleep(80);
+  chip(d).click();await idle(w);
   expect(rows(d)).toBe(2);
   expect(w.blacksmithViews.read('certificates')).toEqual({screen:'certificates',attention:true});
   expect(notified).toBe(2);
@@ -117,7 +117,7 @@ t('a navigation that is dropped puts the previous chip back',async()=>{
 
 const startRouted=async(hash)=>{
  const env=boot({noDialogs:true,router:true,url:'http://localhost/'+hash,routes:[['/b/certificates/inventory',inventory],['/v2/catalog',(u,o,j)=>j(200,{services:[]})],['/b/status',(u,o,j)=>j(200,{env:'lab',deployment:'blacksmith',instances:{},plans:{}})]]});
- await sleep(200);
+ await idle(env);
  return env;
 };
 
@@ -126,16 +126,16 @@ t('with the router running, a chip toggle rewrites the address in place and Back
   expect(w.location.hash).toBe('#/certificates?attention=true');
   expect(rows(d)).toBe(2);
   const before=w.history.length;
-  chip(d).click();await sleep(150);
+  chip(d).click();await idle(w);
   expect(chip(d).getAttribute('aria-pressed')).toBe('false');
   expect(rows(d)).toBe(5);
   expect(w.location.hash).toBe('#/certificates?attention=false');
   expect(w.history.length).toBe(before);
-  w.location.hash='#/broker/summary';await sleep(250);
-  w.history.back();await sleep(300);
+  w.location.hash='#/broker/summary';await idle(w);
+  w.history.back();await idle(w);
   expect(w.location.hash).toBe('#/certificates?attention=false');
   expect(rows(d)).toBe(5);
-  w.history.forward();await sleep(600);
+  w.history.forward();await idle(w);
   expect(w.location.hash).toBe('#/broker/summary');
  }finally{w.close();}
 });

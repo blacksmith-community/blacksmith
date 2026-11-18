@@ -3,22 +3,23 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
 
-const {boot,sleep,EVIL} = H.fleet;
+const {boot,sleep,idle,EVIL} = H.fleet;
+const {until,TEST_LIMIT} = H.main;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const bad=(d)=>d.querySelectorAll('#certificates img,#certificates script,#certificates [onerror],.modal-overlay img,.modal-overlay script,dialog img,dialog script,#blacksmith-live-region img,#toast-container img').length;
 const fire=(w,el,type)=>el.dispatchEvent(new w.Event(type,{bubbles:true,cancelable:true}));
-const submit=async(w,d)=>{ const f=d.querySelector('#cert-settings-modal form'); f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true})); await sleep(80); };
+const submit=async(w,d)=>{ const f=d.querySelector('#cert-settings-modal form'); f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true})); await idle(w); };
 const setv=(d,k,v)=>{ d.getElementById('cert-setting-'+k).value=String(v); };
 const text=(d,id)=>d.getElementById(id)?d.getElementById(id).textContent:'';
 t('fleet settings and coverage line', async () => {
   let {w,d,server,log,errors}=await boot();
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
   // ---- reassurance with problems present ----
   ok(!!d.querySelector('#cert-horizon table') && !/Nothing expires/.test(d.getElementById('cert-fleet-notices').textContent),'the horizon table renders beside expired, critical, and warning rows');
   // ---- settings modal ----
   const sb=d.getElementById('cert-settings-btn'); ok(!!sb && !sb.hidden,'Settings button');
-  sb.focus(); sb.click(); await sleep(100);
+  sb.focus(); sb.click(); await idle(w);
   const modal=d.getElementById('cert-settings-modal'); ok(!!modal && modal.open && modal.tagName==='DIALOG' && !modal.hasAttribute('aria-hidden'),'modal open');
   const inputs=modal.querySelectorAll('input'); ok(inputs.length===8,'8 fields: '+inputs.length);
   ok(Array.from(inputs).every(i=>modal.querySelector('label[for="'+i.id+'"]')),'every field has a label');
@@ -59,28 +60,28 @@ t('fleet settings and coverage line', async () => {
   server.recompute=true;
   // c3 is 24 days, c4 33: raise warning to 45 => c4 becomes warning
   const inv0=log.filter(l=>l.startsWith('GET /b/certificates/inventory')).length;
-  setv(d,'warning_days',45); setv(d,'critical_days',20); await submit(w,d); await sleep(150);
+  setv(d,'warning_days',45); setv(d,'critical_days',20); await submit(w,d); await idle(w);
   ok(!d.getElementById('cert-settings-modal') || !d.getElementById('cert-settings-modal').open,'modal closed after save');
   ok(server.settings.warning_days===45 && server.settings.critical_days===20,'server holds new settings');
   ok(d.body.textContent.includes('Certificate settings saved.'),'success toast text in the page');
   ok(log.filter(l=>l.startsWith('GET /b/certificates/inventory')).length>inv0,'inventory re-fetched');
   ok(d.activeElement===sb,'focus returns to Settings button');
-  w.blacksmithCerts.state.attention=false; await w.blacksmithCerts.refresh({announce:true}); await sleep(80);
+  w.blacksmithCerts.state.attention=false; await w.blacksmithCerts.refresh({announce:true}); await idle(w);
   const strip=Array.from(d.querySelectorAll('.cert-strip-btn')).find(b=>b.textContent.startsWith('Expiry warning'));
   ok(strip.querySelector('.cert-strip-count').textContent==='3','Expiry warning count moved from 2 to 3 (days 24,33,42 between 20 and 45): '+strip.querySelector('.cert-strip-count').textContent);
   ok(w.CertView.displayExpiry(new Date(Date.now()+40*86400000).toISOString()).status==='warning','pill thresholds updated in CertView');
   // ---- 403 on GET settings ----
   server.settingsGet={status:403,body:{success:false,error:'settings forbidden'+EVIL,code:'forbidden'}};
-  sb.click(); await sleep(100);
+  sb.click(); await idle(w);
   const m2=d.getElementById('cert-settings-modal');
   ok(!!m2 && /settings forbidden/.test(m2.textContent) && !!m2.querySelector('.cert-retry-button') && bad(d)===0,'GET 403 shows error with Retry in the modal');
-  server.settingsGet=null; m2.querySelector('.cert-retry-button').click(); await sleep(100);
+  server.settingsGet=null; m2.querySelector('.cert-retry-button').click(); await idle(w);
   ok(m2.querySelectorAll('input').length===8,'Retry loads the form');
-  d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})); await sleep(50);
+  d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})); await idle(w);
   ok(!m2.open && w.blacksmithSurfaces.size()===0,'Escape closes the modal');
   ok(d.activeElement===sb,'focus back on Settings');
   // cancel
-  sb.click(); await sleep(80); Array.from(d.querySelectorAll('#cert-settings-modal .cert-settings-actions button')).find(b=>b.textContent==='Cancel').click(); await sleep(50);
+  sb.click(); await idle(w); Array.from(d.querySelectorAll('#cert-settings-modal .cert-settings-actions button')).find(b=>b.textContent==='Cancel').click(); await idle(w);
   ok(!d.getElementById('cert-settings-modal')||!d.getElementById('cert-settings-modal').open,'Cancel closes');
 
   // ---- reassurance variants ----
@@ -93,7 +94,7 @@ t('fleet settings and coverage line', async () => {
   const warnBefore=2;
   // A. complete coverage -> strong claim
   ({w,d,server}=await boot()); clean(server);
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
   let r=d.querySelector('#cert-horizon .cert-horizon-gaps');
   ok(!!d.getElementById('cert-horizon') && !r,'A complete coverage shows no gap line: '+(r&&r.textContent));
   ok(!/Nothing expires/.test(d.getElementById('certificates').textContent),'A no reassurance sentence');
@@ -101,30 +102,30 @@ t('fleet settings and coverage line', async () => {
   ({w,d,server}=await boot()); clean(server);
   server.certs.slice(0,4).forEach(c=>{ c.expiry='unknown'; delete c.days_left; c.effective_not_after=undefined; });
   server.certs[5].coverage.failed_listeners=1; server.certs[5].coverage.complete=false; server.certs[5].observations[1].state='failed';
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
   r=d.querySelector('#cert-horizon .cert-horizon-gaps');
   ok(!!r && r.textContent==='These counts cover what we could observe. 4 certificates have an unknown expiry and 1 listener did not answer.','B gap line: '+(r&&r.textContent));
   ok(bad(d)===0,'no injected (reassurance B)');
   // C. CredHub absent -> never the strong claim
   ({w,d,server}=await boot()); clean(server); server.caps.credhub={state:'not_configured',reason:'none'};
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
   r=d.querySelector('#cert-horizon .cert-horizon-gaps');
   ok(!!r && /^These counts cover what we could observe\./.test(r.textContent) && /CredHub is not available/.test(r.textContent),'C CredHub absent: '+(r&&r.textContent));
   // D. stale instance -> weak
   ({w,d,server}=await boot()); clean(server); server.scan=Object.assign({},server.scan,{errors:[{instance_id:'i1',error:'x'+EVIL,last_success_at:new Date().toISOString()}]});
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
   r=d.querySelector('#cert-horizon .cert-horizon-gaps'); ok(!!r && /1 instance could not be scanned/.test(r.textContent) && /^These counts cover what we could observe/.test(r.textContent),'D unscanned instance: '+(r&&r.textContent));
   // E. first scan failed -> no line
   ({w,d,server}=await boot()); server.mode='first-failed';
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
   ok(!d.getElementById('cert-horizon'),'E no horizon table on first-scan failure');
   // F. disabled -> settings button hidden
   ({w,d,server}=await boot()); server.mode='disabled';
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
   ok(d.getElementById('cert-fleet-actions').hidden && !d.getElementById('cert-horizon'),'F disabled: actions (incl. Settings) hidden');
   // G. the configured warning window no longer appears in any sentence
   ({w,d,server}=await boot()); clean(server); server.settings.warning_days=45;
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
   ok(!!d.getElementById('cert-horizon') && !/45 days/.test(d.getElementById('cert-fleet-notices').textContent),'G the table ignores the configured window');
   expect(failures).toEqual([]);
 }, 120000);

@@ -2,8 +2,8 @@ const { test, expect, afterEach } = require('bun:test');
 const H = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 
-const t = JSDOM ? test : test.skip;
-const { boot } = H.main;
+const { boot, until, TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const envs = [];
 afterEach(() => { envs.splice(0).forEach((e) => { expect(e.alerts).toEqual([]); e.w.close(); }); });
@@ -172,13 +172,14 @@ t('a re-rendered table keeps the same key and the rows the reader revealed', () 
 });
 
 t('the certificate table caps 130 certificates at 100 rows', async () => {
-  const { boot: bootFleet, sleep: nap, iso, now, day } = H.fleet;
+  const { boot: bootFleet, iso, now, day } = H.fleet;
   const { w, d, server } = await bootFleet();
   try {
     server.certs = Array.from({ length: 130 }, (_, i) => ({ id: 'C' + i, key: '/ws/C' + i, variable: 'C' + i, kind: 'leaf', common_name: 'cn-' + i, issuer: 'CN=X', owners: [{ kind: 'instance', instance_id: 'i1', instance_name: 'one', service_name: 'valkey', plan_name: 's' }], affected_instances: 1, effective_not_after: iso(now + 40 * day), days_left: 40, expiry: 'ok', health: 'ok', attention: true, findings: [], observations: [], coverage: { expected_listeners: 1, observed_listeners: 1, failed_listeners: 0, complete: true }, rotation: { allowed: true }, versions: {} }));
     d.dispatchEvent(new w.Event('DOMContentLoaded'));
     await w.blacksmithNav.switchTab('certificates');
-    await nap(300);
+    const capped = () => { const table = d.getElementById('cert-table'); return !!table && visible(table).filter((r) => r.classList.contains('cert-row')).length === 100; };
+    await until(capped, 'the certificate table to show its first 100 rows');
     const table = d.getElementById('cert-table');
     expect(visible(table).filter((r) => r.classList.contains('cert-row')).length).toBe(100);
     expect(seen(d.body).querySelector('[role="status"]').textContent).toBe('Showing 100 of 130 certificates');
