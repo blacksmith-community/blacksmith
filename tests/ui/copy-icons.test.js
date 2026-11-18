@@ -1,7 +1,7 @@
 const { test, expect } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main:{boot,sleep,idle,TEST_LIMIT} } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
-const t = JSDOM ? test : test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // The copied state swaps the copy icon for the Lucide check.
 const CHECK = 'svg.lucide-check';
@@ -41,7 +41,7 @@ t('the broker overview copy buttons are icon buttons that copy their value', asy
     expect(deployment.classList.contains('ghost')).toBe(false);
 
     environment.click();
-    await sleep(120);
+    await idle(w);
     expect(copied).toEqual(['ocfp-lab']);
     expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied Environment');
     expect(environment.querySelector(CHECK)).not.toBeNull();
@@ -61,7 +61,7 @@ t('the instance overview copy buttons are icon buttons that copy their value', a
     const first = buttons[0];
     const expected = first.dataset.entityCopy;
     first.click();
-    await sleep(120);
+    await idle(w);
     expect(copied).toEqual([expected]);
     expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied ' + first.getAttribute('aria-label').slice(5));
   } finally { w.close(); }
@@ -164,7 +164,7 @@ t('the certificate copy button draws the shared icon and swaps to the check', as
   expect(iconOnly.textContent.trim()).toBe('');
   expect(labeled.textContent.trim()).toBe('Copy');
   iconOnly.click();
-  await sleep(120);
+  await idle(w);
   expect(copied).toEqual(['CN=demo']);
   expect(iconOnly.classList.contains('copied')).toBe(true);
   expect(iconOnly.querySelector(CHECK)).not.toBeNull();

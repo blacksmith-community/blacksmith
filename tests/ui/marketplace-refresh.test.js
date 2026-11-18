@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -22,14 +22,14 @@ const start=async()=>{
  envs.push(env);
  const {w,d}=env;
  w.eval(OAT);
- await sleep(60);
+ await idle(w);
  const host=d.createElement('div'); host.id='broker-host'; d.body.appendChild(host);
  host.innerHTML=w.__T.renderBrokerTab();
  await w.__T.initBrokerTab();
- await sleep(20);
+ await idle(w);
  const M=w.CFEndpointManager;
  M.selectedEndpoint='lab'; M.connectionStates.lab={connected:true};
- await M.loadTabContent('marketplace','lab'); await sleep(20);
+ await M.loadTabContent('marketplace','lab'); await idle(w);
  env.errors.length=0;
  return {...env,host,reads,panel:host.querySelector('[data-panel="marketplace"]')};
 };
@@ -44,7 +44,7 @@ t('Refresh marketplace reads the marketplace again and redraws the table',async(
  const call=button.getAttribute('onclick').match(/^window\.refreshMarketplaceServices\((.*), event\)$/);
  expect(call!==null).toBe(true);
  button.addEventListener('click',(event)=>w.refreshMarketplaceServices(JSON.parse(call[1]),event));
- button.click(); await sleep(60);
+ button.click(); await idle(w);
  expect(reads.length).toBe(2);
  const table=panel.querySelector('.marketplace-services-table tbody');
  expect(table.textContent).toContain('service-read-2');
@@ -66,7 +66,7 @@ t('the controls row has no sort icon and the column headers sort the rows',async
  const order=()=>[...panel.querySelectorAll('.marketplace-services-table tbody tr td:first-child')].map(x=>x.textContent);
  const before=order();
  expect(before.length).toBeGreaterThan(0);
- heads[0].click(); await sleep(20);
+ heads[0].click(); await idle(w);
  expect(order()).toEqual([...before].sort());
  w.close();
 });

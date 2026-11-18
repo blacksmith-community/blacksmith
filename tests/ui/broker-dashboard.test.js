@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,until,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
 const fs=require('fs'),path=require('path');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // Every env a test boots, checked once the test ends so a dialog call that the
 // UI code swallows still fails it.
@@ -110,11 +110,11 @@ t('clicking a type or a plan opens the Services view with that filter through th
   const calls=[];
   w.blacksmithRouter={navigate:async(r)=>{calls.push(r);return true;}};
   const host=render(w,d,fixture());
-  host.querySelector('button[data-service="redis"]:not([data-plan])').click();await sleep(5);
-  host.querySelector('button[data-service="redis"][data-plan="small"]').click();await sleep(5);
+  host.querySelector('button[data-service="redis"]:not([data-plan])').click();await idle(w);
+  host.querySelector('button[data-service="redis"][data-plan="small"]').click();await idle(w);
   expect(calls).toEqual([{screen:'services',service:'redis'},{screen:'services',service:'redis',plan:'small'}]);
   // The Service instances tile keeps its unfiltered jump.
-  host.querySelector('.entity-metric[data-entity-section="instances"]').click();await sleep(5);
+  host.querySelector('.entity-metric[data-entity-section="instances"]').click();await idle(w);
   expect(calls[2]).toEqual({screen:'services'});
  }finally{w.close();}
 });
@@ -162,7 +162,7 @@ const catalog={services:[{id:'redis',name:'redis',plans:[{id:'small',name:'small
 const status=()=>{ const f=fixture(); return {env:'lab',deployment:'blacksmith',instances:f.instances,plans:f.plans}; };
 const loaded=async()=>{
  const env=start({routes:[['/v2/catalog',(u,o,j)=>j(200,JSON.parse(JSON.stringify(catalog)))],['/b/status',(u,o,j)=>j(200,status())]]});
- await sleep(80);return env;
+ await idle(env);return env;
 };
 const visible=(d)=>[...d.querySelectorAll('#services .service-item')].map(x=>x.dataset.instanceId).sort();
 
@@ -200,11 +200,11 @@ t('an instance route says not found only once the list has loaded',async()=>{
   const list=w.serviceInstances;w.serviceInstances=undefined;
   const aborted=new w.AbortController();
   const waiting=w.blacksmithViews.activate(route,{signal:aborted.signal});
-  await sleep(150);aborted.abort();
+  await until(()=>w.__pendingTimers()>0,'the route to wait for the list');aborted.abort();
   expect(await waiting).toBeNull();
   const late=w.blacksmithViews.activate(route,{});
   const outcome=late.then(()=>'opened',(e)=>e.message);
-  await sleep(150);w.serviceInstances=list;
+  await until(()=>w.__pendingTimers()>0,'the route to wait for the list');w.serviceInstances=list;
   expect(await outcome).toBe('Service instance nope was not found.');
  }finally{w.close();}
 });
@@ -214,7 +214,7 @@ t('an instance route waits for a late list and opens an instance that is in it',
   const list=w.serviceInstances;w.serviceInstances=undefined;
   const opening=w.blacksmithViews.activate({screen:'services',instance:'r1',section:'details'},{});
   const outcome=opening.then(()=>'opened',(e)=>e.message);
-  await sleep(150);w.serviceInstances=list;
+  await until(()=>w.__pendingTimers()>0,'the route to wait for the list');w.serviceInstances=list;
   expect(await outcome).toBe('opened');
   expect(d.getElementById('services').classList.contains('instance-open')).toBe(true);
   expect(d.getElementById('services').textContent).not.toContain('was not found');
@@ -224,11 +224,11 @@ t('an instance route waits for a late list and opens an instance that is in it',
 t('the overview in the loaded page links through the real router to the filtered list',async()=>{
  const env=await loaded(),{w,d}=env;try{
   w.eval(fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8'));
-  await sleep(60);
+  await idle(w);
   expect(w.blacksmithRouter.current.screen).toBe('blacksmith');
   const button=d.querySelector('#blacksmith button[data-service="redis"][data-plan="small"]');
   expect(!!button).toBe(true);
-  button.click();await sleep(60);
+  button.click();await idle(w);
   expect(w.location.hash).toBe('#/instances?service=redis&plan=small');
   expect(visible(d)).toEqual(['r1','r2']);
  }finally{w.close();}
@@ -247,7 +247,7 @@ t('a plan with no instances and a plan gone from the catalog both open an empty 
 const withRouter=async(env)=>{
  const {w}=env;
  w.eval(fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8'));
- await sleep(60);
+ await idle(w);
  return w.blacksmithRouter;
 };
 const choose=(w,select,value)=>{ select.value=value; select.dispatchEvent(new w.Event('change',{bubbles:true})); };
@@ -257,11 +257,11 @@ t('choosing a filter by hand updates the address without adding history entries'
   const router=await withRouter(env);
   await router.navigate({screen:'services'});
   const length=w.history.length;
-  choose(w,d.getElementById('service-filter'),'redis');await sleep(10);
+  choose(w,d.getElementById('service-filter'),'redis');await idle(w);
   expect(w.location.hash).toBe('#/instances?service=redis');
-  choose(w,d.getElementById('plan-filter'),'small');await sleep(10);
+  choose(w,d.getElementById('plan-filter'),'small');await idle(w);
   expect(w.location.hash).toBe('#/instances?service=redis&plan=small');
-  choose(w,d.getElementById('service-filter'),'');await sleep(10);
+  choose(w,d.getElementById('service-filter'),'');await idle(w);
   expect(w.location.hash).toBe('#/instances');
   expect(w.history.length).toBe(length);
  }finally{w.close();}

@@ -1,11 +1,11 @@
 const { test, expect } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main:{boot,sleep,idle,TEST_LIMIT} } = require('./certificates/harness.js');
 
 const JOB = 'job/0';
 
 // Mounts the instance logs section with the production renderer, the way a first load does.
 const mountLogs = async (w, d, files) => {
-  await sleep(200);
+  await idle(w);
   const panel = d.getElementById('services');
   panel.classList.add('active');
   const item = d.createElement('div');
@@ -38,7 +38,7 @@ test('Refresh keeps the file list and shows the new contents of the selected fil
     expect(options(content)).toEqual(['app.log', 'other.log']);
     stubLogs(w, { [JOB]: { 'app.log': 'second app line', 'other.log': 'second other line' } });
     content.querySelector('[data-instance-log="refresh"]').click();
-    await sleep(60);
+    await idle(w);
     expect(options(content)).toEqual(['app.log', 'other.log']);
     expect(content.querySelector('.log-file-dropdown').value).toBe('other.log');
     expect(content.querySelector('tbody').textContent).toContain('second other line');
@@ -53,7 +53,7 @@ test('Refresh reads the same wrapped response the first load reads', async () =>
     const content = await mountLogs(w, d, { 'app.log': 'first app line' });
     stubLogs(w, { logs: { [JOB]: { 'app.log': 'wrapped app line', 'new.log': 'new file line' } }, truncated: false });
     content.querySelector('[data-instance-log="refresh"]').click();
-    await sleep(60);
+    await idle(w);
     expect(options(content)).toEqual(['app.log', 'new.log']);
     expect(content.querySelector('tbody').textContent).toContain('wrapped app line');
   } finally { w.close(); }
@@ -66,7 +66,7 @@ test('Refresh falls back to the first file when the selected one is gone', async
     content.querySelector('.log-file-dropdown').value = 'other.log';
     stubLogs(w, { [JOB]: { 'app.log': 'only app line' } });
     content.querySelector('[data-instance-log="refresh"]').click();
-    await sleep(60);
+    await idle(w);
     expect(options(content)).toEqual(['app.log']);
     expect(content.querySelector('tbody').textContent).toContain('only app line');
   } finally { w.close(); }

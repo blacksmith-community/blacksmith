@@ -1,12 +1,12 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const data={text:'name: m',parsed:{name:'m',director_uuid:'d-1',variables:[{name:'tls',type:'certificate'},{name:'pw',type:'password'}]}};
 
 t('a variable type is plain text with no copy button',async()=>{
- const {w,d}=boot(); await sleep(40);
+ const {w,d}=boot(); await idle(w);
  try{
   d.body.innerHTML=w.__T.formatManifestDetails(data,'instance');
   const rows=[...d.querySelectorAll('.manifest-tab-pane[data-tab="variables"] tbody tr')];
@@ -22,14 +22,14 @@ t('a variable type is plain text with no copy button',async()=>{
 });
 
 t('copying a field announces its name in the live region and never the value',async()=>{
- const {w,d}=boot(); await sleep(40);
+ const {w,d}=boot(); await idle(w);
  try{
   const copied=[];
   w.navigator.clipboard={writeText:(v)=>{copied.push(v);return Promise.resolve();}};
   d.body.innerHTML=w.__T.formatManifestDetails(data,'instance');
   const button=d.querySelector('[aria-label="Copy director UUID"]');
   await w.copyValue({preventDefault(){},stopPropagation(){},currentTarget:button},'d-1');
-  await sleep(120);
+  await idle(w);
   expect(copied).toEqual(['d-1']);
   const region=d.getElementById('blacksmith-live-region');
   expect(region.getAttribute('aria-live')).toBe('polite');

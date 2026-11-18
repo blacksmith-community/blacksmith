@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -19,7 +19,7 @@ const start=async()=>{
  const {w,d}=env;
  w.eval(OAT);
  const opener=d.createElement('button');opener.id='task-opener';opener.textContent='Task';d.body.appendChild(opener);
- await sleep(60);
+ await idle(w);
  opener.focus();
  const dialog=()=>d.getElementById('task-details-modal');
  const snapshot=()=>JSON.stringify({
@@ -32,7 +32,7 @@ const start=async()=>{
  const touch=()=>dialog().dispatchEvent(new w.Event('touchstart',{bubbles:true,cancelable:true}));
  return {...env,opener,dialog,snapshot,key,backdrop,touch};
 };
-const openIt=async(env)=>{ const p=env.w.showTaskDetails(42); await sleep(30); return p; };
+const openIt=async(env)=>{ const p=env.w.showTaskDetails(42); await idle(env); return p; };
 const closeIt=(env)=>env.w.hideTaskDetailsModal();
 
 t('the task details view opens as a native modal dialog on the surface stack',async()=>{
@@ -94,7 +94,7 @@ t('a confirmation opened over the task details view returns to it, still modal',
  const env=await start(); const {w,d,dialog,stubs,key}=env;
  await openIt(env);
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(w);
  expect(w.blacksmithSurfaces.size()).toBe(2);
  key('Escape');
  expect(await done).toBe(false);
@@ -113,11 +113,11 @@ t('a slow load for an earlier task cannot restart polling after a later task has
  let finish;
  w.__routes.unshift(['/b/tasks/41',(u,o,j)=>new Promise(resolve=>{finish=()=>resolve(j(200,{task:{id:41,state:'processing',description:'earlier task'}}));})]);
  w.__routes.unshift(['/b/tasks/42',(u,o,j)=>j(200,{task:{id:42,state:'done',description:'a task'}})]);
- const first=w.showTaskDetails(41); await sleep(10);
- await w.showTaskDetails(42); await sleep(30);
+ const first=w.showTaskDetails(41); await idle(w);
+ await w.showTaskDetails(42); await idle(w);
  const handle=w.taskModalAutoRefresh;
  expect(handle).toBeTruthy();
- finish(); await first; await sleep(30);
+ finish(); await first; await idle(w);
  expect(w.taskModalAutoRefresh).toBe(handle);
  w.hideTaskDetailsModal(); await stubs.settle();
 });

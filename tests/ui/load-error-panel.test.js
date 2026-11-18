@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // A failed read answers with a body the page must never show.
 const SECRET='upstream-detail-do-not-show';
@@ -21,7 +21,7 @@ const start=async(catalog,extra=[])=>{
   ['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{enabled:true})],
   ...extra]});
  envs.push(env);
- await sleep(60);
+ await idle(env);
  return {env,state};
 };
 const panelOf=(d,id)=>d.querySelector(`#${id} [data-load-error]`);
@@ -68,7 +68,7 @@ t('Retry repeats the load and the page loads when it succeeds',async()=>{
  expect(state.calls).toBe(1);
  state.catalog=okCatalog;
  d.querySelector('#blacksmith [data-load-retry]').click();
- await sleep(80);
+ await idle(env);
  expect(state.calls).toBe(2);
  expect(d.querySelector('[data-load-error]')).toBeNull();
  expect(d.querySelector('#blacksmith').textContent).not.toContain('Could not load');
@@ -78,7 +78,7 @@ t('Retry that fails again shows the panel again',async()=>{
  const {env,state}=await start(fail(503,'Service Unavailable'));
  const {d}=env;
  d.querySelector('#services [data-load-retry]').click();
- await sleep(80);
+ await idle(env);
  expect(state.calls).toBe(2);
  expect(panelOf(d,'blacksmith')).not.toBeNull();
  expect(panelOf(d,'services')).not.toBeNull();
@@ -109,7 +109,7 @@ t('a broker tab that cannot load shows the panel and Retry reloads it',async()=>
  const {w,d}=env;
  expect(typeof w.loadBlacksmithSection).toBe('function');
  await w.loadBlacksmithSection('configs');
- await sleep(30);
+ await idle(w);
  const panel=d.querySelector('#blacksmith .detail-content [data-load-error]');
  expect(panel).not.toBeNull();
  expect(panel.getAttribute('role')).toBe('alert');
@@ -119,7 +119,7 @@ t('a broker tab that cannot load shows the panel and Retry reloads it',async()=>
  expect(d.querySelector('#blacksmith .detail-content').textContent).not.toContain('Failed to load');
  state.answer=(u,o,j)=>j(200,[]);
  panel.querySelector('[data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(d.querySelector('#blacksmith .detail-content [data-load-error]')).toBeNull();
 });
 
@@ -128,7 +128,7 @@ t('a manifest that cannot load shows the status and never the broker body',async
  const {env}=await detailStart([['/manifest',answers(state)]]);
  const {w,d}=env;
  await w.loadBlacksmithSection('manifest');
- await sleep(30);
+ await idle(w);
  const panel=d.querySelector('#blacksmith .detail-content [data-load-error]');
  expect(panel).not.toBeNull();
  expect(panel.textContent).toContain('500');
@@ -143,7 +143,7 @@ t('an instance tab that cannot load shows the panel and Retry reloads it',async(
  w.currentInstanceInfo={id:'inst1'};
  expect(typeof w.loadInstanceSection).toBe('function');
  await w.loadInstanceSection('inst1','vms');
- await sleep(30);
+ await idle(w);
  const panel=host.querySelector('[data-load-error]');
  expect(panel).not.toBeNull();
  expect(panel.textContent).toContain('502');
@@ -153,7 +153,7 @@ t('an instance tab that cannot load shows the panel and Retry reloads it',async(
  const calls=env.calls.filter((c)=>c.includes('/b/inst1/vms')).length;
  state.answer=(u,o,j)=>j(200,[]);
  panel.querySelector('[data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(env.calls.filter((c)=>c.includes('/b/inst1/vms')).length).toBe(calls+1);
  expect(host.querySelector('[data-load-error]')).toBeNull();
 });
@@ -162,7 +162,7 @@ t('every Retry button on a page has its own keep key',async()=>{
  const {env}=await detailStart([['/b/configs',fail(503,'Service Unavailable')]]);
  const {w,d}=env;
  await w.loadBlacksmithSection('configs');
- await sleep(30);
+ await idle(w);
  const keys=[...d.querySelectorAll('[data-load-retry]')].map((b)=>b.getAttribute('data-keep-key'));
  expect(keys.length).toBe(1);
  expect(keys[0]).toMatch(/^load-retry:/);
@@ -187,7 +187,7 @@ t('a marketplace that cannot load shows the panel without the broker message',as
  const before=env.calls.filter((c)=>c.includes('/marketplace')).length;
  state.answer=(u,o,j)=>j(200,{services:[]});
  box.querySelector('[data-load-retry]').click();
- await sleep(60);
+ await idle(w);
  expect(env.calls.filter((c)=>c.includes('/marketplace')).length).toBe(before+1);
  expect(panel.querySelector('[data-load-error]')).toBeNull();
 });
@@ -214,7 +214,7 @@ const lateFailure=async()=>{
   },
   routes:[['/v2/catalog',catalog],['/b/status',status],['/b/instance',(u,o,j)=>j(200,{deployment:'blacksmith',id:'b'})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{enabled:true})]]});
  envs.push(env);
- await sleep(120);
+ await idle(env);
  return {env,state};
 };
 
@@ -230,16 +230,16 @@ t('a load that fails late and is retried registers each handler once',async()=>{
  const retry=d.querySelector('#blacksmith [data-load-retry]');
  expect(retry).not.toBeNull();
  retry.click();
- await sleep(150);
+ await idle(w);
  expect(d.querySelector('[data-load-error]')).toBeNull();
  const copy=d.getElementById('copy-deployment-names');
  expect(copy).not.toBeNull();
  copy.click();
- await sleep(30);
+ await idle(w);
  expect(w.__copies).toBe(1);
  const before=env.calls.filter((c)=>c.includes('/v2/catalog')).length;
  d.getElementById('refresh-services').click();
- await sleep(60);
+ await idle(w);
  expect(env.calls.filter((c)=>c.includes('/v2/catalog')).length).toBe(before+1);
  // One change event on the service filter reaches the route notifier once.
  let notified=0;
@@ -275,7 +275,7 @@ t('config details that cannot load show a compact panel and Retry loads them aga
  const before=callsTo(env,'/b/configs/c1');
  state.answer=okJson(configBody);
  box.querySelector('[data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(callsTo(env,'/b/configs/c1')).toBe(before+1);
  expect(d.querySelector('#config-details-loading [data-load-error]')).toBeNull();
  expect(d.getElementById('config-name').textContent).toBe('cfg');
@@ -294,7 +294,7 @@ t('config versions that cannot load show a compact panel and Retry loads them ag
  const before=callsTo(env,'/versions');
  state.answer=okJson({configs:[]});
  box.querySelector('[data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(callsTo(env,'/versions')).toBe(before+1);
  expect(d.querySelector('#config-details-loading [data-load-error]')).toBeNull();
 });
@@ -304,7 +304,7 @@ t('task details that cannot load show a compact panel and Retry loads them again
  const {env}=await detailStart([['/b/tasks/5/output',okJson({output:''})],['/b/tasks/5',answers(state)]]);
  const {w,d}=env;
  await w.showTaskDetails(5);
- await sleep(60);
+ await idle(w);
  const box=d.querySelector('#task-details-loading [data-load-error]');
  expect(box).not.toBeNull();
  expect(box.classList.contains('load-error--compact')).toBe(true);
@@ -314,7 +314,7 @@ t('task details that cannot load show a compact panel and Retry loads them again
  const before=callsTo(env,'/b/tasks/5');
  state.answer=okJson(taskBody);
  box.querySelector('[data-load-retry]').click();
- await sleep(100);
+ await idle(w);
  expect(callsTo(env,'/b/tasks/5')).toBeGreaterThan(before);
  expect(d.querySelector('#task-details-loading [data-load-error]')).toBeNull();
 });
@@ -324,7 +324,7 @@ t('a task output tab that cannot load shows a compact panel and Retry loads it a
  const {env}=await detailStart([['/b/tasks/5/output',answers(out)],['/b/tasks/5',okJson(taskBody)]]);
  const {w,d}=env;
  await w.showTaskDetails(5);
- await sleep(100);
+ await idle(w);
  const pane=d.getElementById('task-task-content');
  const box=pane.querySelector('[data-load-error]');
  expect(box).not.toBeNull();
@@ -334,7 +334,7 @@ t('a task output tab that cannot load shows a compact panel and Retry loads it a
  const before=callsTo(env,'/b/tasks/5/output');
  out.answer=okJson({output:'line'});
  box.querySelector('[data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(callsTo(env,'/b/tasks/5/output')).toBe(before+1);
  expect(pane.querySelector('[data-load-error]')).toBeNull();
 });
@@ -355,7 +355,7 @@ t('a service list that cannot load shows the panel and Retry loads it again',asy
  const before=callsTo(env,'/spaces/sp1/services');
  state.answer=okJson({services:[]});
  box.querySelector('[data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(callsTo(env,'/spaces/sp1/services')).toBe(before+1);
  expect(d.querySelector('#services-results [data-load-error]')).toBeNull();
 });
@@ -375,19 +375,19 @@ t('a Retry that fails again says so inside the alert and stays usable',async()=>
  w.CFEndpointManager.loadServiceInstances=()=>Promise.reject(new Error(SECRET));
  const button=box.querySelector('[data-load-retry]');
  button.click();
- await sleep(40);
+ await idle(w);
  expect(box.isConnected).toBe(true);
  expect(box.getAttribute('role')).toBe('alert');
  expect(box.textContent).toContain('The retry failed too.');
  expect(box.textContent).not.toContain(SECRET);
  expect(button.disabled).toBe(false);
  button.click();
- await sleep(40);
+ await idle(w);
  expect(box.querySelectorAll('.load-error-retry-failed').length).toBe(1);
  w.CFEndpointManager.loadServiceInstances=original;
  state.answer=okJson({services:[]});
  button.click();
- await sleep(80);
+ await idle(w);
  expect(d.querySelector('#services-results [data-load-error]')).toBeNull();
 });
 
@@ -411,7 +411,7 @@ t('every compact panel Retry keeps its own keep key',async()=>{
  const {w,d}=env;
  await w.showConfigDetails('c1');
  await w.showTaskDetails(5);
- await sleep(60);
+ await idle(w);
  const keys=[...d.querySelectorAll('[data-load-retry]')].map((b)=>b.getAttribute('data-keep-key'));
  expect(keys.length).toBe(2);
  expect(new Set(keys).size).toBe(2);
@@ -424,7 +424,7 @@ t('a render error that is a TypeError does not say the broker could not be reach
  const host=d.createElement('div'); host.className='detail-content'; d.getElementById('services').appendChild(host);
  w.currentInstanceInfo={id:'inst1'};
  await w.loadInstanceSection('inst1','manifest');
- await sleep(30);
+ await idle(w);
  const panel=host.querySelector('[data-load-error]');
  expect(panel).not.toBeNull();
  expect(panel.textContent).not.toContain('could not be reached');
@@ -437,7 +437,7 @@ t('a request that never got an answer says the broker could not be reached',asyn
  const host=d.createElement('div'); host.className='detail-content'; d.getElementById('services').appendChild(host);
  w.currentInstanceInfo={id:'inst1'};
  await w.loadInstanceSection('inst1','vms');
- await sleep(30);
+ await idle(w);
  expect(host.querySelector('[data-load-error]').textContent).toContain('could not be reached');
 });
 
@@ -450,7 +450,7 @@ t('a double-clicked first-load Retry starts one load',async()=>{
  expect(state.calls).toBe(1);
  state.catalog=okCatalog;
  for(const target of [button,button,other]) target.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));
- await sleep(120);
+ await idle(w);
  expect(state.calls).toBe(2);
 });
 
@@ -459,12 +459,12 @@ t('a double-clicked detail Retry reloads the view once',async()=>{
  const {env}=await detailStart([['/b/configs',answers(state)]]);
  const {w,d}=env;
  await w.loadBlacksmithSection('configs');
- await sleep(30);
+ await idle(w);
  const button=d.querySelector('#blacksmith .detail-content [data-load-retry]');
  const before=callsTo(env,'/b/configs');
  state.answer=(u,o,j)=>j(200,[]);
  for(let i=0;i<2;i++) button.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));
- await sleep(100);
+ await idle(w);
  expect(callsTo(env,'/b/configs')).toBe(before+1);
 });
 
@@ -475,13 +475,13 @@ t('Retry after the operator left the instance does nothing',async()=>{
  const host=d.createElement('div'); host.className='detail-content'; d.getElementById('services').appendChild(host);
  w.currentInstanceInfo={id:'inst1'};
  await w.loadInstanceSection('inst1','vms');
- await sleep(30);
+ await idle(w);
  const button=host.querySelector('[data-load-retry]');
  const before=callsTo(env,'/b/inst1/vms');
  w.currentInstanceInfo={id:'inst2'};
  state.answer=okJson([]);
  button.click();
- await sleep(60);
+ await idle(w);
  expect(callsTo(env,'/b/inst1/vms')).toBe(before);
  expect(host.querySelector('[data-load-error]')).not.toBeNull();
 });
@@ -491,7 +491,7 @@ t('Retry after the operator opened another broker section does nothing',async()=
  const {env}=await detailStart([['/b/configs',answers(state)]]);
  const {w,d}=env;
  await w.loadBlacksmithSection('configs');
- await sleep(30);
+ await idle(w);
  const workspace=d.querySelector('#blacksmith .entity-workspace');
  expect(workspace).not.toBeNull();
  const button=d.querySelector('#blacksmith .detail-content [data-load-retry]');
@@ -499,7 +499,7 @@ t('Retry after the operator opened another broker section does nothing',async()=
  workspace.dataset.section='tasks';
  state.answer=(u,o,j)=>j(200,[]);
  button.click();
- await sleep(60);
+ await idle(w);
  expect(callsTo(env,'/b/configs')).toBe(before);
 });
 
@@ -515,7 +515,7 @@ t('Retry after the operator picked another endpoint does nothing',async()=>{
  w.CFEndpointManager.selectedEndpoint='e2';
  state.answer=okJson({services:[]});
  button.click();
- await sleep(60);
+ await idle(w);
  expect(callsTo(env,'/marketplace')).toBe(before);
 });
 
@@ -524,21 +524,21 @@ t('a handler is dropped when its panel is gone and kept while the panel is on th
  const {env}=await detailStart([['/b/configs',answers(state)]]);
  const {w,d}=env;
  await w.loadBlacksmithSection('configs');
- await sleep(30);
+ await idle(w);
  const saved=d.querySelector('#blacksmith .detail-content [data-load-error]').outerHTML;
  // An unrelated change to the page keeps the handler of a panel that is still shown.
  d.body.appendChild(d.createElement('div'));
- await sleep(30);
+ await idle(w);
  const before=callsTo(env,'/b/configs');
  state.answer=(u,o,j)=>j(200,[]);
  d.querySelector('#blacksmith .detail-content [data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(callsTo(env,'/b/configs')).toBe(before+1);
  // The panel was replaced, so a copy of it that comes back has nothing to run.
- await sleep(30);
+ await idle(w);
  const holder=d.createElement('div'); holder.innerHTML=saved; d.body.appendChild(holder);
  holder.querySelector('[data-load-retry]').click();
- await sleep(60);
+ await idle(w);
  expect(callsTo(env,'/b/configs')).toBe(before+1);
 });
 
@@ -581,7 +581,7 @@ const olderLogs=async()=>{
  const state={answer:okJson({logs:'2026-01-01T00:00:00Z INFO first line\n',has_more:true,total_lines:50,limit:1,file:'f',files:[]})};
  const out=await detailStart([['/b/blacksmith/logs',answers(state)]]);
  await out.env.w.loadBlacksmithSection('blacksmith-logs');
- await sleep(60);
+ await idle(out.env);
  out.state=state;
  return out;
 };
@@ -597,12 +597,12 @@ t('after older logs fail, scrolling does not load again until the line is activa
  state.answer=fail(503,'Service Unavailable');
  display.scrollTop=0;
  display.dispatchEvent(new w.Event('scroll'));
- await sleep(60);
+ await idle(w);
  const note=d.querySelector('#logs-load-more .load-more-text');
  expect(note.getAttribute('role')).toBe('status');
  expect(note.textContent).toContain('503 Service Unavailable');
  const failedAt=logCalls(env);
- for(let i=0;i<3;i++){ display.dispatchEvent(new w.Event('scroll')); await sleep(20); }
+ for(let i=0;i<3;i++){ display.dispatchEvent(new w.Event('scroll')); await idle(w); }
  expect(logCalls(env)).toBe(failedAt);
  state.answer=okJson({logs:'2026-01-01T00:00:01Z INFO older line\n',has_more:false,total_lines:50,limit:1,file:'f',files:[]});
  // The button's own onclick attribute makes this call, and jsdom does not run inline handlers.
@@ -626,7 +626,7 @@ t('a config version that cannot load shows the panel in the content pane and Ret
  expect(pre.textContent).not.toContain(SECRET);
  state.answer=okJson({id:'c9',name:'n',type:'cloud',content:'fresh: 1'});
  box.querySelector('[data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(pre.textContent).toBe('fresh: 1');
 });
 
@@ -648,7 +648,7 @@ t('a config diff that cannot load shows the panel, never markup from the broker,
  const before=callsTo(env,'/diff?');
  state.answer=okJson({has_changes:true,diff_string:'- a\n+ b'});
  box.querySelector('[data-load-retry]').click();
- await sleep(80);
+ await idle(w);
  expect(callsTo(env,'/diff?')).toBe(before+1);
  expect(out.querySelector('[data-load-error]')).toBeNull();
  expect(out.textContent).toContain('+ b');
@@ -694,7 +694,7 @@ for(const view of certViews){
   expect(host.textContent).not.toMatch(/HTTP \d+:|Server error|Failed to (load|list|connect)/);
   const before=env.calls.length;
   box.querySelector('[data-load-retry]').click();
-  await sleep(100);
+  await idle(w);
   expect(env.calls.length).toBeGreaterThan(before);
  });
 }

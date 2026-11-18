@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,until,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // Routes for the page's own load, so a console error means something broke.
 const QUIET=[[/\/b\/status$/,(u,o,j)=>j(200,{env:'Local fixture',instances:{},plans:{}})],[/\/b\/instance$/,(u,o,j)=>j(200,{deployment:'blacksmith'})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],[/inventory\?summary_only=true/,(u,o,j)=>j(200,{summary:{certificates:0,needs_attention:0}})]];
@@ -27,11 +27,13 @@ const open=async(statuses,{limit=2000,others={},delays={}}={})=>{
    const a=list[Math.min(n-1,list.length-1)];
    const make=()=>typeof a==='function'?a():j(200,{registration:{id,name:'lab-cf',...a}});
    const wait=(delays[id]||[])[n-1];
+   // A delay is a number of milliseconds, or a promise the test settles itself.
+   if(wait&&typeof wait.then==='function') return wait.then(make);
    return wait?new Promise(res=>setTimeout(()=>res(make()),wait)):make();
   }]]});
  envs.push(env);
- await sleep(40);
  const {w}=env;
+ await idle(env);
  // There is no stream route, so the page must never open one.
  w.EventSource=class{ constructor(){ env.streams=(env.streams||0)+1; } close(){} };
  const toasts=[];
@@ -54,14 +56,13 @@ const stepClasses=(env)=>[...env.d.querySelectorAll('#registration-progress .pro
 
 t('a registration that succeeds moves the steps and stops polling',async()=>{
  const {env,toasts,polls}=await open([{status:'registering'},{status:'registering'},{status:'active'}]);
- await sleep(30);
+ await until(()=>stepClasses(env).some(c=>c!==''),'the steps to show a state');
  expect(stepClasses(env).every(c=>c==='running'||c==='success')).toBe(true);
- await sleep(150);
- expect(header(env)).toBe('Registration COMPLETED');
+ await until(()=>header(env)==='Registration COMPLETED','the registration to complete');
  expect(stepClasses(env)).toEqual(['success','success','success','success','success']);
  expect(toasts).toEqual(['success:Registration completed successfully!']);
  const seen=polls();
- await sleep(120);
+ await idle(env);
  expect(polls()).toBe(seen);
  expect(env.streams||0).toBe(0);
  expect(env.calls.filter(c=>/\/stream/.test(c))).toEqual([]);
@@ -69,43 +70,42 @@ t('a registration that succeeds moves the steps and stops polling',async()=>{
 
 t('a registration that fails shows its error and stops polling',async()=>{
  const {env,toasts,polls}=await open([{status:'registering'},{status:'failed',last_error:'the CF API refused the broker'}]);
- await sleep(200);
+ await until(()=>header(env)==='Registration FAILED','the registration to fail');
  expect(header(env)).toBe('Registration FAILED');
  expect(stepClasses(env)).toEqual(['error','error','error','error','error']);
  expect(toasts).toEqual(['error:Registration failed: the CF API refused the broker']);
  const seen=polls();
- await sleep(120);
+ await idle(env);
  expect(polls()).toBe(seen);
 });
 
 t('a registration that never finishes times out once and stops polling',async()=>{
  const {env,toasts,polls}=await open([{status:'registering'}],{limit:150});
- await sleep(260);
+ await until(()=>header(env)==='Registration Progress - TIMEOUT','the time limit to pass');
  expect(header(env)).toBe('Registration Progress - TIMEOUT');
  expect(toasts).toEqual(['error:Registration progress monitoring timed out. Please check status manually.']);
  const seen=polls();
  expect(seen).toBeGreaterThan(1);
- await sleep(120);
+ await idle(env);
  expect(polls()).toBe(seen);
 });
 
 t('closing the progress view clears the poll and its time limit',async()=>{
  const {env,manager,toasts,polls}=await open([{status:'registering'}],{limit:300});
- await sleep(70);
- expect(polls()).toBeGreaterThan(1);
+ await until(()=>polls()>1,'a second check');
  manager.hideRegistrationModal();
  const seen=polls();
- await sleep(400);
+ await idle(env);
  expect(polls()).toBe(seen);
  expect(toasts).toEqual([]);
 });
 
 t('navigating away clears the poll and its time limit',async()=>{
  const {env,toasts,polls}=await open([{status:'registering'}],{limit:300});
- await sleep(70);
+ await until(()=>polls()>1,'a second check');
  env.w.dispatchEvent(new env.w.PopStateEvent('popstate',{state:null}));
  const seen=polls();
- await sleep(400);
+ await idle(env);
  expect(polls()).toBe(seen);
  expect(toasts).toEqual([]);
 });
@@ -119,7 +119,8 @@ t('the page has no registration stream left',()=>{
 for(const [status,said] of [[401,'refused'],[403,'refused'],[404,'no longer has this registration']]){
  t(`a ${status} stops the poll at once with a readable message`,async()=>{
   const {env,toasts,polls}=await open([answer(status,JSON.stringify({error:'nope'}))]);
-  await sleep(150);
+  await until(()=>toasts.length>0,'the poll to report');
+  await idle(env);
   expect(polls()).toBe(1);
   expect(toasts.length).toBe(1);
   expect(toasts[0]).toContain(`HTTP ${status}`);
@@ -131,7 +132,8 @@ for(const [status,said] of [[401,'refused'],[403,'refused'],[404,'no longer has 
 for(const [name,make] of [['a 200 web page',answer(200,PAGE,'text/html; charset=utf-8')],['a 401 web page',answer(401,PAGE,'text/html')],['a web page with no type',answer(200,PAGE,'')]]){
  t(`${name} stops the poll at once and never shows its markup`,async()=>{
   const {env,toasts,polls}=await open([make]);
-  await sleep(150);
+  await until(()=>toasts.length>0,'the poll to report');
+  await idle(env);
   expect(polls()).toBe(1);
   expect(toasts.length).toBe(1);
   expect(toasts[0]).toContain('web page');
@@ -144,7 +146,8 @@ for(const [name,make] of [['a 200 web page',answer(200,PAGE,'text/html; charset=
 for(const [name,make,said] of [['network errors',offline(),'network error'],['5xx answers',answer(503,PAGE,'text/html'),'HTTP 503']]){
  t(`${name} keep the poll going and stop it after three in a row`,async()=>{
   const {env,toasts,polls}=await open([make]);
-  await sleep(250);
+  await until(()=>toasts.length>0,'the poll to stop');
+  await idle(env);
   expect(polls()).toBe(3);
   expect(toasts.length).toBe(1);
   expect(toasts[0]).toContain('3 checks in a row');
@@ -156,32 +159,37 @@ for(const [name,make,said] of [['network errors',offline(),'network error'],['5x
 
 t('a good answer resets the count of failed checks',async()=>{
  const {env,toasts,polls}=await open([offline(),answer(500,'{"error":"vault"}'),{status:'registering'},offline(),answer(502,'bad gateway','text/plain'),{status:'registering'},offline(),offline(),{status:'active'}]);
- await sleep(400);
+ await until(()=>header(env)==='Registration COMPLETED','the registration to complete');
  expect(polls()).toBe(9);
  expect(header(env)).toBe('Registration COMPLETED');
  expect(toasts).toEqual(['success:Registration completed successfully!']);
 });
 
 t('opening progress twice leaves one poller and drops the first one\'s late answers',async()=>{
- const {env,manager,toasts,polls}=await open([{status:'failed',last_error:'stale'}],{delays:{'reg-1':[60]},others:{'reg-2':[{status:'registering'},{status:'active'}]}});
- await sleep(5);
+ // The first registration's only answer is held until the test releases it, so it arrives after the second poll took over.
+ let release; const held=new Promise(res=>{release=res;});
+ const {env,manager,toasts,polls}=await open([{status:'failed',last_error:'stale'}],{delays:{'reg-1':[held]},others:{'reg-2':[{status:'registering'},{status:'active'}]}});
+ await until(()=>polls('reg-1')===1,'the first poll to ask');
  manager.showProgressStream('reg-2');
- await sleep(300);
+ await until(()=>header(env)==='Registration COMPLETED','the second registration to complete');
+ release(); await idle(env);
  expect(polls('reg-1')).toBe(1);
  expect(polls('reg-2')).toBeGreaterThan(1);
  expect(header(env)).toBe('Registration COMPLETED');
  expect(toasts).toEqual(['success:Registration completed successfully!']);
  const seen=polls('reg-2');
- await sleep(100);
+ await idle(env);
  expect(polls('reg-2')).toBe(seen);
 });
 
 t('a late failure from a replaced poll can\'t stop the new one',async()=>{
- const {env,manager,toasts,polls}=await open([offline()],{delays:{'reg-1':[0,0,80]},others:{'reg-2':[{status:'registering'},{status:'registering'},{status:'active'}]}});
- await sleep(50);
- expect(polls('reg-1')).toBe(3);
+ // The third answer for the first registration is held until the test releases it, so it arrives after the second poll took over.
+ let release; const held=new Promise(res=>{release=res;});
+ const {env,manager,toasts,polls}=await open([offline()],{delays:{'reg-1':[0,0,held]},others:{'reg-2':[{status:'registering'},{status:'registering'},{status:'active'}]}});
+ await until(()=>polls('reg-1')===3,'the third check to ask');
  manager.showProgressStream('reg-2');
- await sleep(300);
+ await until(()=>header(env)==='Registration COMPLETED','the second registration to complete');
+ release(); await idle(env);
  expect(polls('reg-1')).toBe(3);
  expect(header(env)).toBe('Registration COMPLETED');
  expect(toasts).toEqual(['success:Registration completed successfully!']);

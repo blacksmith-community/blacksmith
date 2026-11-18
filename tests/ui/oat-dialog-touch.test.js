@@ -1,10 +1,10 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {install}=require('./dom-stubs.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
