@@ -11,6 +11,12 @@ import (
 // schemaForge is the forge the schema validation test loads.
 const schemaForge = "schemakv"
 
+// draft4 is a schema object with members, which names the draft-04
+// meta-schema.
+func draft4(members string) string {
+	return `{"$schema": "http://json-schema.org/draft-04/schema#", ` + members + `}`
+}
+
 // schemaPlans are the plans of the schema validation test, by name, with
 // the schema.json each ships and whether that schema is published. Cloud
 // Controller refuses a whole catalog when any one schema in it is not a
@@ -24,39 +30,43 @@ func schemaPlans() map[string]struct {
 		schema    string
 		published bool
 	}{
-		"valid": {`{"$schema": "http://json-schema.org/draft-04/schema#", "type": "object",
+		"valid": {draft4(`"type": "object",
 			"properties": {"maxmemory": {"type": "integer", "minimum": 1}}, "definitions": {"policy": {"type": "string"}},
-			"additionalProperties": false, "patternProperties": {"^x-": {"$ref": "#/definitions/policy"}}}`, true},
-		"no-draft-named": {`{"type": "object", "properties": {"policy": {"type": "string", "enum": ["lru", "lfu"]}}}`, true},
-		"draft-07":       {`{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"}`, false},
-		"remote-ref":     {`{"type": "object", "properties": {"policy": {"$ref": "https://example.com/policy.json"}}}`, false},
-		"bad-type":       {`{"type": "object", "properties": {"policy": {"type": 5}}}`, false},
-		"bad-required":   {`{"type": "object", "required": []}`, false},
-		"too-large":      {`{"type": "object", "description": "` + strings.Repeat("x", 65*1024) + `"}`, false},
+			"additionalProperties": false, "patternProperties": {"^x-": {"$ref": "#/definitions/policy"}}`), true},
+		"draft-07":     {`{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"}`, false},
+		"remote-ref":   {draft4(`"type": "object", "properties": {"policy": {"$ref": "https://example.com/policy.json"}}`), false},
+		"bad-type":     {draft4(`"type": "object", "properties": {"policy": {"type": 5}}`), false},
+		"bad-required": {draft4(`"type": "object", "required": []`), false},
+		"too-large":    {draft4(`"type": "object", "description": "` + strings.Repeat("x", 65*1024) + `"`), false},
+
+		// Cloud Controller requires the $schema key, and it is the key
+		// most often left out of a schema.
+		"no-meta-schema":   {`{"type": "object", "properties": {"policy": {"type": "string", "enum": ["lru", "lfu"]}}}`, false},
+		"null-meta-schema": {`{"$schema": null, "type": "object"}`, false},
 
 		// Cloud Controller doesn't compile a pattern, and JSON Schema
 		// patterns are ECMA-262, which has lookarounds and backreferences
 		// that Go's regexp lacks.
-		"lookahead-pattern": {`{"type": "object", "properties": {"password": {"type": "string",
-			"pattern": "^(?=.*[A-Z])(?=.*\\d).{12,}$"}}}`, true},
-		"backreference-pattern": {`{"type": "object", "properties": {"pair": {"type": "string", "pattern": "^(a+)\\1$"}}}`, true},
-		"lookahead-property":    {`{"type": "object", "patternProperties": {"^(?!x-)": {"type": "string"}}}`, true},
+		"lookahead-pattern": {draft4(`"type": "object", "properties": {"password": {"type": "string",
+			"pattern": "^(?=.*[A-Z])(?=.*\\d).{12,}$"}}`), true},
+		"backreference-pattern": {draft4(`"type": "object", "properties": {"pair": {"type": "string", "pattern": "^(a+)\\1$"}}`), true},
+		"lookahead-property":    {draft4(`"type": "object", "patternProperties": {"^(?!x-)": {"type": "string"}}`), true},
 
 		// The draft-04 meta-schema is named with or without its fragment.
 		"draft-04-no-fragment": {`{"$schema": "http://json-schema.org/draft-04/schema", "type": "object"}`, true},
 
 		// Cloud Controller counts the characters of the schema's JSON, so
 		// a multibyte character, or one Go escapes for HTML, counts once.
-		"multibyte-under-limit": {`{"type": "object", "description": "` + strings.Repeat("é", 40000) + `"}`, true},
-		"html-under-limit":      {`{"type": "object", "description": "` + strings.Repeat("<&>", 20000) + `"}`, true},
-		"multibyte-over-limit":  {`{"type": "object", "description": "` + strings.Repeat("é", 64*1024) + `"}`, false},
+		"multibyte-under-limit": {draft4(`"type": "object", "description": "` + strings.Repeat("é", 40000) + `"`), true},
+		"html-under-limit":      {draft4(`"type": "object", "description": "` + strings.Repeat("<&>", 20000) + `"`), true},
+		"multibyte-over-limit":  {draft4(`"type": "object", "description": "` + strings.Repeat("é", 64*1024) + `"`), false},
 
 		// A $ref is a reference only where a schema is expected, and
 		// data in a default or an enum is not a schema.
-		"ref-in-data": {`{"type": "object", "properties": {"link": {"type": "object",
-			"default": {"$ref": "https://example.com/a.json"}, "enum": [{"$ref": "https://example.com/b.json"}]}}}`, true},
-		"remote-ref-in-items":       {`{"type": "object", "properties": {"list": {"type": "array", "items": {"$ref": "https://example.com/item.json"}}}}`, false},
-		"remote-ref-in-definitions": {`{"type": "object", "definitions": {"unused": {"$ref": "https://example.com/unused.json"}}}`, false},
+		"ref-in-data": {draft4(`"type": "object", "properties": {"link": {"type": "object",
+			"default": {"$ref": "https://example.com/a.json"}, "enum": [{"$ref": "https://example.com/b.json"}]}}`), true},
+		"remote-ref-in-items":       {draft4(`"type": "object", "properties": {"list": {"type": "array", "items": {"$ref": "https://example.com/item.json"}}}`), false},
+		"remote-ref-in-definitions": {draft4(`"type": "object", "definitions": {"unused": {"$ref": "https://example.com/unused.json"}}`), false},
 	}
 }
 

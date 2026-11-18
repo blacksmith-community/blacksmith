@@ -257,12 +257,13 @@ func TestCatalog_PlanUpdateableNeedsEveryCondition(t *testing.T) {
 //
 //nolint:paralleltest // kept serial, as the other catalog tests are
 func TestCatalog_PublishesSchemas(t *testing.T) {
-	const schemaJSON = `{"type": "object", "properties": {"maxmemory-policy": {"type": "string"}}, "additionalProperties": false}`
+	const schemaJSON = `{"$schema": "http://json-schema.org/draft-04/schema#", "type": "object", "properties": {"maxmemory-policy": {"type": "string"}}, "additionalProperties": false}`
 
 	dir := writeServiceDir(t, "id: kv\nname: kv\ndescription: a key-value store\nbindable: true\n", map[string]map[string]string{
 		"from-plan-yml": {planFile: `id: from-plan-yml
 schemas:
   parameters:
+    $schema: http://json-schema.org/draft-04/schema#
     type: object
     properties:
       maxmemory-policy:

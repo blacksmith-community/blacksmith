@@ -30,6 +30,7 @@ const (
 // Errors a parameter schema is refused with.
 var (
 	ErrPlanSchemaTooLarge   = errors.New("the parameter schema is longer than 65,536 characters of JSON")
+	ErrPlanSchemaNoMeta     = errors.New("the parameter schema has no $schema key naming its meta-schema")
 	ErrPlanSchemaNotDraft4  = errors.New("the parameter schema names a meta-schema other than JSON Schema draft-04")
 	ErrPlanSchemaExternal   = errors.New("the parameter schema refers to a schema outside itself")
 	ErrPlanSchemaNotEncoded = errors.New("the parameter schema cannot be encoded as JSON")
@@ -98,7 +99,9 @@ func draft4Meta() (*jsonschema.Schema, error) {
 
 // ValidateParameterSchema checks schema the way Cloud Controller checks
 // a catalog schema. Its JSON must be at most 65,536 characters long, it
-// must name no meta-schema but draft-04, it must hold no $ref outside
+// must have a $schema key that names the draft-04 meta-schema, as Cloud
+// Controller refuses a schema whose $schema is missing, null, or false, it
+// must hold no $ref outside
 // itself where a schema is expected, and it must be valid against the
 // draft-04 meta-schema. The schema itself is never compiled, so a
 // pattern Go can't compile, or a $ref that resolves to nothing inside
@@ -113,7 +116,12 @@ func ValidateParameterSchema(schema map[string]interface{}) error {
 		return fmt.Errorf("%w: it is %d characters", ErrPlanSchemaTooLarge, length)
 	}
 
-	if named, ok := schema["$schema"]; ok && !namesDraft4(named) {
+	named := schema["$schema"]
+	if named == nil || named == false {
+		return ErrPlanSchemaNoMeta
+	}
+
+	if !namesDraft4(named) {
 		return fmt.Errorf("%w: it names %v", ErrPlanSchemaNotDraft4, named)
 	}
 
