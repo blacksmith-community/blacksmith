@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const css=fs.readFileSync(path.join(UI,'blacksmith.css'),'utf8');
@@ -88,14 +88,14 @@ t('one line under the button reports the state of the connection',async()=>{
  expect(line().getAttribute('role')).toBe('status');
  expect(line().textContent.trim()).toBe('Not tested yet');
  expect(line().querySelector('.connection-status-indicator').getAttribute('data-state')).toBe('idle');
- press(s.w,s.d.getElementById('connect-btn-i1')); await sleep(30);
+ press(s.w,s.d.getElementById('connect-btn-i1')); await idle(s.w);
  expect(line().textContent.trim()).toBe('Connected');
  expect(line().querySelector('.connection-status-indicator').getAttribute('data-state')).toBe('connected');
 });
 
 t('a failed attempt shows its error in the same line',async()=>{
  const s=await screen(redisCreds,{service_name:'redis'},[[/redis\/test/,(u,o,json)=>json(502,{error:'connection refused'})]]);
- press(s.w,s.d.getElementById('connect-btn-i1')); await sleep(30);
+ press(s.w,s.d.getElementById('connect-btn-i1')); await idle(s.w);
  const line=s.d.getElementById('connection-status-i1');
  expect(line.textContent.trim()).toBe('Connection failed. connection refused');
  expect(line.querySelector('.connection-status-text').getAttribute('data-result')).toBe('failed');
@@ -110,7 +110,7 @@ t('an empty response history is one muted line and Clear history is disabled',as
  expect(entries.textContent.trim()).toBe('No operations performed yet');
  expect(clear.disabled).toBe(true);
  expect(css).toMatch(/\.history-entries\.is-empty \{[^}]*border:\s*0/);
- press(s.w,s.d.getElementById('connect-btn-i1')); await sleep(30);
+ press(s.w,s.d.getElementById('connect-btn-i1')); await idle(s.w);
  expect(entries.classList.contains('is-empty')).toBe(false);
  expect(clear.disabled).toBe(false);
  press(s.w,clear);

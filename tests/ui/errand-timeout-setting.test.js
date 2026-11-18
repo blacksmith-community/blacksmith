@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // The Settings page lists the errand timeout beside the reconciler interval.
 // It shows the wait in effect and where it comes from, and Apply sends the
@@ -17,12 +17,12 @@ const screen=async(sent)=>{
   ['/b/blacksmith/settings',(u,o,j)=>{ sent.push(JSON.parse(o.body)); return j(200,{success:true,errand_timeout:'45m0s'}); }]
  ]});
  envs.push(env);
- await sleep(60);
+ await idle(env);
  env.errors.length=0;
  const host=env.d.createElement('div'); env.d.body.appendChild(host);
  host.innerHTML=env.w.__T.renderBlacksmithSettings({vault_max_versions:5,reconciler_interval:'1h',errand_timeout:'30m0s',errand_timeout_source:'default'},{});
  await env.w.__T.setupBlacksmithSettingsHandlers();
- await sleep(20);
+ await idle(env);
  return {...env,host};
 };
 
@@ -38,7 +38,7 @@ t('Apply sends errand_timeout and shows the saved wait',async()=>{
  const s=await screen(sent);
  s.host.querySelector('#settings-errand-timeout').value='45m';
  s.host.querySelector('#apply-errand-timeout').click();
- await sleep(40);
+ await idle(s);
  expect(sent).toEqual([{errand_timeout:'45m'}]);
  expect(s.host.querySelector('#settings-errand-timeout').value).toBe('45m0s');
  expect(s.host.querySelector('#feedback-errand-timeout').textContent).toContain('Errand timeout applied: 45m0s.');
@@ -49,7 +49,7 @@ t('an empty errand timeout is refused before any request',async()=>{
  const s=await screen(sent);
  s.host.querySelector('#settings-errand-timeout').value='';
  s.host.querySelector('#apply-errand-timeout').click();
- await sleep(20);
+ await idle(s);
  expect(sent).toEqual([]);
  expect(s.host.querySelector('#feedback-errand-timeout').textContent).toBe('Enter a duration, for example 30m or 1h.');
 });

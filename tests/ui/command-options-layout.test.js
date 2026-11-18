@@ -1,10 +1,10 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {expectNoAlerts}=require('./certificates/no-alerts.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const AVAILABILITY_URL='/b/upgrade/commands/availability';
 const envs=[];
@@ -13,8 +13,8 @@ async function setup(availability=[200,{enabled:true,allow_root:true}]){
  const env=boot({noDialogs:true}),{w}=env;envs.push(env);
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
  w.__routes.push([AVAILABILITY_URL,(u,o,j)=>j(availability[0],availability[1])]);
- await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
- await w.__T.initUpgradeTab();await sleep(10);
+ await idle(w);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await w.__T.initUpgradeTab();await idle(w);
  await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
  return env;
 }

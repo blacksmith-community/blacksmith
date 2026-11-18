@@ -1,11 +1,11 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const { pinZone } = require('./fixed-zone.js');
 pinZone('UTC');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -35,9 +35,9 @@ const start=async(state,lines)=>{
   ['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});
  envs.push(env);
  env.w.eval(OAT);
- await sleep(60);
+ await idle(env);
  const p=env.w.showTaskDetails(42);
- await sleep(60);
+ await idle(env);
  await p;
  return env;
 };
@@ -73,12 +73,12 @@ t('a tab loads its output when it is first selected',async()=>{
  const {w,d,calls}=await start('done',ALL);
  const raw=[...d.querySelectorAll('#task-details-content [role="tab"]')].find((x)=>x.textContent.trim()==='Raw');
  raw.click();
- await sleep(40);
+ await idle(w);
  expect(d.querySelector('#task-raw-content pre')).not.toBeNull();
  expect(raw.getAttribute('aria-selected')).toBe('true');
  const debug=[...d.querySelectorAll('#task-details-content [role="tab"]')].find((x)=>x.textContent.trim()==='Debug');
  debug.click();
- await sleep(40);
+ await idle(w);
  expect(calls.some((c)=>c.includes('/b/tasks/42/output?type=debug'))).toBe(true);
 });
 
@@ -128,8 +128,8 @@ t('a long deployment name is cut by CSS and keeps its full name in title and in 
   ['/b/tasks/44',(u,o,j)=>j(200,{task:{id:44,state:'done',description:'x',user:'admin',deployment:LONG}})],
   ['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],
   ['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});
- envs.push(env);env.w.eval(OAT);await sleep(60);
- await env.w.showTaskDetails(44);await sleep(60);
+ envs.push(env);env.w.eval(OAT);await idle(env);
+ await env.w.showTaskDetails(44);await idle(env);
  const name=env.d.getElementById('task-deployment-text');
  expect(name.textContent).toBe(LONG);
  expect(name.title).toBe(LONG);
@@ -195,7 +195,7 @@ t('the Deployment value has a front copy icon that copies the name and hides wit
  expect(button.querySelector('svg')).not.toBeNull();
  expect(button.hidden).toBe(false);
  expect(dd.textContent.trim()).toBe('d');
- button.click();await sleep(10);
+ button.click();await idle(w);
  expect(copied).toEqual(['d']);
  expect(button.classList.contains('copied')).toBe(true);
 });
@@ -206,8 +206,8 @@ t('the Deployment copy icon is hidden when the task has no deployment',async()=>
   ['/b/tasks/43',(u,o,j)=>j(200,{task:{id:43,state:'done',description:'x',user:'admin'}})],
   ['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],
   ['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});
- envs.push(env);env.w.eval(OAT);await sleep(60);
- await env.w.showTaskDetails(43);await sleep(60);
+ envs.push(env);env.w.eval(OAT);await idle(env);
+ await env.w.showTaskDetails(43);await idle(env);
  const dd=env.d.getElementById('task-deployment');
  expect(dd.querySelector('button').hidden).toBe(true);
  expect(dd.textContent.trim()).toBe('');

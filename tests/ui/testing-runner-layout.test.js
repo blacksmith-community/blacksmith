@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // The rabbitmqctl and rabbitmq-plugins tabs share one command runner: a
 // picker grouped by category with a filter, the chosen command laid out as a
@@ -67,12 +67,12 @@ async function screen(results=[],pluginsHistory=[]){
  const host=d.createElement('div'); host.className='detail-content'; host.innerHTML=html; d.body.appendChild(host);
  return {...env,held,content:()=>d.getElementById('operation-content-i1')};
 }
-async function openTab(s,operation){ s.w.switchTestingOperation('i1',operation); await sleep(60); }
+async function openTab(s,operation){ s.w.switchTestingOperation('i1',operation); await idle(s); }
 const picker=(s)=>s.content().querySelector('select[data-runner-picker]');
 async function choose(s,category,command){
  const select=picker(s);
  select.value=[...select.options].find(o=>o.dataset.category===category&&o.dataset.command===command).value;
- select.dispatchEvent(new s.w.Event('change',{bubbles:true})); await sleep(30);
+ select.dispatchEvent(new s.w.Event('change',{bubbles:true})); await idle(s);
 }
 const text=(el)=>el.textContent.replace(/\s+/g,' ').trim();
 const runButton=(s)=>s.content().querySelector('[data-runner-action="run"]');
@@ -176,7 +176,7 @@ t('the output panel waits with one muted line, then shows the run',async()=>{
  // The panel sits directly under the form.
  expect(s.content().querySelector('.command-runner-form').nextElementSibling).toBe(panel);
  await choose(s,'nodes','ping');
- runButton(s).click(); await sleep(30);
+ runButton(s).click(); await idle(s);
  const header=panel.querySelector('.command-runner-output-header');
  expect(visible(empty)).toBe(false);
  expect(text(header.querySelector('code'))).toBe('rabbitmqctl ping');
@@ -187,7 +187,7 @@ t('the output panel waits with one muted line, then shows the run',async()=>{
  expect(header.querySelector('[data-runner-action="copy"]').getAttribute('aria-label')).toBe('Copy output');
  expect(header.querySelector('[data-runner-action="copy"] svg')).not.toBeNull();
  expect(header.querySelector('[data-runner-action="clear"]').getAttribute('aria-label')).toBe('Clear output');
- runButton(s).click(); await sleep(30);
+ runButton(s).click(); await idle(s);
  expect(header.querySelector('.badge[data-variant="danger"]').textContent).toBe('Failure');
  expect(header.textContent).toContain('Exit code 69');
  expect(panel.querySelector('pre').textContent).toBe('node down');
@@ -200,12 +200,12 @@ t('a running command shows the running pill and Copy writes the output',async()=
  const s=await screen(['hold']);
  const copied=[]; s.w.navigator.clipboard={writeText:(v)=>{copied.push(v);return Promise.resolve();}};
  await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping');
- runButton(s).click(); await sleep(20);
+ runButton(s).click(); await idle(s);
  const header=s.content().querySelector('.command-runner-output-header');
  expect(header.querySelector('.status-badge[data-status="active"]').textContent).toBe('Running');
  expect(header.querySelector('[data-runner-action="copy"]')).toBeNull();
- s.held.release({success:true,output:'pong',exit_code:0}); await sleep(30);
- header.querySelector('[data-runner-action="copy"]').click(); await sleep(20);
+ s.held.release({success:true,output:'pong',exit_code:0}); await idle(s);
+ header.querySelector('[data-runner-action="copy"]').click(); await idle(s);
  expect(copied).toEqual(['pong']);
 });
 
@@ -215,8 +215,8 @@ t('history is a collapsed list under the output and an entry restores its output
  const history=s.content().querySelector('details.command-runner-history');
  expect(visible(history)).toBe(false);
  expect(s.content().querySelector('.command-runner-output').nextElementSibling).toBe(history.closest('.testing-history'));
- await choose(s,'nodes','ping'); runButton(s).click(); await sleep(30);
- await choose(s,'nodes','status'); runButton(s).click(); await sleep(30);
+ await choose(s,'nodes','ping'); runButton(s).click(); await idle(s);
+ await choose(s,'nodes','status'); runButton(s).click(); await idle(s);
  expect(visible(history)).toBe(true);
  expect(history.open).toBe(false);
  expect(text(history.querySelector('summary'))).toBe('Runs (2)');
@@ -232,12 +232,12 @@ t('history is a collapsed list under the output and an entry restores its output
 
 t('clearing the history asks first, then empties the list',async()=>{
  const s=await screen();
- await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping'); runButton(s).click(); await sleep(30);
+ await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping'); runButton(s).click(); await idle(s);
  const history=s.content().querySelector('details.command-runner-history');
- history.closest('.testing-history').querySelector('[data-runner-action="clear-history"]').click(); await sleep(10);
+ history.closest('.testing-history').querySelector('[data-runner-action="clear-history"]').click(); await idle(s);
  const dialog=s.d.getElementById('dialog-modal');
  expect(dialog.querySelector('.dialog-modal-message').textContent).toBe('Are you sure you want to clear all command history?');
- dialog.querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ dialog.querySelector('[data-dialog-role="confirm"]').click(); await idle(s);
  expect(history.querySelectorAll('li').length).toBe(0);
  expect(visible(history)).toBe(false);
 });
@@ -255,8 +255,8 @@ t('the plugins history shows the server entries beside this session\'s runs',asy
  expect(text(history.querySelector('summary'))).toBe('Runs');
  await choose(s,'monitoring','list');
  s.d.getElementById('plugins-opt-enabled-i1').checked=true;
- runButton(s).click(); await sleep(30);
- history.querySelector('summary').click(); await sleep(30);
+ runButton(s).click(); await idle(s);
+ history.querySelector('summary').click(); await idle(s);
  expect(history.open).toBe(true);
  expect(text(history.querySelector('summary'))).toBe('Runs (2)');
  const entries=[...history.querySelectorAll('[data-runner-action="restore"]')];
@@ -278,7 +278,7 @@ t('a plugins history entry with an out-of-range timestamp shows a dash',async()=
   {timestamp:1e20,category:'plugin_management',command:'enable',arguments:['rabbitmq_shovel'],success:false,duration_ms:10,execution_id:'e2',output_sample:'far future'}]);
  await openTab(s,'plugins');
  const history=s.content().querySelector('details.command-runner-history');
- history.querySelector('summary').click(); await sleep(30);
+ history.querySelector('summary').click(); await idle(s);
  expect(text(history.querySelector('summary'))).toBe('Runs (2)');
  const entries=[...history.querySelectorAll('[data-runner-action="restore"]')];
  expect(entries.map(e=>text(e.querySelector('code')))).toEqual(['rabbitmq-plugins list','rabbitmq-plugins enable rabbitmq_shovel']);
@@ -294,7 +294,7 @@ t('an empty plugins history says so once it loads',async()=>{
  const s=await screen();
  await openTab(s,'plugins');
  const history=s.content().querySelector('details.command-runner-history');
- history.querySelector('summary').click(); await sleep(30);
+ history.querySelector('summary').click(); await idle(s);
  expect(history.open).toBe(true);
  expect(history.querySelectorAll('li').length).toBe(0);
  expect(text(history.querySelector('.command-runner-history-note'))).toBe('No command history available');
@@ -307,7 +307,7 @@ t('a dangerous command asks first in the page dialog',async()=>{
  const s=await screen();
  await openTab(s,'rabbitmqctl'); await choose(s,'cluster','join_cluster');
  s.d.getElementById('rabbitmqctl-arg-node-i1').value='rabbit@server1';
- runButton(s).click(); await sleep(30);
+ runButton(s).click(); await idle(s);
  const dialog=s.d.getElementById('dialog-modal');
  expect(dialog.open).toBe(true);
  expect(dialog.querySelector('.dialog-modal-title').textContent).toBe('Run rabbitmqctl join_cluster?');
@@ -324,15 +324,15 @@ t('a dangerous command asks first in the page dialog',async()=>{
  expect(close.getAttribute('aria-label')).toBe('Close');
  expect(close.querySelector('svg')).not.toBeNull();
  expect(dialog.getAttribute('aria-describedby')).toContain('dialog-modal-run');
- run.click(); await sleep(30);
+ run.click(); await idle(s);
  expect(dialog.open).toBe(false);
  expect(dialog.querySelector('.dialog-close, .dialog-modal-command')).toBeNull();
  expect(text(s.content().querySelector('.command-runner-output-header code'))).toBe('rabbitmqctl join_cluster rabbit@server1');
  const history=s.content().querySelector('details.command-runner-history');
- history.closest('.testing-history').querySelector('[data-runner-action="clear-history"]').click(); await sleep(10);
+ history.closest('.testing-history').querySelector('[data-runner-action="clear-history"]').click(); await idle(s);
  expect(dialog.open).toBe(true);
  expect(dialog.querySelector('.dialog-close')).toBeNull();
- dialog.querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
+ dialog.querySelector('[data-dialog-role="cancel"]').click(); await idle(s);
  const css=fs.readFileSync(path.join(__dirname,'../../ui/blacksmith.css'),'utf8');
  expect(css).toMatch(/\.dialog-modal-command\s*\{[^}]*font-family:\s*var\(--font-mono\)/);
 });
@@ -350,7 +350,7 @@ t('plugins uses the same runner with its options as checkboxes',async()=>{
  expect(s.content().querySelector('.category-item, table')).toBeNull();
  s.d.getElementById('plugins-arg-pattern-i1').value='rabbit';
  s.d.getElementById('plugins-opt-enabled-i1').checked=true;
- runButton(s).click(); await sleep(30);
+ runButton(s).click(); await idle(s);
  expect(text(s.content().querySelector('.command-runner-output-header code'))).toBe('rabbitmq-plugins list rabbit --enabled');
 });
 
@@ -371,7 +371,7 @@ t('the runner keeps its chosen command when its tab comes back',async()=>{
  await openTab(s,'publish'); await openTab(s,'rabbitmqctl');
  expect(picker(s).value).toBe('access/set_permissions');
  expect(s.content().querySelectorAll('input[type="text"]').length).toBe(4);
- runButton(s).click(); await sleep(30);
+ runButton(s).click(); await idle(s);
  expect(s.content().querySelector('.command-runner-output .badge').textContent).toBe('Success');
 });
 
@@ -406,7 +406,7 @@ for(const tab of ['rabbitmqctl','plugins']){
   expect(clear.textContent).toBe('Clear history');
   expect(clear.disabled).toBe(!unread);
   if(tab==='rabbitmqctl') await choose(s,'nodes','ping'); else await choose(s,'monitoring','list');
-  runButton(s).click(); await sleep(30);
+  runButton(s).click(); await idle(s);
   expect(entries.classList.contains('is-empty')).toBe(false);
   expect(entries.querySelector('.history-empty').hidden).toBe(true);
   expect(clear.disabled).toBe(false);
@@ -417,7 +417,7 @@ t('opening Runs on an empty plugins history replaces the load prompt with the em
  const s=await screen([],[]);
  await openTab(s,'plugins');
  const block=s.content().querySelector('.testing-history');
- block.querySelector('summary').click(); await sleep(30);
+ block.querySelector('summary').click(); await idle(s);
  expect(block.querySelector('.history-empty').hidden).toBe(true);
  expect(text(block.querySelector('.command-runner-history-note'))).toBe('No command history available');
  expect(block.querySelector('[data-runner-action="clear-history"]').disabled).toBe(true);

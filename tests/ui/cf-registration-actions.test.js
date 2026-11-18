@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // Routes for the page's own load, so a console error means something broke.
 const QUIET=[[/\/b\/status$/,(u,o,j)=>j(200,{env:'Local fixture',instances:{},plans:{}})],[/\/b\/instance$/,(u,o,j)=>j(200,{deployment:'blacksmith'})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],[/inventory\?summary_only=true/,(u,o,j)=>j(200,{summary:{certificates:0,needs_attention:0}})]];
@@ -13,7 +13,7 @@ afterEach(()=>{while(envs.length){const env=envs.pop();expect(env.alerts).toEqua
 
 t('a registration card offers no Sync action',async()=>{
  const env=boot({noDialogs:true,oat:true,routes:QUIET});envs.push(env);
- await sleep(40);
+ await idle(env);
  const manager=env.w.__T.CFRegistrationManager;
  const holder=env.d.createElement('div');
  holder.innerHTML=manager.renderRegistrationCard({id:'reg-1',name:'lab-cf',api_url:'https://api.cf.example.com',username:'admin',status:'active'});
@@ -38,14 +38,15 @@ const fillAndSave=async(env,fields)=>{
  const {d}=env;
  Object.entries(fields).forEach(([id,value])=>{ const input=d.getElementById(id); if(input.type==='checkbox') input.checked=value; else input.value=value; });
  d.getElementById('registration-form').requestSubmit();
- await sleep(700);
+ // Auto-register starts on a 500 ms timer after the save, which idle() still counts.
+ await idle(env);
 };
 const saves=(env)=>env.calls.filter(c=>/^(POST|PUT) \/b\/cf\/registrations(\/[^/ ]+)? /.test(c));
 const registers=(env)=>env.calls.filter(c=>/^POST \/b\/cf\/registrations\/[^/ ]+\/register /.test(c));
 
 t('saving a new registration sends no password',async()=>{
  const env=boot({noDialogs:true,oat:true,routes:[...QUIET,[/\/b\/cf\/registrations/,SAVES]]});envs.push(env);
- await sleep(40);
+ await idle(env);
  env.w.__T.CFRegistrationManager.showRegistrationModal();
  await fillAndSave(env,{'reg-name':'lab-cf','reg-api-url':'https://api.cf.example.com','reg-username':'admin','reg-password':'hunter2-form','reg-auto-register':false});
  const sent=saves(env);
@@ -57,7 +58,7 @@ t('saving a new registration sends no password',async()=>{
 
 t('an edit saves without a password and sends none',async()=>{
  const env=boot({noDialogs:true,oat:true,routes:[...QUIET,[/\/b\/cf\/registrations/,SAVES]]});envs.push(env);
- await sleep(40);
+ await idle(env);
  const pw=env.d.getElementById('reg-password');
  expect(pw.required).toBe(false);
  expect(pw.getAttribute('autocomplete')).toBe('off');
@@ -71,7 +72,7 @@ t('an edit saves without a password and sends none',async()=>{
 
 t('auto-register sends the form password in the register body only',async()=>{
  const env=boot({noDialogs:true,oat:true,routes:[...QUIET,[/\/b\/cf\/registrations/,SAVES]]});envs.push(env);
- await sleep(40);
+ await idle(env);
  env.w.__T.CFRegistrationManager.showRegistrationModal();
  await fillAndSave(env,{'reg-name':'lab-cf','reg-api-url':'https://api.cf.example.com','reg-username':'admin','reg-password':'hunter2-form','reg-auto-register':true});
  const sent=saves(env);

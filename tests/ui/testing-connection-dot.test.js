@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const envs=[];
 afterEach(()=>{ while(envs.length) envs.pop().w.close(); });
@@ -25,28 +25,28 @@ const dot=(d)=>d.querySelector('.operation-tab[data-operation="test"] .connectio
 t('the Connection dot stays neutral after switching tabs before any attempt',async()=>{
  const {w,d}=await screen(rabbitCreds);
  expect(dot(d)).toBe('idle');
- w.switchTestingOperation('i1','queues'); await sleep(80);
- w.switchTestingOperation('i1','rabbitmqctl'); await sleep(80);
+ w.switchTestingOperation('i1','queues'); await idle(w);
+ w.switchTestingOperation('i1','rabbitmqctl'); await idle(w);
  expect(dot(d)).toBe('idle');
  expect(d.querySelector('.operation-tab[data-operation="test"]').title).toBe('Not connected');
 });
 
 t('the Connection dot is red after a failed attempt and stays so across tab switches',async()=>{
  const {w,d}=await screen(rabbitCreds,[[/rabbitmq\/test/,(u,o,json)=>json(502,{error:'connection refused'})]]);
- w.executeRabbitMQTest('i1'); await sleep(50);
+ w.executeRabbitMQTest('i1'); await idle(w);
  expect(dot(d)).toBe('disconnected');
- w.switchTestingOperation('i1','queues'); await sleep(80);
+ w.switchTestingOperation('i1','queues'); await idle(w);
  expect(dot(d)).toBe('disconnected');
 });
 
 t('a deliberate disconnect returns the dot to neutral, and a failed attempt stays red',async()=>{
  const {w,d}=await screen(rabbitCreds,[[/rabbitmq\/test/,(u,o,json)=>json(200,{success:true})]]);
- w.executeRabbitMQTest('i1'); await sleep(60);
+ w.executeRabbitMQTest('i1'); await idle(w);
  expect(dot(d)).toBe('connected');
- w.executeRabbitMQTest('i1'); await sleep(30);
+ w.executeRabbitMQTest('i1'); await idle(w);
  expect(dot(d)).toBe('idle');
  expect(d.getElementById('connection-status-i1').textContent.trim()).toBe('Disconnected');
- w.switchTestingOperation('i1','queues'); await sleep(80);
+ w.switchTestingOperation('i1','queues'); await idle(w);
  expect(dot(d)).toBe('idle');
 });
 
@@ -54,7 +54,7 @@ t('the automatic disconnect after ten minutes is not a failure',async()=>{
  const {w,d}=await screen(rabbitCreds,[[/rabbitmq\/test/,(u,o,json)=>json(200,{success:true})]]);
  const timers=[];const real=w.setTimeout;
  w.setTimeout=(fn,ms,...a)=>{ if(ms===10*60*1000){timers.push(fn);return 0;} return real(fn,ms,...a); };
- w.executeRabbitMQTest('i1'); await sleep(60);
+ w.executeRabbitMQTest('i1'); await idle(w);
  expect(dot(d)).toBe('connected');
  expect(timers).toHaveLength(1);
  timers[0]();

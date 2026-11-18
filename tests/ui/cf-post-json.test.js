@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // The broker answers 415 to a POST under /b/cf whose Content-Type is not
 // application/json, so every caller in the page must declare it.
@@ -25,7 +25,7 @@ async function page(){
   }
   return undefined;
  }]);
- await sleep(40);
+ await idle(env);
  return {...env,posts};
 }
 
@@ -36,7 +36,7 @@ t('connecting a saved endpoint posts JSON',async()=>{
  const manager=w.CFEndpointManager;
  manager.endpoints={lab:{name:'lab',endpoint:'https://api.lab.example'}};
  manager.renderEndpointsList();manager.selectEndpoint('lab');
- await manager.toggleConnection();await sleep(20);
+ await manager.toggleConnection();await idle(w);
  expect(posts).toEqual([{url:'/b/cf/endpoints/lab/connect',type:'application/json'}]);
  expect(manager.connectionStates.lab.connected).toBe(true);
 });
@@ -47,7 +47,7 @@ t('saving a registration posts JSON',async()=>{
  w.__T.CFRegistrationManager.showRegistrationModal();
  d.getElementById('reg-name').value='lab-cf';d.getElementById('reg-api-url').value='https://api.cf.example.com';
  d.getElementById('reg-username').value='admin';d.getElementById('reg-password').value='s3cret';
- d.getElementById('save-registration-btn').click();await sleep(30);
+ d.getElementById('save-registration-btn').click();await idle(w);
  expect(posts).toEqual([{url:'/b/cf/registrations',type:'application/json'}]);
 });
 

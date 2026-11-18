@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // These checks record the exact request every Testing runner sends, so a
 // change to the screens' layout can never change what reaches a live
@@ -86,7 +86,7 @@ function press(w,el){
  if(code){ const handler=(event)=>{ el.removeEventListener('click',handler); new w.Function('event',code).call(el,event); }; el.addEventListener('click',handler); }
  el.click();
 }
-async function openTab(s,operation){ s.w.switchTestingOperation('i1',operation); await sleep(120); }
+async function openTab(s,operation){ s.w.switchTestingOperation('i1',operation); await idle(s.w); }
 // Chooses a command from the picker, or from the category cards and the
 // commands table where those still exist.
 async function choose(s,category,command){
@@ -96,10 +96,10 @@ async function choose(s,category,command){
   const option=[...picker.options].find(o=>o.dataset.category===category&&o.dataset.command===command);
   picker.value=option.value; picker.dispatchEvent(new w.Event('change',{bubbles:true}));
  }else{
-  press(w,[...root.querySelectorAll('.category-item')].find(el=>el.getAttribute('onclick').includes(`'${category}'`))); await sleep(30);
+  press(w,[...root.querySelectorAll('.category-item')].find(el=>el.getAttribute('onclick').includes(`'${category}'`))); await idle(s.w);
   press(w,[...root.querySelectorAll('.command-row')].find(el=>el.getAttribute('onclick').includes(`'${command}'`)));
  }
- await sleep(30);
+ await idle(s.w);
 }
 // Fills the argument inputs in catalog order. One shared input gets the
 // values joined by spaces, which is how an operator typed them there.
@@ -121,7 +121,7 @@ async function confirmRun(s,pattern,c){
  expect(requests(s,pattern)).toEqual([]);
  expect(dialog(s).querySelector('.dialog-modal-title').textContent).toBe(c.title);
  expect(dialog(s).querySelector('.dialog-modal-command').textContent).toBe(c.line);
- dialog(s).querySelector('[data-dialog-role="confirm"]').click(); await sleep(30);
+ dialog(s).querySelector('[data-dialog-role="confirm"]').click(); await idle(s.w);
 }
 
 const ctlCases=[
@@ -134,7 +134,7 @@ const ctlCases=[
 ctlCases.forEach(c=>t(`rabbitmqctl sends ${c.name} unchanged`,async()=>{
  const s=await screen(rabbitCreds);
  await openTab(s,'rabbitmqctl'); await choose(s,c.cat,c.cmd); fill(s,c.values);
- press(s.w,runButton(s)); await sleep(30);
+ press(s.w,runButton(s)); await idle(s.w);
  if(c.confirm) await confirmRun(s,/rabbitmqctl/,c);
  else expect(dialogOpen(s)).toBe(false);
  expect(requests(s,/rabbitmqctl/)).toStrictEqual([jsonPost('/b/i1/rabbitmq/rabbitmqctl/execute',c.body)]);
@@ -144,12 +144,12 @@ ctlCases.forEach(c=>t(`rabbitmqctl sends ${c.name} unchanged`,async()=>{
 t('rabbitmqctl disables Run while a command runs and enables it after',async()=>{
  const s=await screen(rabbitCreds,{},{held:true});
  await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping');
- press(s.w,runButton(s)); await sleep(20);
+ press(s.w,runButton(s)); await idle(s.w);
  const button=s.content().querySelector('#rabbitmqctl-execute-btn-i1');
  expect(button.disabled).toBe(true);
- press(s.w,button); await sleep(20);
+ press(s.w,button); await idle(s.w);
  expect(requests(s,/execute/).length).toBe(1);
- s.held.release(); await sleep(30);
+ s.held.release(); await idle(s.w);
  expect(button.disabled).toBe(false);
 });
 
@@ -163,7 +163,7 @@ pluginCases.forEach(c=>t(`plugins sends ${c.name} unchanged`,async()=>{
  const s=await screen(rabbitCreds);
  await openTab(s,'plugins'); await choose(s,c.cat,c.cmd); fill(s,c.values);
  c.flags.forEach(f=>{ s.d.getElementById(`plugins-opt-${f}-i1`).checked=true; });
- press(s.w,runButton(s)); await sleep(30);
+ press(s.w,runButton(s)); await idle(s.w);
  if(c.confirm) await confirmRun(s,/plugins/,c);
  else expect(dialogOpen(s)).toBe(false);
  expect(requests(s,/plugins/)).toStrictEqual([jsonPost('/b/i1/rabbitmq/plugins/execute',c.body)]);
@@ -187,9 +187,9 @@ for(const [tab,cat,cmd,values] of dangerous){
    const s=await screen(rabbitCreds);
    await openTab(s,tab); await choose(s,cat,cmd); fill(s,values);
    const before=s.sent.length;
-   press(s.w,runButton(s)); await sleep(30);
+   press(s.w,runButton(s)); await idle(s.w);
    expect(dialogOpen(s)).toBe(true);
-   dismiss(s); await sleep(30);
+   dismiss(s); await idle(s.w);
    expect(dialogOpen(s)).toBe(false);
    expect(s.sent.slice(before)).toEqual([]);
    expect([...s.content().querySelectorAll('input[type="text"]')].map(i=>i.value)).toEqual(values);
@@ -203,11 +203,11 @@ for(const [tab,cat,cmd,values] of dangerous){
 t('a command the catalog does not mark dangerous runs with no dialog',async()=>{
  const s=await screen(rabbitCreds);
  await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping');
- press(s.w,runButton(s)); await sleep(30);
+ press(s.w,runButton(s)); await idle(s.w);
  expect(dialogOpen(s)).toBe(false);
  expect(requests(s,/rabbitmqctl/).length).toBe(1);
  await openTab(s,'plugins'); await choose(s,'plugin_management','directories');
- press(s.w,runButton(s)); await sleep(30);
+ press(s.w,runButton(s)); await idle(s.w);
  expect(dialogOpen(s)).toBe(false);
  expect(requests(s,/plugins/).length).toBe(1);
 });
@@ -221,11 +221,11 @@ t('opening the plugins history reads GET /plugins/history each time',async()=>{
  const reads=()=>s.sent.filter(r=>r.url.includes('/history'));
  expect(reads()).toEqual([]);
  const summary=s.content().querySelector('details.command-runner-history > summary');
- summary.click(); await sleep(30);
+ summary.click(); await idle(s.w);
  expect(reads()).toStrictEqual([{url:'/b/i1/rabbitmq/plugins/history',options:undefined}]);
- summary.click(); await sleep(30);
+ summary.click(); await idle(s.w);
  expect(reads().length).toBe(1);
- summary.click(); await sleep(30);
+ summary.click(); await idle(s.w);
  expect(reads()).toStrictEqual([{url:'/b/i1/rabbitmq/plugins/history',options:undefined},{url:'/b/i1/rabbitmq/plugins/history',options:undefined}]);
 });
 
@@ -234,15 +234,15 @@ t('opening the plugins history reads GET /plugins/history each time',async()=>{
 t('opening the rabbitmqctl history reads nothing from the server',async()=>{
  const s=await screen(rabbitCreds);
  await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping');
- press(s.w,runButton(s)); await sleep(30);
- s.content().querySelector('details.command-runner-history > summary').click(); await sleep(30);
+ press(s.w,runButton(s)); await idle(s.w);
+ s.content().querySelector('details.command-runner-history > summary').click(); await idle(s.w);
  expect(s.sent.filter(r=>r.url.includes('/history'))).toEqual([]);
 });
 
 t('plugins refuses a missing required argument with the same message',async()=>{
  const s=await screen(rabbitCreds);
  await openTab(s,'plugins'); await choose(s,'plugin_management','enable'); fill(s,['']);
- press(s.w,runButton(s)); await sleep(30);
+ press(s.w,runButton(s)); await idle(s.w);
  expect(requests(s,/plugins/)).toEqual([]);
  expect(s.warnings).toEqual(['plugin_names is required.']);
  expect(dialogOpen(s)).toBe(false);
@@ -262,12 +262,12 @@ t('Publish sends the same request and refuses a missing message',async()=>{
  await openTab(s,'publish');
  const {d}=s;
  d.getElementById('rabbitmq-queue-i1').value='orders';
- press(s.w,s.content().querySelector('button[onclick*="executeRabbitMQPublish"]')); await sleep(20);
+ press(s.w,s.content().querySelector('button[onclick*="executeRabbitMQPublish"]')); await idle(s.w);
  expect(s.warnings).toEqual(['Please provide both queue name and message.']);
  d.getElementById('rabbitmq-exchange-i1').value='ex';
  d.getElementById('rabbitmq-message-i1').value='hello "world"';
  d.getElementById('rabbitmq-persistent-i1').checked=true;
- press(s.w,s.content().querySelector('button[onclick*="executeRabbitMQPublish"]')); await sleep(20);
+ press(s.w,s.content().querySelector('button[onclick*="executeRabbitMQPublish"]')); await idle(s.w);
  expect(requests(s,/rabbitmq\/publish/)).toStrictEqual([{url:'/b/i1/rabbitmq/publish',options:{method:'POST',cache:'no-cache',headers:{'Content-Type':'application/json'},body:rabbitBody({queue:'orders',exchange:'ex',message:'hello "world"',persistent:true})}}]);
 });
 
@@ -278,7 +278,7 @@ t('Consume sends the same request',async()=>{
  d.getElementById('rabbitmq-consume-queue-i1').value='orders';
  d.getElementById('rabbitmq-count-i1').value='3';
  d.getElementById('rabbitmq-auto-ack-i1').checked=false;
- press(s.w,s.content().querySelector('button[onclick*="executeRabbitMQConsume"]')); await sleep(20);
+ press(s.w,s.content().querySelector('button[onclick*="executeRabbitMQConsume"]')); await idle(s.w);
  expect(requests(s,/rabbitmq\/consume/)).toStrictEqual([{url:'/b/i1/rabbitmq/consume',options:{method:'POST',cache:'no-cache',headers:{'Content-Type':'application/json'},body:rabbitBody({queue:'orders',count:3,timeout:5000,auto_ack:false})}}]);
 });
 
@@ -289,19 +289,19 @@ t('deleting a queue sends nothing on Cancel and the same request on Confirm',asy
  d.getElementById('rabbitmq-queue-ops-name-i1').value='orders';
  d.getElementById('rabbitmq-operation-i1').value='delete';
  const button=()=>s.content().querySelector('button[onclick*="executeRabbitMQQueueOps"]');
- press(s.w,button()); await sleep(20);
- d.getElementById('dialog-modal').querySelector('[data-dialog-role="cancel"]').click(); await sleep(20);
+ press(s.w,button()); await idle(s.w);
+ d.getElementById('dialog-modal').querySelector('[data-dialog-role="cancel"]').click(); await idle(s.w);
  expect(requests(s,/queue-ops/)).toEqual([]);
- press(s.w,button()); await sleep(20);
+ press(s.w,button()); await idle(s.w);
  expect(d.getElementById('dialog-modal').querySelector('.dialog-modal-title').textContent).toBe('Delete a queue from i1?');
  expect(d.getElementById('dialog-modal').querySelector('.dialog-modal-command').textContent).toBe('orders');
- d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await idle(s.w);
  expect(requests(s,/queue-ops/)).toStrictEqual([{url:'/b/i1/rabbitmq/queue-ops',options:{method:'POST',cache:'no-cache',headers:{'Content-Type':'application/json'},body:rabbitBody({queue:'orders',operation:'delete',durable:true})}}]);
 });
 
 t('Connect sends the same request',async()=>{
  const s=await screen(rabbitCreds);
- press(s.w,s.content().querySelector('#connect-btn-i1')); await sleep(20);
+ press(s.w,s.content().querySelector('#connect-btn-i1')); await idle(s.w);
  const sent=s.sent.filter(r=>/rabbitmq\/test/.test(r.url));
  expect(sent.length).toBe(1);
  expect(sent[0].options).toStrictEqual({method:'GET',cache:'no-cache'});
@@ -315,21 +315,21 @@ t('Redis Command sends the same request and refuses invalid JSON',async()=>{
  await openTab(s,'command');
  const {d}=s;
  const button=()=>s.content().querySelector('button[onclick*="executeRedisCommand"]');
- press(s.w,button()); await sleep(20);
+ press(s.w,button()); await idle(s.w);
  expect(s.warnings).toEqual(['Please provide a command.']);
  d.getElementById('redis-cmd-i1').value='PING';
- press(s.w,button()); await sleep(20);
+ press(s.w,button()); await idle(s.w);
  d.getElementById('redis-args-i1').value='["a", 2';
- press(s.w,button()); await sleep(20);
+ press(s.w,button()); await idle(s.w);
  expect(s.warnings).toEqual(['Please provide a command.','Invalid JSON in arguments field.']);
  expect(requests(s,/redis\/command/)).toEqual([]);
  await confirmRun(s,/redis\/command/,{title:'Run a command on i1?',line:'PING'});
  d.getElementById('redis-cmd-i1').value='TYPE';
  d.getElementById('redis-args-i1').value='["k1", 2]';
- press(s.w,button()); await sleep(20);
+ press(s.w,button()); await idle(s.w);
  expect(requests(s,/redis\/command/).length).toBe(1);
  expect(dialog(s).querySelector('.dialog-modal-command').textContent).toBe('TYPE k1 2');
- dialog(s).querySelector('[data-dialog-role="confirm"]').click(); await sleep(30);
+ dialog(s).querySelector('[data-dialog-role="confirm"]').click(); await idle(s.w);
  expect(requests(s,/redis\/command/)).toStrictEqual([redisPost('command',{command:'PING',args:[]}),redisPost('command',{command:'TYPE',args:['k1',2]})]);
 });
 
@@ -340,10 +340,10 @@ t('Redis Set and Get send the same requests',async()=>{
  d.getElementById('redis-key-i1').value='k';
  d.getElementById('redis-value-i1').value='v v';
  d.getElementById('redis-ttl-i1').value='30';
- press(s.w,s.content().querySelector('button[onclick*="executeRedisSet"]')); await sleep(20);
+ press(s.w,s.content().querySelector('button[onclick*="executeRedisSet"]')); await idle(s.w);
  await openTab(s,'get');
  d.getElementById('redis-get-key-i1').value='k';
- press(s.w,s.content().querySelector('button[onclick*="executeRedisGet"]')); await sleep(20);
+ press(s.w,s.content().querySelector('button[onclick*="executeRedisGet"]')); await idle(s.w);
  expect(requests(s,/redis\/(set|get)/)).toStrictEqual([redisPost('set',{key:'k',value:'v v',ttl:30}),redisPost('get',{key:'k'})]);
 });
 
@@ -353,14 +353,14 @@ t('Redis Flush sends nothing on Cancel and the same request on Confirm',async()=
  const {d}=s;
  d.getElementById('redis-flush-db-i1').value='2';
  const button=()=>s.content().querySelector('button[onclick*="executeRedisFlush"]');
- press(s.w,button()); await sleep(20);
- d.getElementById('dialog-modal').querySelector('[data-dialog-role="cancel"]').click(); await sleep(20);
+ press(s.w,button()); await idle(s.w);
+ d.getElementById('dialog-modal').querySelector('[data-dialog-role="cancel"]').click(); await idle(s.w);
  expect(requests(s,/redis\/flush/)).toEqual([]);
- press(s.w,button()); await sleep(20);
+ press(s.w,button()); await idle(s.w);
  expect(d.getElementById('dialog-modal').querySelector('.dialog-modal-message').textContent).toBe("This deletes every key in database 2 of i1, and it can't be undone.");
- d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await idle(s.w);
  expect(requests(s,/redis\/flush/)).toEqual([]);
  d.getElementById('dialog-modal').querySelector('.dialog-modal-ack-input').value='i1';
- d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await idle(s.w);
  expect(requests(s,/redis\/flush/)).toStrictEqual([redisPost('flush',{database:2})]);
 });

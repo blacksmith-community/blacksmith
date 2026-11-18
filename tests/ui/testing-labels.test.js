@@ -1,10 +1,10 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,trackTimers,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // The Testing tabs read in sentence case, tool names keep their own
 // spelling, form labels carry no trailing colon, each form's main action is
@@ -54,12 +54,12 @@ for(const [service,creds,details,connect] of [['RabbitMQ',rabbitCreds,{},'execut
   expect(dot().length).toBe(1);
   expect(dot()[0].dataset.state).toBe('idle');
   expect(connection.title).toBe('Not connected');
-  await s.w[connect]('i1'); await sleep(10);
+  await s.w[connect]('i1'); await idle(s.w);
   expect(dot().length).toBe(1);
   expect(dot()[0].dataset.state).toBe('connected');
   expect(dot()[0].getAttribute('style')).toBeNull();
   expect(connection.title).toBe('Connected');
-  await s.w[connect]('i1'); await sleep(10);
+  await s.w[connect]('i1'); await idle(s.w);
   expect(dot()[0].dataset.state).toBe('idle');
   expect(label(connection)).toBe('Connection');
  });
@@ -69,7 +69,7 @@ for(const [service,creds,details] of [['rabbitmq',rabbitCreds,{}],['redis',redis
  t(`every ${service} form drops trailing colons and leads with a primary action`,async()=>{
   const s=await screen(creds,details);
   for(const operation of OPERATIONS[service]){
-   if(operation!=='test'){ s.w.switchTestingOperation('i1',operation); await sleep(10); }
+   if(operation!=='test'){ s.w.switchTestingOperation('i1',operation); await idle(s.w); }
    const root=s.content();
    [...root.querySelectorAll('label')].forEach(l=>expect([operation,l.textContent.trim()]).not.toEqual([operation,expect.stringMatching(/:$/)]));
    const actions=[...root.querySelectorAll('button[onclick]')];
@@ -83,7 +83,7 @@ for(const [service,creds,details] of [['rabbitmq',rabbitCreds,{}],['redis',redis
 
 t('Flush database is a danger primary button',async()=>{
  const s=await screen(redisCreds,{service_name:'redis'});
- s.w.switchTestingOperation('i1','flush'); await sleep(10);
+ s.w.switchTestingOperation('i1','flush'); await idle(s.w);
  const button=s.content().querySelector('button[onclick*="executeRedisFlush"]');
  expect(button.textContent).toBe('Flush database');
  expect(button.getAttribute('data-variant')).toBe('danger');
@@ -93,7 +93,7 @@ t('the RabbitMQ forms use sentence-case titles and labels',async()=>{
  const s=await screen(rabbitCreds);
  const seen=[];
  for(const operation of ['publish','consume','queues','queue-ops']){
-  s.w.switchTestingOperation('i1',operation); await sleep(10);
+  s.w.switchTestingOperation('i1',operation); await idle(s.w);
   seen.push(s.content().querySelector('h4').textContent);
   seen.push(...[...s.content().querySelectorAll('label')].map(l=>l.textContent.trim()));
  }
@@ -122,7 +122,7 @@ test('the info button names each Testing tab the way its tab does',()=>{
    .map(subview=>[subview,api.get({screen:'services',section:'testing',subview}).label]));
   expect(got).toEqual({info:'Info',set:'Set',get:'Get',delete:'Delete',keys:'Keys',command:'Command',flush:'Flush',publish:'Publish',consume:'Consume',queues:'Queue info','queue-ops':'Queue ops',management:'Management',rabbitmqctl:'rabbitmqctl',plugins:'Plugins'});
  }finally{ w.close(); }
-});
+},TEST_LIMIT);
 
 const crumbsFor=async(subview)=>{
  const source=fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8');
@@ -132,9 +132,10 @@ const crumbsFor=async(subview)=>{
  probe.window.close();
  const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1><div class="tab-content"></div></main>',{url:'http://localhost/'+hash,runScripts:'outside-only',pretendToBeVisual:true});
  const w=watchUncaught(dom.window);
+ trackTimers(w);
  w.blacksmithViews={activate:async r=>r};
  w.eval(source);
- await new Promise(r=>setTimeout(r,35));
+ await idle(w);
  const crumbs=[...w.document.querySelectorAll('nav[aria-label="Breadcrumb"] li')].map(li=>li.textContent);
  w.blacksmithRouter.destroy(); w.close();
  return crumbs;

@@ -1,8 +1,8 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {expectNoAlerts}=require('./certificates/no-alerts.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const SECRET='echo SECRET-COMMAND-TEXT-5521';
 const KEY='key-SECRET-CREDENTIAL-8841';
@@ -35,13 +35,13 @@ async function setup(routes={}){
    return answer(routes.create||[201,{id:'task-1'}],o,j);
   }]);
  w.plansData={services:[{id:'valkey',name:'valkey'}]};
- await sleep(30);
+ await idle(w);
  env.errors.length=0; // boot-time loads of unrouted endpoints
  w.serviceInstances={
   'val-a':{service_id:'valkey',plan_id:'small',plan:{id:'small',name:'small'}},
   'val-b':{service_id:'valkey',plan_id:'small',plan:{id:'small',name:'small'}}
  };
- await w.__T.initUpgradeTab();await sleep(10);
+ await w.__T.initUpgradeTab();await idle(w);
  return {...env,requests};
 }
 const type=(w,el,value)=>{el.value=value;el.dispatchEvent(new w.Event('input',{bubbles:true}));};
@@ -52,14 +52,14 @@ async function openInstances(env,ids=['val-a'],text=SECRET){
  w.__T.setBatchStep(1,false);
  type(w,d.getElementById('command-text'),text);
  w.__T.setBatchStep(2,false);
- await sleep(5);
+ await idle(w);
  ids.forEach(id=>pick(d,id));
 }
 // Clicks Next from the instance step and waits for the review to settle.
 async function review(env,ids,text){
  await openInstances(env,ids,text);
  env.d.getElementById('batch-flow-next').click();
- await sleep(20);
+ await idle(env);
 }
 const ack=(env,value)=>type(env.w,env.d.getElementById('batch-flow-ack'),value);
 const next=(env)=>env.d.getElementById('batch-flow-next');
@@ -74,7 +74,7 @@ const reject=()=>({raw:Promise.reject(new TypeError('Failed to fetch'))});
 const unreadable=()=>({raw:Promise.resolve({ok:true,status:200,json:()=>Promise.reject(new Error('bad body')),text:()=>Promise.resolve('')})});
 const HTML502=[502,'<html>Bad Gateway</html>'];
 const needKey=(o)=>((o.headers||{})['X-Blacksmith-Command-Key']?[200,preview()]:[401,{success:false,error:'A command key is required.',code:'command_credential_required'}]);
-const confirmRun=async(env)=>{ack(env,'run as vcap');next(env).click();await sleep(30);};
+const confirmRun=async(env)=>{ack(env,'run as vcap');next(env).click();await idle(env);};
 
 const DISCARD_URL='/b/upgrade/commands/discard';
 const EXPIRED=[410,{success:false,error:'expired',code:'preview_expired'}];
@@ -104,7 +104,7 @@ t('the preview, the create, and the discard send one request ID',async()=>{
  const env=await setup();const {w}=env;try{
  pendingRoutes(env,[500,{success:false,error:'internal',code:'internal'}]);
  await review(env);await confirmRun(env);
- discardBtn(env).click();await sleep(40);
+ discardBtn(env).click();await idle(env);
  const id=previews(env)[0].body.client_request_id;
  expect(typeof id).toBe('string');
  expect(id.length>0).toBe(true);
@@ -116,7 +116,7 @@ t('the preview, the create, and the discard send one request ID',async()=>{
 t('a Retry resends the same ID on the same preview',async()=>{
  const env=await setup({create:seq(reject,[201,{id:'task-9'}])});const {w}=env;try{
  await review(env);await confirmRun(env);
- next(env).click();await sleep(30);
+ next(env).click();await idle(env);
  const id=previews(env)[0].body.client_request_id;
  expect(creates(env).length).toBe(2);
  expect(creates(env).every(c=>c.body.client_request_id===id)).toBe(true);
@@ -129,7 +129,7 @@ t('a Retry resends the same ID on the same preview',async()=>{
 t('a new review sends a new ID on its preview',async()=>{
  const env=await setup({create:seq([409,{success:false,error:'The settings changed.',code:'preview_mismatch'}],[201,{id:'task-9'}])});const {w}=env;try{
  await review(env);await confirmRun(env);
- next(env).click();await sleep(30);await confirmRun(env);
+ next(env).click();await idle(env);await confirmRun(env);
  expect(previews(env).length).toBe(2);
  const first=previews(env)[0].body.client_request_id;
  const second=previews(env)[1].body.client_request_id;
@@ -143,7 +143,7 @@ t('an expired-preview refresh sends a preview whose ID matches the create after 
  let n=0;
  const env=await setup({preview:()=>[200,preview({preview_id:'prev-'+(++n)})],create:seq(EXPIRED,[201,{id:'task-9'}])});const {w}=env;try{
  await review(env);await confirmRun(env);
- ack(env,'run as vcap');next(env).click();await sleep(30);
+ ack(env,'run as vcap');next(env).click();await idle(env);
  expect(previews(env).length).toBe(2);
  expect(creates(env).length).toBe(2);
  expect(previews(env)[1].body.client_request_id).toBe(creates(env)[1].body.client_request_id);
@@ -156,7 +156,7 @@ t('a preview_bound discard says nothing was discarded and still offers Discard a
  const env=await setup();const {w}=env;try{
  pendingRoutes(env,[409,{success:false,error:'<b>bound</b>',code:'preview_bound'}]);
  await review(env);await confirmRun(env);
- discardBtn(env).click();await sleep(40);
+ discardBtn(env).click();await idle(env);
  expect(unconfirmedText(env).includes(BOUND_TEXT)).toBe(true);
  expect(unconfirmedText(env).includes('Activity')).toBe(true);
  expect(unconfirmedText(env).includes(UNKNOWN_TEXT)).toBe(false);
@@ -174,7 +174,7 @@ t('a 409 with a non-JSON body keeps the unknown-outcome message and Discard anyw
  const env=await setup();const {w}=env;try{
  pendingRoutes(env,()=>({raw:Promise.resolve({ok:false,status:409,headers:{get:()=>'text/html'},json:()=>Promise.reject(new Error('not json')),text:()=>Promise.resolve('<html><b>Conflict</b></html>')})}));
  await review(env);await confirmRun(env);
- discardBtn(env).click();await sleep(40);
+ discardBtn(env).click();await idle(env);
  expect(unconfirmedText(env).includes(UNKNOWN_TEXT)).toBe(true);
  expect(unconfirmedText(env).includes(BOUND_TEXT)).toBe(false);
  expect(anywayBtn(env)!==null).toBe(true);
@@ -190,7 +190,7 @@ for(const [name,spec] of [['a 500',[500,{success:false,error:'internal',code:'in
   const env=await setup();const {w}=env;try{
   pendingRoutes(env,spec);
   await review(env);await confirmRun(env);
-  discardBtn(env).click();await sleep(40);
+  discardBtn(env).click();await idle(env);
   expect(unconfirmedText(env).includes(UNKNOWN_TEXT)).toBe(true);
   expect(unconfirmedText(env).includes(BOUND_TEXT)).toBe(false);
   expect(anywayBtn(env)!==null).toBe(true);

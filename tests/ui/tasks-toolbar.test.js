@@ -1,7 +1,7 @@
 const { test, expect } = require('bun:test');
-const { main: { boot } } = require('./certificates/harness.js');
+const { main: { boot, TEST_LIMIT } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const toolbar = (w, d) => {
   const host = d.createElement('div');
@@ -202,11 +202,11 @@ t('an unpressed chip with no tasks is disabled and dimmed, and a pressed one sta
 
 // These drive refreshTasksTable the way the Refresh button does: through the
 // page's own request, its own rebuild of the table, and its own handlers.
-const { sleep } = require('./certificates/harness.js').main;
+const { idle } = require('./certificates/harness.js').main;
 const row = (id, state) => ({ id, state, description: `task ${id}`, started_at: '2026-10-31T10:00:00Z', timestamp: 1793000000 + id });
 const mountTasks = async (opts) => {
   const { w, d, calls } = boot();
-  await sleep(50);
+  await idle(w);
   const root = d.getElementById('blacksmith');
   root.classList.add('active');
   root.innerHTML = '<div class="entity-workspace" data-section="tasks"><div class="detail-content"></div></div>';
@@ -239,7 +239,7 @@ t('a refresh with some chips pressed asks for those states, and the chips count 
   try {
     press(d, 'done', false); press(d, 'processing', false);
     await w.__T.refreshTasksTable();
-    await sleep(200);
+    await idle(w);
     const url = calls.filter((c) => c.includes('/b/tasks?')).pop();
     expect(url).toContain('counts=1');
     expect(url).toContain('limit=200');
@@ -257,10 +257,10 @@ t('a chip that reads Done 3 shows 3 rows after it is unpressed, refreshed, and p
   try {
     press(d, 'done', false);
     await w.__T.refreshTasksTable();
-    await sleep(200);
+    await idle(w);
     expect(shown(d).length).toBe(1);
     press(d, 'done', true);
-    await sleep(250);
+    await idle(w);
     expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').closest('label').querySelector('.chip-count').textContent).toBe('3');
     expect(shown(d).length).toBe(4);
   } finally { w.close(); }
@@ -271,7 +271,7 @@ t('a refresh that gets a bare array still counts its own rows', async () => {
   const { w, d } = await mountTasks({ body: () => [row(1, 'done'), row(2, 'error')] });
   try {
     await w.__T.refreshTasksTable();
-    await sleep(200);
+    await idle(w);
     expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').closest('label').querySelector('.chip-count').textContent).toBe('1');
   } finally { w.close(); }
 });
@@ -280,9 +280,9 @@ t('typing a search never brings back a row the state chips hide, and a refresh k
   const { w, d } = await mountTasks({ body: serve([row(1, 'done'), row(2, 'error'), row(3, 'error')]) });
   try {
     await w.__T.refreshTasksTable();
-    await sleep(200);
+    await idle(w);
     ['processing', 'queued', 'done', 'cancelled'].forEach((s) => press(d, s, false));
-    await sleep(250);
+    await idle(w);
     expect(shown(d).length).toBe(2);
     const input = d.getElementById('search-tasks-table');
     input.value = 'task';
@@ -290,15 +290,15 @@ t('typing a search never brings back a row the state chips hide, and a refresh k
     expect(shown(d).length).toBe(2);
     expect(shown(d).join('|')).not.toContain('task 1');
     await w.__T.refreshTasksTable();
-    await sleep(200);
+    await idle(w);
     expect(shown(d).length).toBe(2);
     // With the search box empty, only the refresh itself can hide the done row again.
     d.getElementById('search-tasks-table').value = '';
     await w.__T.refreshTasksTable();
-    await sleep(200);
+    await idle(w);
     expect(shown(d).length).toBe(2);
     press(d, 'done', true);
-    await sleep(250);
+    await idle(w);
     expect(shown(d).length).toBe(3);
     d.getElementById('search-tasks-table').value = '';
   } finally { w.close(); }
@@ -308,14 +308,14 @@ t('unpressing a chip whose state has no tasks disables it once the list is read'
   const { w, d } = await mountTasks({ body: serve([row(1, 'done')]) });
   try {
     await w.__T.refreshTasksTable();
-    await sleep(200);
+    await idle(w);
     press(d, 'cancelled', false);
-    await sleep(250);
+    await idle(w);
     const box = d.querySelector('#blacksmith .toolbar-chips input[value="cancelled"]');
     expect(box.disabled).toBe(true);
     expect(box.closest('label').classList.contains('chip-dim')).toBe(true);
     press(d, 'done', false);
-    await sleep(250);
+    await idle(w);
     expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').disabled).toBe(false);
   } finally { w.close(); }
 });

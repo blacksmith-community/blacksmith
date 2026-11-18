@@ -1,10 +1,10 @@
 const { test, expect } = require('bun:test');
 const fs = require('fs');
 const path = require('path');
-const { main: {boot} } = require('./certificates/harness.js');
+const { main: {boot, idle, TEST_LIMIT} } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 const ui = path.resolve(__dirname, '../../ui');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 t('broker overview distinguishes known context from unverified health', () => {
   const {w,d} = boot();
@@ -133,7 +133,7 @@ t('registration dialog opens as a native modal and closes again',()=>{
 t('confirmation isolates the background and restores prior inert state',async()=>{
  const {w,d}=boot();
  try {
- await new Promise(resolve=>setTimeout(resolve,50));
+ await idle(w);
  // The shell holds the rail and the content, so isolating it covers both.
  const main=d.querySelector('body > .console-shell'); const header=d.querySelector('body > header');
  expect(main.contains(d.querySelector('main'))&&main.contains(d.getElementById('console-rail'))).toBe(true);
