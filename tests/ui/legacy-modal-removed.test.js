@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 
@@ -28,7 +28,7 @@ t('no page asset mentions the legacy modal overlay or container class',()=>{
 t('ModalManager refuses an element that is not a native dialog and changes nothing',async()=>{
  const env=boot({noDialogs:true}); envs.push(env);
  const {w,d,errors}=env;
- await new Promise(r=>setTimeout(r,50));
+ await idle(w);
  errors.length=0;
  const div=d.createElement('div'); div.className='modal-overlay'; div.innerHTML='<button>Inside</button>';
  expect(w.ModalManager.openModal(div)).toBe(false);

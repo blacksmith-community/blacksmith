@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // Delete and Purge ask in the page's dialog. The dialog names the instance
 // and shows the queue as visible text, never in an attribute.
@@ -26,7 +26,7 @@ function start(operation){
 for(const [operation,title,confirm] of [['delete','Delete a queue from orders-broker?','Delete queue'],['purge','Purge a queue on orders-broker?','Purge messages']]){
  t(`${operation} names the instance and shows the queue as visible text`,async()=>{
   const env=start(operation); const {w,d}=env;
-  const done=w.executeRabbitMQQueueOps('i1'); await sleep(10);
+  const done=w.executeRabbitMQQueueOps('i1'); await idle(env);
   expect(overlay(d).open).toBe(true);
   expect(overlay(d).querySelector('.dialog-modal-title').textContent).toBe(title);
   expect([...overlay(d).querySelectorAll('.dialog-modal-details li')].map(n=>n.textContent)).toEqual(['Instance: orders-broker','Instance ID: i1','Organization: payments','Space: prod']);
@@ -35,14 +35,14 @@ for(const [operation,title,confirm] of [['delete','Delete a queue from orders-br
   expect(posts(env)).toEqual([]);
   const ok=overlay(d).querySelector('[data-dialog-role="confirm"]');
   expect(ok.textContent).toBe(confirm);
-  ok.click(); await done; await sleep(10);
+  ok.click(); await done; await idle(env);
   expect(posts(env).length).toBe(1);
   expect(posts(env)[0]).toContain(`"operation":"${operation}"`);
  });
  t(`${operation} sends nothing on Cancel`,async()=>{
   const env=start(operation); const {w,d}=env;
-  const done=w.executeRabbitMQQueueOps('i1'); await sleep(10);
-  overlay(d).querySelector('[data-dialog-role="cancel"]').click(); await done; await sleep(10);
+  const done=w.executeRabbitMQQueueOps('i1'); await idle(env);
+  overlay(d).querySelector('[data-dialog-role="cancel"]').click(); await done; await idle(env);
   expect(posts(env)).toEqual([]);
  });
 }

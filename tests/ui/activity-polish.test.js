@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const strip=(css)=>css.replace(/\/\*[\s\S]*?\*\//g,'');
@@ -66,7 +66,7 @@ t('the route row orders breadcrumbs, Updated, then the icons at the far right',(
 
 t('the deployment name shares the instance heading line',async()=>{
  const env=boot({noDialogs:true});envs.push(env);
- await sleep(60);
+ await idle(env);
  env.w.__T.renderTaskDetail(certTask());
  const heading=env.d.querySelector('#upgrade .upgrade-task-instance .instance-heading');
  const dep=heading.querySelector('.instance-deployment');

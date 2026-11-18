@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -24,7 +24,7 @@ const start=async()=>{
  w.eval(OAT);
  w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');}init(){return Promise.resolve(this);}focus(){}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(){this.readyState=0;}send(){}close(){}};
- await sleep(60);
+ await idle(w);
  const inertClosed=()=>[...d.querySelectorAll('dialog:not([open])')].filter(n=>n.hasAttribute('inert')).map(n=>n.id);
  return {...env,inertClosed};
 };
@@ -32,24 +32,24 @@ const start=async()=>{
 // before the outer dialog isolates the background, as it is in a session that has already confirmed something.
 const warm=async(env)=>{
  const done=env.w.showConfirmDialog({title:'First',message:'Warm up'});
- await sleep(10);
+ await idle(env);
  env.d.querySelector('[data-dialog-role="cancel"]').click(); await done;
- await env.stubs.settle();
+ await idle(env);
 };
-const openConfig=async(w)=>{ const p=w.showConfigVersions('cloud','default','42'); await sleep(60); return p; };
+const openConfig=async(w)=>{ const p=w.showConfigVersions('cloud','default','42'); await idle(w); return p; };
 
 t('a confirmation that outlives the dialog under it leaves no closed dialog inert',async()=>{
  const env=await start(); const {w,d,stubs,inertClosed}=env;
  await warm(env); await openConfig(w);
  expect(d.getElementById('dialog-modal').hasAttribute('inert')).toBe(true);
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(env);
  expect(d.getElementById('dialog-modal').open).toBe(true);
  expect(d.getElementById('dialog-modal').hasAttribute('inert')).toBe(false);
- w.hideConfigVersionsModal(); await stubs.settle();
+ w.hideConfigVersionsModal(); await idle(env);
  expect(d.getElementById('config-details-modal').open).toBe(false);
  d.querySelector('[data-dialog-role="cancel"]').click(); expect(await done).toBe(false);
- await stubs.settle();
+ await idle(env);
  expect(inertClosed()).toEqual([]);
  expect(d.querySelectorAll('[inert]').length).toBe(0);
 });
@@ -58,11 +58,11 @@ t('a confirmation closed over a dialog that stays open keeps its inert, and clea
  const env=await start(); const {w,d,stubs,inertClosed}=env;
  await warm(env); await openConfig(w);
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(env);
  d.querySelector('[data-dialog-role="cancel"]').click(); expect(await done).toBe(false);
- await stubs.settle();
+ await idle(env);
  expect(d.getElementById('dialog-modal').hasAttribute('inert')).toBe(true);
- w.hideConfigVersionsModal(); await stubs.settle();
+ w.hideConfigVersionsModal(); await idle(env);
  expect(inertClosed()).toEqual([]);
  expect(d.querySelectorAll('[inert]').length).toBe(0);
 });
@@ -75,8 +75,8 @@ t('the terminal opened over a dialog is not inert, and no closed dialog is inert
  w.TerminalManager.openWithContext('blacksmith','broker','node/0','node','broker');
  expect(terminal().open).toBe(true);
  expect(terminal().hasAttribute('inert')).toBe(false);
- w.hideConfigVersionsModal(); await stubs.settle();
- w.TerminalManager.closeAll(); await stubs.settle();
+ w.hideConfigVersionsModal(); await idle(env);
+ w.TerminalManager.closeAll(); await idle(env);
  expect(inertClosed()).toEqual([]);
  expect(d.querySelectorAll('[inert]').length).toBe(0);
 });

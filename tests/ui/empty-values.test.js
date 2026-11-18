@@ -1,16 +1,16 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const js=fs.readFileSync(path.join(UI,'blacksmith.js'),'utf8');
 const css=['blacksmith.css','forge-theme.css'].map((f)=>fs.readFileSync(path.join(UI,f),'utf8')).join('\n').replace(/\/\*[\s\S]*?\*\//g,'');
 
 t('one em dash constant stands for every empty value',async()=>{
- const {w}=boot();await sleep(50);try{
+ const {w}=boot();await idle(w);try{
  expect(w.__T.EMPTY).toBe('—');
  expect(w.__T.EMPTY_HTML).toBe('<span class="empty-value">—</span>');
  for(const v of [null,undefined,'','-','—']) expect(w.__T.isEmptyValue(v)).toBe(true);
@@ -18,7 +18,7 @@ t('one em dash constant stands for every empty value',async()=>{
  }finally{w.close();}
 });
 t('a VM table cell with no value shows the muted em dash',async()=>{
- const {w,d}=boot();await sleep(50);try{
+ const {w,d}=boot();await idle(w);try{
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([{id:'abc',job_name:'blacksmith',index:0,state:'running',job_state:'running'}],'inst-1');
  const cells=[...host.querySelectorAll('tbody td')].map((td)=>td.textContent.trim());
@@ -28,7 +28,7 @@ t('a VM table cell with no value shows the muted em dash',async()=>{
  }finally{w.close();}
 });
 t('setCellText writes the em dash for an empty value and the text otherwise',async()=>{
- const {w,d}=boot();await sleep(50);try{
+ const {w,d}=boot();await idle(w);try{
  const el=d.createElement('span');
  w.__T.setCellText(el,'');
  expect(el.innerHTML).toBe('<span class="empty-value">—</span>');

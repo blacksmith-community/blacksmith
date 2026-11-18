@@ -1,9 +1,9 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const css=fs.readFileSync(path.join(UI,'blacksmith.css'),'utf8').replace(/\/\*[\s\S]*?\*\//g,'');
@@ -22,7 +22,7 @@ const vm=(extra={})=>Object.assign({id:'abc',job_name:'blacksmith',index:0,state
  vm_cid:LONG('v'),agent_id:LONG('a'),disk_cids:[LONG('d'),LONG('e')]},extra);
 
 t('long CID values are capped, titled, and still copy in full',async()=>{
- const {w,d}=boot();await sleep(50);try{
+ const {w,d}=boot();await idle(w);try{
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([vm()],'inst-1');
  for(const [cell,value] of [['vm-cid',LONG('v')],['vm-agent-id',LONG('a')]]){
@@ -35,7 +35,7 @@ t('long CID values are capped, titled, and still copy in full',async()=>{
  }finally{w.close();}
 });
 t('each disk CID sits on its own line with its own copy button',async()=>{
- const {w,d}=boot();await sleep(50);try{
+ const {w,d}=boot();await idle(w);try{
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([vm()],'inst-1');
  const lines=[...host.querySelectorAll('.vm-disk-cids .cid-line')];
@@ -45,7 +45,7 @@ t('each disk CID sits on its own line with its own copy button',async()=>{
  }finally{w.close();}
 });
 t('a short CID and a single disk CID read as before',async()=>{
- const {w,d}=boot();await sleep(50);try{
+ const {w,d}=boot();await idle(w);try{
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([vm({vm_cid:'vm-1',disk_cids:['disk-1']})],'inst-1');
  expect(host.querySelector('.vm-cid .cid-value').textContent).toBe('vm-1');
@@ -54,7 +54,7 @@ t('a short CID and a single disk CID read as before',async()=>{
  }finally{w.close();}
 });
 t('the sorted table body caps the same values',async()=>{
- const {w,d}=boot();await sleep(50);try{
+ const {w,d}=boot();await idle(w);try{
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([vm(),vm({id:'def'})],'inst-1');
  w.__T.initializeSorting('vms-table');

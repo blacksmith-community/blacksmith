@@ -1,10 +1,10 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 t('the Add endpoint button shows the plus icon at the size of the Refresh button',async()=>{
- const {w,d}=boot();await sleep(100);try{
+ const {w,d}=boot();await idle(w);try{
  const host=d.createElement('div');host.innerHTML=w.__T.renderBrokerTab();d.body.appendChild(host);
  const add=host.querySelector('.endpoint-controls button[aria-label="Add endpoint"]');
  expect(add).not.toBeNull();

@@ -1,7 +1,7 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const K='/secret/dir/valkey_crt';
 const pvInst=(id)=>({instance_id:id,instance_name:id+'-name',service:'valkey',plan:'small',vms:3,mode:'redeploy',gate:'g',manifest_digest:'d',selected:[{name:K,days_left:10}],additional:[],consumers:[],blocked:null,impact:'x'});
 
@@ -32,13 +32,13 @@ async function upgradeReview(count,diverged){
  const env=boot(),{w,d}=env;
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[{operating_system:'ubuntu',version:'1'}])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])],
   ['/b/upgrade/preview',(u,o,j)=>j(200,{id:'up-1',diverged:diverged?[{instance_id:'i0',instance_name:'i0-name',changes:[]}]:[]})]);
- await sleep(30);
+ await idle(w);
  await w.__T.initUpgradeTab();
  const sel=d.getElementById('upgrade-stemcell-filter');sel.value='ubuntu/1';
  for(let i=0;i<count;i++) w.__T.selectedUpgradeInstances.add('i'+i);
  const F=w.__T.batchFlow;F.step=3;
  const run=w.__T.startUpgrade({flowReview:true});
- await sleep(80);
+ await idle(w);
  return {w,d,run};
 }
 t('an upgrade above ten instances asks for upgrade',async()=>{
@@ -62,7 +62,7 @@ async function typedReview(requireText,typed){
  const {w,d}=boot();
  try{
   w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
-  await sleep(30);await w.__T.initUpgradeTab();
+  await idle(w);await w.__T.initUpgradeTab();
   const F=w.__T.batchFlow;F.step=3;
   w.__T.showBatchReview({title:'Review',requireText,confirmText:'Go'},F.revision);
   const ack=d.getElementById('batch-flow-ack');
@@ -85,11 +85,11 @@ t('the modal accepts the same forgiving input and names the word',async()=>{
  const {w,d}=boot();
  try{
   const p=w.__T.showConfirmDialog({title:'T',message:'m',requireText:'patch in place',confirmText:'Go',cancelText:'No'});
-  await sleep(30);
+  await idle(w);
   const ov=d.querySelector('#dialog-modal');
   expect(ov.querySelector('.dialog-modal-ack-label').textContent).toBe('To continue, type "patch in place" below.');
   const input=ov.querySelector('.dialog-modal-ack-input');
-  input.value='rotate';ov.querySelector('[data-dialog-role="confirm"]').click();await sleep(30);
+  input.value='rotate';ov.querySelector('[data-dialog-role="confirm"]').click();await idle(w);
   expect(ov.textContent).toContain('Type "patch in place" in the field to continue.');
   input.value=' Patch  In Place ';ov.querySelector('[data-dialog-role="confirm"]').click();
   const answer=await p;

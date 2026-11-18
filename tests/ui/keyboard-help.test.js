@@ -1,10 +1,11 @@
 
 const {test,expect}=require('bun:test');
 const fs=require('fs');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
-test('keyboard help shows current scope and restores focus',async()=>{
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
+t('keyboard help shows current scope and restores focus',async()=>{
  const {w,d}=boot();try{
- await sleep(50);
+ await idle(w);
  w.Element.prototype.getClientRects=function(){return this.matches('dialog[open]')?[1]:[]};
  const dialog=d.getElementById('keyboard-help-dialog');
  dialog.showModal=()=>dialog.setAttribute('open','');

@@ -1,7 +1,7 @@
 const { test, expect, afterEach } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main: { boot, idle, TEST_LIMIT } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const envs = [];
 afterEach(() => { while (envs.length) envs.pop().w.close(); });
@@ -23,7 +23,7 @@ async function start(instance) {
     ],
   });
   envs.push(env);
-  await sleep(150);
+  await idle(env);
   return env;
 }
 
@@ -33,7 +33,7 @@ t('the tabs ask for the deployment the broker reports', async () => {
   const env = await start({ deployment: 'lab-bs', id: 'b' });
   expect(env.w.blacksmithDeploymentName).toBe('lab-bs');
   await env.w.loadBlacksmithSection('events');
-  await sleep(60);
+  await idle(env);
   expect(deploymentCalls(env).some((c) => c.includes('/b/deployments/lab-bs/events'))).toBe(true);
   expect(deploymentCalls(env).some((c) => c.includes('/b/deployments/blacksmith'))).toBe(false);
 });
@@ -42,7 +42,7 @@ t('a broker that reports no deployment name is asked for nothing', async () => {
   const env = await start({ deployment: '', id: 'b' });
   expect(env.w.blacksmithDeploymentName).toBe('');
   await env.w.loadBlacksmithSection('events');
-  await sleep(60);
+  await idle(env);
   expect(deploymentCalls(env)).toEqual([]);
   expect(env.d.querySelector('#blacksmith [data-load-error]')).not.toBeNull();
 });

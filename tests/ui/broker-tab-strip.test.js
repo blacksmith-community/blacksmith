@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -20,12 +20,13 @@ const start=async()=>{
  envs.push(env);
  const {w,d}=env;
  w.eval(OAT);
- await sleep(60);
+ await idle(w);
  const host=d.createElement('div'); host.id='broker-host'; d.body.appendChild(host);
  host.innerHTML=w.__T.renderBrokerTab();
  await w.__T.initBrokerTab();
- await sleep(20);
+ await idle(w);
  env.errors.length=0;
+
  const tabs=[...host.querySelectorAll('[data-cftab]')];
  const panels=[...host.querySelectorAll('[data-panel]')];
  const shown=(x)=>!x.hidden&&x.style.display!=='none'&&(x.style.display==='block'||x.classList.contains('active'));
@@ -42,22 +43,22 @@ t('broker strip starts on Marketplace with its panel shown',async()=>{
 });
 
 t('broker strip click on a tab shows its panel and clicking back returns',async()=>{
- const {tabs,selected,visible}=await start();
- tabs[1].click(); await sleep(5);
+ const {w,tabs,selected,visible}=await start();
+ tabs[1].click(); await idle(w);
  expect(selected()).toEqual([1]);
  expect(visible()).toEqual([1]);
- tabs[0].click(); await sleep(5);
+ tabs[0].click(); await idle(w);
  expect(selected()).toEqual([0]);
  expect(visible()).toEqual([0]);
 });
 
 t('broker strip tabs report the selection to the router reader',async()=>{
  const {w,d,tabs}=await start();
- tabs[1].click(); await sleep(5);
+ tabs[1].click(); await idle(w);
  const sub=d.querySelector('.broker-tab-btn.active');
  expect(sub.dataset.cftab).toBe('services');
  expect(typeof w.CFEndpointManager.switchToBrokerTab).toBe('function');
- w.CFEndpointManager.switchToBrokerTab('marketplace'); await sleep(5);
+ w.CFEndpointManager.switchToBrokerTab('marketplace'); await idle(w);
  expect(d.querySelector('.broker-tab-btn.active').dataset.cftab).toBe('marketplace');
 });
 
@@ -109,10 +110,10 @@ const counting=async()=>{
 };
 
 t('broker strip selecting a tab loads that tab for the selected endpoint',async()=>{
- const {tabs,loads}=await counting();
- tabs[1].click(); await sleep(5);
+ const {w,tabs,loads}=await counting();
+ tabs[1].click(); await idle(w);
  expect(loads).toEqual(['services@lab']);
- tabs[0].click(); await sleep(5);
+ tabs[0].click(); await idle(w);
  expect(loads).toEqual(['services@lab','marketplace@lab']);
 });
 
@@ -120,7 +121,7 @@ t('broker strip shows a connection prompt in the selected tab when the endpoint 
  const {w,d,tabs,panels}=await start();
  const M=w.CFEndpointManager;
  M.selectedEndpoint='lab'; M.connectionStates.lab={connected:false};
- tabs[1].click(); await sleep(5);
+ tabs[1].click(); await idle(w);
  expect(panels[1].textContent).toContain('Connection required');
  expect(panels[1].textContent).toContain('services data');
  expect(panels[0].textContent).not.toContain('Connection required');
@@ -128,12 +129,12 @@ t('broker strip shows a connection prompt in the selected tab when the endpoint 
 
 t('broker strip selecting the tab that is already shown does not reload it',async()=>{
  const {w,tabs,loads}=await counting();
- tabs[0].click(); await sleep(5);
+ tabs[0].click(); await idle(w);
  expect(loads).toEqual([]);
- tabs[1].click(); await sleep(5);
- tabs[1].click(); await sleep(5);
+ tabs[1].click(); await idle(w);
+ tabs[1].click(); await idle(w);
  expect(loads).toEqual(['services@lab']);
  // A programmatic switch loads once too, even though it also selects the tab and so raises the tab event.
- w.CFEndpointManager.switchToBrokerTab('marketplace'); await sleep(5);
+ w.CFEndpointManager.switchToBrokerTab('marketplace'); await idle(w);
  expect(loads).toEqual(['services@lab','marketplace@lab']);
 });

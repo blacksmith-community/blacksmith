@@ -1,11 +1,11 @@
 const { test, expect } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main: { boot, idle, TEST_LIMIT } } = require('./certificates/harness.js');
 
 // Two log tables on one page each keep their own revealed-row count and
 // focus, so the row cap key must differ between them.
 test('instance log tables get different row cap keys', async () => {
   const { w, d } = boot({ noDialogs: true });
-  await sleep(50);
+  await idle(w);
   const lines = Array.from({ length: 150 }, (_, i) => `INFO line ${i}`).join('\n');
   const one = d.createElement('div');
   const two = d.createElement('div');
@@ -18,4 +18,4 @@ test('instance log tables get different row cap keys', async () => {
   expect(all[0]).toBeTruthy();
   expect(all[0]).not.toBe(all[1]);
   w.close();
-});
+}, TEST_LIMIT);

@@ -1,7 +1,8 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
-test('broker endpoint toolbar is ordered and the add dialog opens accessibly',async()=>{
- const {w,d}=boot();await sleep(100);try{
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
+t('broker endpoint toolbar is ordered and the add dialog opens accessibly',async()=>{
+ const {w,d}=boot();await idle(w);try{
  const host=d.createElement('div');host.innerHTML=w.__T.renderBrokerTab();d.body.appendChild(host);
  const toolbar=host.querySelector('.broker-endpoint-header');expect(!!toolbar.querySelector('table')).toBe(false);
  expect(toolbar.querySelector('label').textContent).toBe('Endpoint:');

@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 const HELP=fs.readFileSync(path.resolve(__dirname,'..','..','ui','action-help.js'),'utf8');
@@ -25,7 +25,7 @@ const start=async()=>{
  w.eval(HELP);
  w.eval(NAV);
  if(d.readyState==='loading') d.dispatchEvent(new w.Event('DOMContentLoaded'));
- await sleep(60);
+ await idle(w);
  return env;
 };
 const toastBox=(d)=>d.querySelector('.toast-container');
@@ -39,21 +39,21 @@ const cases=[
 cases.forEach(({name,id,open,close})=>{
  t(`toasts and the live region move into ${name} while it is open and back when it closes`,async()=>{
   const env=await start(); const {w,d,stubs}=env;
-  w.showNotification('Before','info'); await sleep(10);
+  w.showNotification('Before','info'); await idle(env);
   expect(toastBox(d).parentNode).toBe(d.body);
-  open(env); await sleep(10);
+  open(env); await idle(env);
   const dialog=d.getElementById(id);
   expect(dialog.open).toBe(true);
   expect(toastBox(d).parentNode).toBe(dialog);
   expect(live(d).parentNode).toBe(dialog);
-  w.showNotification('During','info'); await sleep(10);
+  w.showNotification('During','info'); await idle(env);
   expect(dialog.contains(toastBox(d))).toBe(true);
-  close(env); await stubs.settle();
+  close(env); await idle(env);
   expect(toastBox(d).parentNode).toBe(d.body);
   expect(live(d).parentNode).toBe(d.body);
-  open(env); await sleep(10);
+  open(env); await idle(env);
   expect(toastBox(d).parentNode).toBe(dialog);
-  close(env); await stubs.settle();
+  close(env); await idle(env);
   expect(toastBox(d).parentNode).toBe(d.body);
  });
 });
@@ -63,11 +63,11 @@ t('a live region created while a modal is open is moved inside it without any to
  live(d).remove();
  expect(toastBox(d)).toBeNull();
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(env);
  const confirm=d.getElementById('dialog-modal');
- w.blacksmithNav.announce('Fresh region'); await sleep(70);
+ w.blacksmithNav.announce('Fresh region'); await idle(env);
  expect(toastBox(d)).toBeNull();
  expect(live(d).parentNode).toBe(confirm);
- d.querySelector('[data-dialog-role="cancel"]').click(); await done; await stubs.settle();
+ d.querySelector('[data-dialog-role="cancel"]').click(); await done; await idle(env);
  expect(live(d).parentNode).toBe(d.body);
 });

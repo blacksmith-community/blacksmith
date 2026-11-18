@@ -1,9 +1,9 @@
 const { test, expect } = require('bun:test');
 const fs = require('fs');
 const path = require('path');
-const { main: { boot, sleep, idle, until, TEST_LIMIT } } = require('./certificates/harness.js');
+const { main: { boot, idle, until, TEST_LIMIT } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const UI = path.resolve(__dirname, '..', '..', 'ui');
 const css = () => fs.readFileSync(path.join(UI, 'blacksmith.css'), 'utf8');
@@ -80,7 +80,7 @@ t('rows added after the first pass get their labels', async () => {
     const row = body.rows[0].cloneNode(true);
     row.querySelectorAll('[data-label]').forEach((c) => c.removeAttribute('data-label'));
     body.appendChild(row);
-    await sleep(30);
+    await idle(w);
     expect(row.cells[1].getAttribute('data-label')).toBe('State');
   } finally { w.close(); }
 });
@@ -244,14 +244,14 @@ t('the certificate tables are in the card list and keep wide columns hidden', ()
 });
 
 t('every fleet certificate row is a card of labelled pairs', async () => {
-  const { boot: bootFleet, sleep: nap, iso, now, day } = H.fleet;
+  const { boot: bootFleet, iso, now, day } = H.fleet;
   const { w, d, server } = await bootFleet();
   try {
     server.certs = [{ id: 'A', key: '/ws/A', variable: 'A', kind: 'leaf', common_name: 'cn-A', issuer: 'CN=X', owners: [{ kind: 'instance', instance_id: 'i1', instance_name: 'one', service_name: 'valkey', plan_name: 's' }], affected_instances: 1, effective_not_after: iso(now + 40 * day), days_left: 40, expiry: 'ok', health: 'ok', attention: true, findings: [], observations: [], coverage: { expected_listeners: 1, observed_listeners: 1, failed_listeners: 0, complete: true }, rotation: { allowed: true }, versions: {} }];
     // The page starts its table observer on DOMContentLoaded, so the rows render as they do live.
     d.dispatchEvent(new w.Event('DOMContentLoaded'));
     await w.blacksmithNav.switchTab('certificates');
-    await nap(250);
+    await idle(w);
     const table = d.getElementById('cert-table');
     expect(table.getAttribute('data-cards')).toBe('true');
     const row = d.querySelector('#cert-tbody tr.cert-row');

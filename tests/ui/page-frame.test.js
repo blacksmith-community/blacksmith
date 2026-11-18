@@ -1,7 +1,8 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const read=(f)=>fs.readFileSync(path.join(UI,f),'utf8');
@@ -16,15 +17,15 @@ const bodies=(file,selector)=>{
  return out.join(';');
 };
 
-test('the page body renders no footer',async()=>{
+t('the page body renders no footer',async()=>{
  const {w,d}=boot();try{
- await sleep(50);
+ await idle(w);
  expect(d.querySelector('body > footer')).toBeNull();
  }finally{w.close();}
 });
-test('the keyboard shortcuts dialog carries the copyright line and icon',async()=>{
+t('the keyboard shortcuts dialog carries the copyright line and icon',async()=>{
  const {w,d}=boot();try{
- await sleep(50);
+ await idle(w);
  const line=d.querySelector('#keyboard-help-dialog .keyboard-help-copyright');
  expect(line).not.toBeNull();
  expect(line.textContent).toContain('Copyright © 2026 Blacksmith Community');

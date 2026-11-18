@@ -2,7 +2,7 @@ const { test, expect, afterEach } = require('bun:test');
 const H = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 
-const { boot, until, TEST_LIMIT } = H.main;
+const { boot, idle, until, TEST_LIMIT } = H.main;
 const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const envs = [];
@@ -25,7 +25,7 @@ const visible = (table) => [...table.tBodies[0].rows].filter((r) => r.style.disp
 const bar = (host) => host.querySelector('.row-cap');
 // The bar a reader sees. A table within its cap keeps a hidden bar.
 const seen = (host) => { const b = bar(host); return b && !b.hidden ? b : null; };
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const settle = (table) => idle(table.ownerDocument.defaultView);
 
 t('a table over the cap shows the first 100 rows, a status, and a Show more button', () => {
   const { host, table } = build(250);
@@ -74,12 +74,12 @@ t('a search covers the whole data set, not just the visible rows, and the status
   const { host, table } = build(250);
   // r250 is past the first 100 rows. Hide every row that does not match, as the page's search does.
   [...table.tBodies[0].rows].forEach((row) => { row.style.display = row.cells[0].textContent === 'r250' ? '' : 'none'; });
-  await settle();
+  await settle(table);
   expect(visible(table).map((r) => r.cells[0].textContent)).toEqual(['r250']);
   expect(seen(host)).toBeNull();
   // Clearing the search brings the cap back.
   [...table.tBodies[0].rows].forEach((row) => { row.style.display = ''; });
-  await settle();
+  await settle(table);
   expect(visible(table).length).toBe(100);
   expect(bar(host).querySelector('[role="status"]').textContent).toBe('Showing 100 of 250 things');
 });
@@ -87,7 +87,7 @@ t('a search covers the whole data set, not just the visible rows, and the status
 t('a filter that leaves more than the cap is capped and counted', async () => {
   const { host, table } = build(250);
   [...table.tBodies[0].rows].forEach((row) => { row.style.display = row.cells[1].textContent === 'odd' ? '' : 'none'; });
-  await settle();
+  await settle(table);
   expect(visible(table).length).toBe(100);
   expect(bar(host).querySelector('[role="status"]').textContent).toBe('Showing 100 of 125 things');
 });
@@ -97,7 +97,7 @@ t('sorting orders the whole data set and the cap then takes the first rows', asy
   const header = table.querySelector('th');
   header.click();
   header.click();
-  await settle();
+  await settle(table);
   const names = visible(table).map((r) => r.cells[0].textContent);
   expect(names.length).toBe(100);
   // Descending by name puts r99 first among the strings that sort numerically, so the largest number leads.
@@ -146,7 +146,7 @@ t('an instance log table caps its lines the same way', () => {
 t('group headings are not counted, and an expanded row follows its certificate', async () => {
   const { host, table } = build(0, 'data-row-cap="2" data-row-cap-noun="certificates" data-row-cap-skip=".group" data-row-cap-detail=".more"');
   table.tBodies[0].innerHTML = '<tr class="group"><td>g</td><td></td></tr><tr><td>a</td><td></td></tr><tr class="more"><td>a detail</td><td></td></tr><tr><td>b</td><td></td></tr><tr class="group"><td>h</td><td></td></tr><tr><td>c</td><td></td></tr><tr class="more"><td>c detail</td><td></td></tr>';
-  await settle();
+  await settle(table);
   const shown = [...table.tBodies[0].rows].filter((r) => !r.classList.contains('row-capped')).map((r) => r.cells[0].textContent);
   expect(shown).toEqual(['g', 'a', 'a detail', 'b', 'h']);
   expect(seen(host).querySelector('[role="status"]').textContent).toBe('Showing 2 of 3 certificates');

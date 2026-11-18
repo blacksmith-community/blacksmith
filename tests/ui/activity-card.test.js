@@ -1,9 +1,9 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const rule=(file,selector)=>{
@@ -17,7 +17,7 @@ const rule=(file,selector)=>{
 };
 
 const render=async(tasks)=>{
- const env=boot();await sleep(50);
+ const env=boot();await idle(env);
  env.w.__T._setTasks(tasks);env.w.__T.renderUpgradeTaskList();
  return env;
 };

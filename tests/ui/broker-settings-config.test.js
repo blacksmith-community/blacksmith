@@ -1,7 +1,8 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 
 // The broker Settings screen groups the read-only configuration by its first
 // key segment, filters it as the operator types, and shows each value with the
@@ -16,7 +17,7 @@ const config={
 };
 
 async function screen(){
- const env=boot();await sleep(100);
+ const env=boot();await idle(env);
  const host=env.d.createElement('div');env.d.body.appendChild(host);
  host.innerHTML=env.w.__T.renderBlacksmithSettings({vault_max_versions:5},config);
  const type=(text)=>{const input=host.querySelector('input.config-filter');input.value=text;input.dispatchEvent(new env.w.Event('input',{bubbles:true}));};
@@ -25,7 +26,7 @@ async function screen(){
  return {...env,host,type,visible,expandAll};
 }
 
-test('the two section headings use sentence case and the read-only line explains redaction',async()=>{
+t('the two section headings use sentence case and the read-only line explains redaction',async()=>{
  const s=await screen();
  const heads=[...s.host.querySelectorAll('.settings-section-header')].map(h=>h.textContent);
  expect(heads).toEqual(['Runtime settings','Current configuration']);
@@ -36,7 +37,7 @@ test('the two section headings use sentence case and the read-only line explains
  s.w.close();
 });
 
-test('rows group by the first key segment in alphabetical order with counts',async()=>{
+t('rows group by the first key segment in alphabetical order with counts',async()=>{
  const s=await screen();
  s.expandAll();
  const groups=[...s.host.querySelectorAll('.config-table tr.config-group')].map(r=>[r.querySelector('.config-group-name').textContent,r.querySelector('.config-group-count').textContent]);
@@ -46,7 +47,7 @@ test('rows group by the first key segment in alphabetical order with counts',asy
  s.w.close();
 });
 
-test('values use the shared cell, PEMs collapse, and secrets stay masked',async()=>{
+t('values use the shared cell, PEMs collapse, and secrets stay masked',async()=>{
  const s=await screen();
  const row=(k,g)=>[...s.host.querySelectorAll('.config-table tbody tr:not(.config-group)')].find(r=>r.querySelector('.config-key').textContent===k&&r.dataset.group===g);
  expect(row('address','bosh').querySelector('.manifest-value .manifest-value-text').textContent).toBe('https://10.0.0.6:25555');
@@ -62,7 +63,7 @@ test('values use the shared cell, PEMs collapse, and secrets stay masked',async(
  s.w.close();
 });
 
-test('the filter narrows rows by key or value and hides empty groups',async()=>{
+t('the filter narrows rows by key or value and hides empty groups',async()=>{
  const s=await screen();
  const input=s.host.querySelector('input.config-filter');
  expect(s.host.querySelector(`label[for="${input.id}"]`).textContent).toBe('Filter settings');
@@ -82,14 +83,14 @@ test('the filter narrows rows by key or value and hides empty groups',async()=>{
  s.w.close();
 });
 
-test('the filter does not match a masked secret value',async()=>{
+t('the filter does not match a masked secret value',async()=>{
  const s=await screen();
  s.type('s3cr3t');
  expect(s.visible()).toEqual([]);
  s.w.close();
 });
 
-test('the Runtime settings form is unchanged',async()=>{
+t('the Runtime settings form is unchanged',async()=>{
  const s=await screen();
  expect(s.host.querySelector('#settings-max-versions').value).toBe('5');
  expect(s.host.querySelector('#apply-max-versions').textContent).toBe('Apply');
@@ -97,8 +98,8 @@ test('the Runtime settings form is unchanged',async()=>{
  s.w.close();
 });
 
-test('the second guard masks a connection string and a list holding one',async()=>{
- const env=boot();await sleep(100);
+t('the second guard masks a connection string and a list holding one',async()=>{
+ const env=boot();await idle(env);
  const host=env.d.createElement('div');env.d.body.appendChild(host);
  host.innerHTML=env.w.__T.renderBlacksmithSettings({}, {redis:{uri:'redis://:s3cr3t-test@h:6379',peers:['amqp://u:s3cr3t-test@h','amqp://h']}});
  expect(host.innerHTML).not.toContain('s3cr3t-test');
@@ -106,8 +107,8 @@ test('the second guard masks a connection string and a list holding one',async()
  env.w.close();
 });
 
-test('the Settings guard masks a secret nested inside a list of objects',async()=>{
- const env=boot();await sleep(100);
+t('the Settings guard masks a secret nested inside a list of objects',async()=>{
+ const env=boot();await idle(env);
  const host=env.d.createElement('div');env.d.body.appendChild(host);
  host.innerHTML=env.w.__T.renderBlacksmithSettings({}, {protocols:{amqp:{uri:'amqp://u:s3cr3t-test@h',password:'s3cr3t-test'}},peers:[{password:'s3cr3t-test'},{host:'h'}],hosts:[{host:'h'}]});
  expect(host.innerHTML).not.toContain('s3cr3t-test');
@@ -115,7 +116,7 @@ test('the Settings guard masks a secret nested inside a list of objects',async()
  env.w.close();
 });
 
-test('every group starts collapsed',async()=>{
+t('every group starts collapsed',async()=>{
  const s=await screen();
  expect(s.visible()).toEqual(['# bosh','# broker','# credhub','# general']);
  const toggles=[...s.host.querySelectorAll('.config-group-toggle')];
@@ -124,7 +125,7 @@ test('every group starts collapsed',async()=>{
  s.w.close();
 });
 
-test('a group toggle opens and closes its rows and sets aria-expanded',async()=>{
+t('a group toggle opens and closes its rows and sets aria-expanded',async()=>{
  const s=await screen();
  const toggle=s.host.querySelector('tr[data-group="bosh"] .config-group-toggle');
  const ids=toggle.getAttribute('aria-controls').split(' ');
@@ -139,7 +140,7 @@ test('a group toggle opens and closes its rows and sets aria-expanded',async()=>
  s.w.close();
 });
 
-test('Expand all and Collapse all open and close every group',async()=>{
+t('Expand all and Collapse all open and close every group',async()=>{
  const s=await screen();
  s.host.querySelector('.config-expand-all').click();
  expect(s.visible().length).toBe(12);
@@ -149,7 +150,7 @@ test('Expand all and Collapse all open and close every group',async()=>{
  s.w.close();
 });
 
-test('the filter opens matching groups and clearing it restores the earlier choices',async()=>{
+t('the filter opens matching groups and clearing it restores the earlier choices',async()=>{
  const s=await screen();
  s.host.querySelector('tr[data-group="broker"] .config-group-toggle').click();
  s.type('ca');
@@ -161,7 +162,7 @@ test('the filter opens matching groups and clearing it restores the earlier choi
  s.w.close();
 });
 
-test('the filter, Expand all and Collapse all share one toolbar line',async()=>{
+t('the filter, Expand all and Collapse all share one toolbar line',async()=>{
  const s=await screen();
  const bar=s.host.querySelector('.config-toolbar');
  expect(bar.querySelector('input.config-filter')).not.toBeNull();
@@ -171,7 +172,7 @@ test('the filter, Expand all and Collapse all share one toolbar line',async()=>{
  s.w.close();
 });
 
-test('an empty feedback span stays in the DOM and takes no space',async()=>{
+t('an empty feedback span stays in the DOM and takes no space',async()=>{
  const s=await screen();
  const fb=s.host.querySelector('#feedback-max-versions');
  expect(fb.getAttribute('role')).toBe('status');
@@ -190,7 +191,7 @@ test('an empty feedback span stays in the DOM and takes no space',async()=>{
  s.w.close();
 });
 
-test('the settings table is dense and its copy target is 24 pixels, scoped to the config container',()=>{
+t('the settings table is dense and its copy target is 24 pixels, scoped to the config container',()=>{
  const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
  expect(css).toMatch(/\.config-container \.config-table :is\(th, td\)\s*\{[^}]*padding-top:\s*4px;\s*padding-bottom:\s*4px/);
  expect(css).toMatch(/\.config-container \.config-table \.copy-btn-inline\s*\{[^}]*width:\s*24px;\s*height:\s*24px/);
@@ -198,7 +199,7 @@ test('the settings table is dense and its copy target is 24 pixels, scoped to th
  expect(css).not.toMatch(/\.manifest[^{]*\{[^}]*padding-top:\s*4px/);
 });
 
-test('a group toggle works while filtering and clearing restores the saved state',async()=>{
+t('a group toggle works while filtering and clearing restores the saved state',async()=>{
  const s=await screen();
  s.host.querySelector('tr[data-group="broker"] .config-group-toggle').click();
  s.type('ca');
@@ -212,7 +213,7 @@ test('a group toggle works while filtering and clearing restores the saved state
  s.w.close();
 });
 
-test('Collapse all while filtering leaves the saved choices intact',async()=>{
+t('Collapse all while filtering leaves the saved choices intact',async()=>{
  const s=await screen();
  s.host.querySelector('tr[data-group="broker"] .config-group-toggle').click();
  s.type('ca');
@@ -250,7 +251,7 @@ function specificity(sel){
 }
 const beats=(a,b)=>{const x=specificity(a),y=specificity(b);return (x[0]-y[0]||x[1]-y[1]||x[2]-y[2])>0;};
 
-test('the settings table rules out-rank the generic rules they override',()=>{
+t('the settings table rules out-rank the generic rules they override',()=>{
  const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
  const generic=css.match(/^(button:is\(\.copy-btn-inline[^{]*)\{/m)[1];
  const copy=css.match(/^([^{\n]*\.config-table \.copy-btn-inline)\s*\{/m)[1];
@@ -263,7 +264,7 @@ test('the settings table rules out-rank the generic rules they override',()=>{
  expect(beats(toggleMatch[1],oatButton)).toBe(true);
 });
 
-test('the group toggle hover and focus colour out-ranks the base toggle rule',()=>{
+t('the group toggle hover and focus colour out-ranks the base toggle rule',()=>{
  const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
  const base=css.match(/^([^{\n]*\.config-group-toggle)\s*\{/m)[1];
  const hover=css.match(/^([^{\n]*\.config-group-toggle:is\(:hover, :focus-visible\))\s*\{([^}]*)\}/m);

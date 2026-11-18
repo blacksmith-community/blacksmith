@@ -1,13 +1,13 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 async function review(requireText,typedSteps){
  const {w,d}=boot();
  try{
   w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
-  await sleep(30);await w.__T.initUpgradeTab();
+  await idle(w);await w.__T.initUpgradeTab();
   const F=w.__T.batchFlow;F.step=3;
   w.__T.showBatchReview({title:'Review',requireText,confirmText:'Run'},F.revision);
   const ack=d.getElementById('batch-flow-ack');
@@ -59,7 +59,7 @@ t('the dialog uses the same label and placeholder',async()=>{
  const {w,d}=boot();
  try{
   w.__T.showConfirmDialog({title:'T',message:'m',requireText:'patch in place',confirmText:'Go',cancelText:'No'});
-  await sleep(30);
+  await idle(w);
   const ov=d.querySelector('#dialog-modal');
   expect(ov.querySelector('.dialog-modal-ack-label').textContent).toBe('To continue, type "patch in place" below.');
   expect(ov.querySelector('.dialog-modal-ack-label .confirm-word').textContent).toBe('"patch in place"');

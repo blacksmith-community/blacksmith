@@ -1,5 +1,6 @@
 const { test, expect, afterEach } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main: { boot, idle, until, TEST_LIMIT } } = require('./certificates/harness.js');
+const t = (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l);
 
 // The PEM bodies are fixtures. They are not real certificates, because the UI never parses them.
 const PEM_A = '-----BEGIN CERTIFICATE-----\nQUFBQUFBQUE=\n-----END CERTIFICATE-----\n';
@@ -31,13 +32,13 @@ async function mount(instance, { item, inventory, certificates, items, hang } = 
   const host = d.createElement('div');
   d.body.appendChild(host);
   host.innerHTML = await w.__T.fetchServiceDetail(instance, 'credentials');
-  await sleep(60);
+  await idle(w);
   return { env, host };
 }
 const known = { issuer_chain: [PEM_A, PEM_B], issuer_chain_facts: FACTS };
 const row = (host) => host.querySelector('tr.issuing-ca-row');
 
-test('the Issuing CA row shows the issuer subject and expiry as text', async () => {
+t('the Issuing CA row shows the issuer subject and expiry as text', async () => {
   const { host } = await mount('c1', { item: known });
   const r = row(host);
   expect(r).not.toBeNull();
@@ -47,7 +48,7 @@ test('the Issuing CA row shows the issuer subject and expiry as text', async () 
   expect(r.querySelectorAll('button').length).toBe(2);
 });
 
-test('the PEM never reaches an attribute, a title, or the page text', async () => {
+t('the PEM never reaches an attribute, a title, or the page text', async () => {
   const { host } = await mount('c2', { item: known });
   const html = row(host).outerHTML;
   expect(html).not.toContain('BEGIN CERTIFICATE');
@@ -55,7 +56,7 @@ test('the PEM never reaches an attribute, a title, or the page text', async () =
   expect(host.textContent).not.toContain('BEGIN CERTIFICATE');
 });
 
-test('the buttons carry unique keep keys', async () => {
+t('the buttons carry unique keep keys', async () => {
   const { host } = await mount('c3', { item: known });
   const keys = [...row(host).querySelectorAll('button')].map((b) => b.dataset.keepKey);
   expect(keys.every(Boolean)).toBe(true);
@@ -64,7 +65,7 @@ test('the buttons carry unique keep keys', async () => {
   expect(new Set(all).size).toBe(all.length);
 });
 
-test('Copy PEM writes the whole chain to the clipboard and toasts without it', async () => {
+t('Copy PEM writes the whole chain to the clipboard and toasts without it', async () => {
   const { env, host } = await mount('c4', { item: known });
   const { w } = env;
   const written = [];
@@ -72,13 +73,13 @@ test('Copy PEM writes the whole chain to the clipboard and toasts without it', a
   const toasts = [];
   w.Feedback = { success: (m) => toasts.push(m), info: (m) => toasts.push(m), error: (m) => toasts.push(m) };
   row(host).querySelector('[data-issuing-ca-action="copy"]').click();
-  await sleep(20);
+  await idle(w);
   expect(written).toEqual([PEM_A + PEM_B]);
   expect(toasts.join(' ')).not.toContain('BEGIN CERTIFICATE');
   expect(env.logs.join(' ')).not.toContain('BEGIN CERTIFICATE');
 });
 
-test('Download builds a Blob at click time and saves a .pem file', async () => {
+t('Download builds a Blob at click time and saves a .pem file', async () => {
   const { env, host } = await mount('c5', { item: known });
   const { w, d } = env;
   const blobs = [];
@@ -98,7 +99,7 @@ test('Download builds a Blob at click time and saves a .pem file', async () => {
   expect(d.querySelectorAll('a[download]').length).toBe(0);
 });
 
-test('a chain that is not known yet says so and offers no buttons', async () => {
+t('a chain that is not known yet says so and offers no buttons', async () => {
   const { host } = await mount('c6', { item: { pem: PEM_A } });
   const r = row(host);
   expect(r).not.toBeNull();
@@ -107,7 +108,7 @@ test('a chain that is not known yet says so and offers no buttons', async () => 
   expect(r.querySelectorAll('button').length).toBe(0);
 });
 
-test('a known empty chain says there is none and offers no buttons', async () => {
+t('a known empty chain says there is none and offers no buttons', async () => {
   const { host } = await mount('c7', { item: { issuer_chain: [], issuer_chain_facts: [] } });
   const r = row(host);
   expect(r.textContent).toMatch(/no issuing ca/i);
@@ -115,20 +116,20 @@ test('a known empty chain says there is none and offers no buttons', async () =>
   expect(r.querySelectorAll('button').length).toBe(0);
 });
 
-test('without the inventory the credentials still render and no row appears', async () => {
+t('without the inventory the credentials still render and no row appears', async () => {
   const { host } = await mount('c8', { inventory: null });
   expect(host.textContent).toContain('cache.example');
   expect(row(host)).toBeNull();
 });
 
-test('hostile subject text is escaped', async () => {
+t('hostile subject text is escaped', async () => {
   const evil = '<img src=x onerror=alert(1)>';
   const { host } = await mount('c9', { item: { issuer_chain: [PEM_A], issuer_chain_facts: [{ common_name: evil, not_after: '2027-03-04T05:06:07Z' }] } });
   expect(row(host).querySelector('img')).toBeNull();
   expect(row(host).textContent).toContain(evil);
 });
 
-test('the Credentials table renders with a loading row before the lookups answer', async () => {
+t('the Credentials table renders with a loading row before the lookups answer', async () => {
   const env = boot({ noDialogs: true });
   envs.push(env);
   const { w, d } = env;
@@ -144,7 +145,7 @@ test('the Credentials table renders with a loading row before the lookups answer
   expect(row(host).querySelectorAll('button').length).toBe(0);
 });
 
-test('a lookup that never answers is dropped after the timeout and the row goes away', async () => {
+t('a lookup that never answers is dropped after the timeout and the row goes away', async () => {
   const env = boot({ noDialogs: true });
   envs.push(env);
   const { w, d } = env;
@@ -156,19 +157,21 @@ test('a lookup that never answers is dropped after the timeout and the row goes 
   const host = d.createElement('div');
   d.body.appendChild(host);
   host.innerHTML = await w.__T.fetchServiceDetail('c11', 'credentials');
-  await sleep(3000);
+  // The page drops the lookup on its own timer, which is longer than idle() counts, so wait for the row itself.
+  expect(row(host)).not.toBeNull();
+  await until(() => row(host) === null, 'the lookup to time out');
   expect(row(host)).toBeNull();
   expect(host.textContent).toContain('admin');
-}, 10000);
+});
 
-test('the lookup never rescans the instance', async () => {
+t('the lookup never rescans the instance', async () => {
   const { env } = await mount('c12', { item: known });
   const bad = env.calls.filter((c) => /certificates\/instances\//.test(c) || /POST .*certificates\/scan/.test(c));
   expect(bad).toEqual([]);
   expect(env.calls.some((c) => c.includes('/b/certificates/inventory?instance=c12'))).toBe(true);
 });
 
-test('the buttons use the existing button classes', async () => {
+t('the buttons use the existing button classes', async () => {
   const { host } = await mount('c13', { item: known });
   row(host).querySelectorAll('button').forEach((b) => {
     expect(b.classList.contains('btn')).toBe(true);
@@ -176,14 +179,14 @@ test('the buttons use the existing button classes', async () => {
   });
 });
 
-test('Copy PEM failure shows a fixed error toast and leaks nothing', async () => {
+t('Copy PEM failure shows a fixed error toast and leaks nothing', async () => {
   const { env, host } = await mount('c14', { item: known });
   const { w } = env;
   w.navigator.clipboard = { writeText: () => Promise.reject(new Error('denied ' + PEM_A)) };
   const toasts = [];
   w.Feedback = { success: (m) => toasts.push('ok:' + m), info: (m) => toasts.push(m), error: (m) => toasts.push('err:' + m) };
   row(host).querySelector('[data-issuing-ca-action="copy"]').click();
-  await sleep(20);
+  await idle(w);
   expect(toasts.length).toBe(1);
   expect(toasts[0].startsWith('err:')).toBe(true);
   expect(toasts.join(' ')).not.toContain('BEGIN CERTIFICATE');
@@ -191,7 +194,7 @@ test('Copy PEM failure shows a fixed error toast and leaks nothing', async () =>
 });
 
 for (const [label, next] of [['none', { issuer_chain: [], issuer_chain_facts: [] }], ['not known', { pem: PEM_A }]]) {
-  test(`a later ${label} state clears the stored PEM so an old button copies nothing`, async () => {
+  t(`a later ${label} state clears the stored PEM so an old button copies nothing`, async () => {
     const id = 'c15' + label.replace(' ', '');
     const first = await mount(id, { item: known });
     const staleButton = row(first.host).querySelector('[data-issuing-ca-action="copy"]');
@@ -206,18 +209,18 @@ for (const [label, next] of [['none', { issuer_chain: [], issuer_chain_facts: []
     const host2 = d.createElement('div');
     d.body.appendChild(host2);
     host2.innerHTML = await w.__T.fetchServiceDetail(id, 'credentials');
-    await sleep(60);
+    await idle(w);
     expect(row(host2).querySelectorAll('button').length).toBe(0);
     const written = [];
     w.navigator.clipboard = { writeText: (t) => { written.push(t); return Promise.resolve(); } };
     staleButton.click();
-    await sleep(20);
+    await idle(w);
     expect(written).toEqual([]);
   });
 }
 
 for (const action of ['copy', 'download']) {
-  test(`a ${action} click with no PEM says the certificate is not available`, async () => {
+  t(`a ${action} click with no PEM says the certificate is not available`, async () => {
     const { env, host } = await mount('c15m' + action, { item: known });
     const { w } = env;
     // A button whose chain is gone, as when a later load found none.
@@ -227,19 +230,19 @@ for (const action of ['copy', 'download']) {
     const say = (m) => toasts.push(String(m));
     w.Feedback = { success: say, info: say, warning: say, error: say };
     stale.click();
-    await sleep(20);
+    await idle(w);
     expect(toasts).toEqual(['The issuing CA certificate is not available.']);
     expect(toasts.join(' ')).not.toContain('BEGIN CERTIFICATE');
   });
 }
 
-test('an incomplete chain says it stops short of the root', async () => {
+t('an incomplete chain says it stops short of the root', async () => {
   const { host } = await mount('c16', { item: { ...known, issuer_chain_incomplete: true } });
   expect(row(host).textContent).toMatch(/does not reach a root|stops short/i);
   expect(row(host).querySelectorAll('button').length).toBe(2);
 });
 
-test('the listener item is the one whose probe succeeded, not the first by hash order', async () => {
+t('the listener item is the one whose probe succeeded, not the first by hash order', async () => {
   const { host, env } = await mount('c17', {
     certificates: (probe) => [
       { id: 'aaa-failed', key: 'sha256:', observations: [probe({ state: 'failed', sha256_fingerprint: '', locator: '10.0.0.2:6379' })] },
@@ -251,7 +254,7 @@ test('the listener item is the one whose probe succeeded, not the first by hash 
   expect(env.calls.some((c) => c.includes('/items/aaa-failed'))).toBe(false);
 });
 
-test('between two good probe items the choice does not depend on inventory order', async () => {
+t('between two good probe items the choice does not depend on inventory order', async () => {
   const good = (probe) => [
     { id: 'zzz', key: 'sha256:cd34', observations: [probe({ sha256_fingerprint: 'cd34', locator: '10.0.0.2:6379' })] },
     { id: 'leafid', key: 'sha256:ab12', observations: [probe({ locator: '10.0.0.1:6379' })] }

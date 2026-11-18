@@ -2,16 +2,19 @@ const {test,expect}=require('bun:test');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
 const fs=require('fs'),path=require('path');
+const {idle,trackTimers,TEST_LIMIT}=require('./certificates/harness.js').main;
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 const source=()=>fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8');
 function boot(hash='',activate){
  const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1><div class="tab-content"></div></main>',{url:'http://localhost/'+hash,runScripts:'outside-only',pretendToBeVisual:true});
  const w=watchUncaught(dom.window);
+ trackTimers(w);
  if(activate)w.blacksmithViews={activate};
  w.eval(source());
  return {w,api:w.BlacksmithRoutes};
 }
 
-test('routes without a tab parse to the default tab of their screen',()=>{
+t('routes without a tab parse to the default tab of their screen',()=>{
  const {api,w}=boot();
  expect(api.parse('#/instances/abc')).toEqual({screen:'services',instance:'abc',section:'details'});
  expect(api.parse('#/instances/abc?view=x')).toEqual({screen:'services',instance:'abc',section:'details',subview:'x'});
@@ -25,7 +28,7 @@ test('routes without a tab parse to the default tab of their screen',()=>{
  w.close();
 });
 
-test('a bare instance route is replaced by its Summary route without a new entry',async()=>{
+t('a bare instance route is replaced by its Summary route without a new entry',async()=>{
  const {api,w}=boot('#/instances/abc');
  const length=w.history.length;
  const router=api.create(w,{activate:async r=>r});
@@ -35,9 +38,9 @@ test('a bare instance route is replaced by its Summary route without a new entry
  router.destroy();w.close();
 });
 
-test('the navigation error clears once another route renders',async()=>{
+t('the navigation error clears once another route renders',async()=>{
  const {w}=boot('#/instances/missing/logs',async r=>{if(r.instance==='missing')throw new Error('Service instance missing was not found.');return r;});
- await new Promise(r=>setTimeout(r,20));
+ await idle(w);
  expect(w.document.getElementById('route-error').textContent).toContain('Service instance missing was not found.');
  // The recovered view is already current, so selecting it again is a success.
  await w.blacksmithRouter.navigate({screen:'blacksmith',section:'details'});
@@ -45,9 +48,9 @@ test('the navigation error clears once another route renders',async()=>{
  w.blacksmithRouter.destroy();w.close();
 });
 
-test('a late in-place notification leaves the navigation error showing',async()=>{
+t('a late in-place notification leaves the navigation error showing',async()=>{
  const {w}=boot('#/instances/missing/logs',async r=>{if(r.instance==='missing')throw new Error('gone');return r;});
- await new Promise(r=>setTimeout(r,20));
+ await idle(w);
  expect(w.document.getElementById('route-error')).not.toBeNull();
  // The fallback screen settles after its data loads and reports the route it already shows.
  w.blacksmithRouter.record({screen:'blacksmith',section:'details'},{replace:true});
@@ -56,22 +59,22 @@ test('a late in-place notification leaves the navigation error showing',async()=
  w.blacksmithRouter.destroy();w.close();
 });
 
-test('the navigation error clears when the view moves to another route',async()=>{
+t('the navigation error clears when the view moves to another route',async()=>{
  const {w}=boot('#/instances/missing/logs',async r=>{if(r.instance==='missing')throw new Error('gone');return r;});
- await new Promise(r=>setTimeout(r,20));
+ await idle(w);
  expect(w.document.getElementById('route-error')).not.toBeNull();
  w.blacksmithRouter.record({screen:'certificates'});
  expect(w.document.getElementById('route-error')).toBeNull();
  w.blacksmithRouter.destroy();w.close();
 });
 
-test('a bare link to the route already showing is rewritten without rendering again',async()=>{
+t('a bare link to the route already showing is rewritten without rendering again',async()=>{
  const calls=[];
  const {w}=boot('#/instances/abc/summary',async r=>{calls.push(r);return r;});
- await new Promise(r=>setTimeout(r,20));
+ await idle(w);
  expect(calls).toHaveLength(1);
  w.location.hash='#/instances/abc';
- await new Promise(r=>setTimeout(r,40));
+ await idle(w);
  expect(w.location.hash).toBe('#/instances/abc/summary');
  expect(calls).toHaveLength(1);
  expect(w.blacksmithRouter.current).toEqual({screen:'services',instance:'abc',section:'details'});

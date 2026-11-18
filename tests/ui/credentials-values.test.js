@@ -1,5 +1,6 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 
 // The Credentials table hides secrets until asked, collapses certificates,
 // keeps arrays whole, and shows the shared empty value for missing values.
@@ -9,15 +10,15 @@ const CHAIN=CERT+CERT;
 const KEY='-----BEGIN RSA PRIVATE KEY-----\nQUJD\n-----END RSA PRIVATE KEY-----\n';
 
 async function table(creds){
- const env=boot();await sleep(100);
+ const env=boot();await idle(env);
  const host=env.d.createElement('div');env.d.body.appendChild(host);
  host.innerHTML=env.w.__T.formatCredentials(creds);
  const row=(name)=>[...host.querySelectorAll('tbody tr')].find(r=>r.querySelector('.cred-key').textContent===name);
  return {...env,host,row};
 }
-const copyOf=async(env,button)=>{let copied;env.w.navigator.clipboard.writeText=async v=>{copied=v;};button.click();await sleep(1);return copied;};
+const copyOf=async(env,button)=>{let copied;env.w.navigator.clipboard.writeText=async v=>{copied=v;};button.click();await idle(env);return copied;};
 
-test('the table has no sortable headers',async()=>{
+t('the table has no sortable headers',async()=>{
  const t=await table({host:'h'});
  const el=t.host.querySelector('table');
  expect(el.getAttribute('data-sortable')).toBe('false');
@@ -26,7 +27,7 @@ test('the table has no sortable headers',async()=>{
  t.w.close();
 });
 
-test('a password is masked until revealed and copies its real value',async()=>{
+t('a password is masked until revealed and copies its real value',async()=>{
  const t=await table({host:'h',password:'s3cr3t-test'});
  const cell=t.row('password');
  expect(cell.innerHTML).not.toContain('s3cr3t-test');
@@ -48,7 +49,7 @@ test('a password is masked until revealed and copies its real value',async()=>{
  t.w.close();
 });
 
-test('keys ending in _key, tokens, and secrets are masked but plain keys are not',async()=>{
+t('keys ending in _key, tokens, and secrets are masked but plain keys are not',async()=>{
  const t=await table({api_key:'s3cr3t-a',access_token:'s3cr3t-b',client_secret:'s3cr3t-c',Private_Key:'s3cr3t-d',username:'admin',key:'plain'});
  for(const name of ['api_key','access_token','client_secret','Private_Key']) expect(t.row(name).querySelector('button[aria-pressed]')).not.toBeNull();
  for(const name of ['username','key']) expect(t.row(name).querySelector('button[aria-pressed]')).toBeNull();
@@ -56,7 +57,7 @@ test('keys ending in _key, tokens, and secrets are masked but plain keys are not
  t.w.close();
 });
 
-test('a private key value is masked whatever its name',async()=>{
+t('a private key value is masked whatever its name',async()=>{
  const t=await table({identity:KEY});
  const cell=t.row('identity');
  expect(cell.querySelector('pre')).toBeNull();
@@ -67,7 +68,7 @@ test('a private key value is masked whatever its name',async()=>{
  t.w.close();
 });
 
-test('a certificate collapses behind Show PEM and counts its certificates',async()=>{
+t('a certificate collapses behind Show PEM and counts its certificates',async()=>{
  const t=await table({ca:CHAIN,leaf:CERT});
  const cell=t.row('ca');
  expect(cell.textContent).toContain('PEM certificate · 2 certificates');
@@ -81,7 +82,7 @@ test('a certificate collapses behind Show PEM and counts its certificates',async
  t.w.close();
 });
 
-test('an array stays one row with an item per line and copies newline joined',async()=>{
+t('an array stays one row with an item per line and copies newline joined',async()=>{
  const t=await table({hosts:['a.example','b.example','c.example'],nested:{list:['x','y']}});
  const cell=t.row('hosts');
  expect(t.host.querySelectorAll('.cred-key')[0].textContent).toBe('hosts');
@@ -93,7 +94,7 @@ test('an array stays one row with an item per line and copies newline joined',as
  t.w.close();
 });
 
-test('empty values show the shared empty value with no copy button',async()=>{
+t('empty values show the shared empty value with no copy button',async()=>{
  const t=await table({a:'',b:null,c:[],d:false,e:0});
  for(const name of ['a','b','c']){
   expect(t.row(name).querySelector('.empty-value')).not.toBeNull();
@@ -106,7 +107,7 @@ test('empty values show the shared empty value with no copy button',async()=>{
 });
 
 // Review fixes: connection strings, camelCase names, and array items.
-test('a URI with an embedded password is masked and a plain URL is not',async()=>{
+t('a URI with an embedded password is masked and a plain URL is not',async()=>{
  const t=await table({uri:'redis://:s3cr3t-test@10.0.0.5:6379',amqp_uri:'amqps://admin:s3cr3t-test@h:5671/vhost',url:'https://h:8443/path',host_port:'redis://h:6379'});
  for(const name of ['uri','amqp_uri']){
   const cell=t.row(name);
@@ -119,7 +120,7 @@ test('a URI with an embedded password is masked and a plain URL is not',async()=
  t.w.close();
 });
 
-test('camelCase key names are masked like snake_case ones',async()=>{
+t('camelCase key names are masked like snake_case ones',async()=>{
  const t=await table({apiKey:'s3cr3t-a',privateKey:'s3cr3t-b',clientSecret:'s3cr3t-c',authToken:'s3cr3t-d',passphrase:'s3cr3t-e',displayName:'x'});
  for(const name of ['apiKey','privateKey','clientSecret','authToken','passphrase']) expect(t.row(name).querySelector('button[aria-pressed]')).not.toBeNull();
  expect(t.row('displayName').querySelector('button[aria-pressed]')).toBeNull();
@@ -127,7 +128,7 @@ test('camelCase key names are masked like snake_case ones',async()=>{
  t.w.close();
 });
 
-test('array items collapse certificates and mask secrets one by one',async()=>{
+t('array items collapse certificates and mask secrets one by one',async()=>{
  const t=await table({chain:[CERT,CERT],uris:['redis://:s3cr3t-test@h:6379','redis://h:6379']});
  const chain=t.row('chain');
  expect(chain.querySelectorAll('details').length).toBe(2);
@@ -141,7 +142,7 @@ test('array items collapse certificates and mask secrets one by one',async()=>{
  t.w.close();
 });
 
-test('a secret nested deeper than one level is masked whole',async()=>{
+t('a secret nested deeper than one level is masked whole',async()=>{
  const t=await table({protocols:{amqp:{uri:'amqp://u:s3cr3t-test@h'}},other:{amqp:{password:'s3cr3t-test'}},peers:[{password:'s3cr3t-test'},{host:'h'}],plain:{a:{b:'ok'}}});
  for(const name of ['protocols','other']){
   expect(t.row(name)).toBeUndefined();
@@ -159,7 +160,7 @@ test('a secret nested deeper than one level is masked whole',async()=>{
 
 // Show PEM is a plain disclosure, not a card: a small link with a leading
 // chevron that turns when it opens, and the PEM under it.
-test('Show PEM is a plain disclosure with a leading chevron',async()=>{
+t('Show PEM is a plain disclosure with a leading chevron',async()=>{
  const fs=require('fs');
  const path=require('path');
  const t=await table({leaf:CERT});
@@ -177,7 +178,7 @@ test('Show PEM is a plain disclosure with a leading chevron',async()=>{
 
 // Broker settings draws the same disclosure, so its rules belong to the
 // disclosure's own class and not to the Credentials table.
-test('the Show PEM rules do not depend on the Credentials table',()=>{
+t('the Show PEM rules do not depend on the Credentials table',()=>{
  const fs=require('fs');
  const path=require('path');
  const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','forge-theme.css'),'utf8');

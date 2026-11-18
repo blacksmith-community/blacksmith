@@ -1,10 +1,10 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,trackTimers,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const envs=[];
 afterEach(()=>{ while(envs.length) envs.pop().w.close(); });
@@ -18,7 +18,7 @@ const task=(inst={})=>({id:'cmd-1',kind:'command',status:'completed',name:'Run c
 const enabled=[['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{enabled:true})]];
 const start=async(record,opts={})=>{
  const env=boot({noDialogs:true,routes:enabled,...opts});envs.push(env);
- await sleep(60);
+ await idle(env);
  if(opts.instances!==undefined)env.w.serviceInstances=opts.instances;
  env.w.BlacksmithRoutes=(await routesOf()).BlacksmithRoutes;
  env.w.__T.renderTaskDetail(record);
@@ -26,10 +26,10 @@ const start=async(record,opts={})=>{
 };
 const routesOf=async()=>{
  const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1><div class="tab-content"></div></main>',{url:'http://localhost/#/',runScripts:'outside-only',pretendToBeVisual:true});
- const w=watchUncaught(dom.window);
+ const w=watchUncaught(dom.window);trackTimers(w);
  w.blacksmithViews={activate:async (r)=>r};
  w.eval(fs.readFileSync(path.resolve(__dirname,'..','..','ui','routes.js'),'utf8'));
- await sleep(40);
+ await idle(w);
  return w;
 };
 const terminals=(d)=>[...d.querySelectorAll('#upgrade button.command-node-terminal')];
@@ -70,7 +70,7 @@ t('the terminal opens with the recorded deployment name even before the instance
 
 t('the terminal button is hidden when SSH terminals are disabled',async()=>{
  const {d}=await start(task(),{routes:[['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{enabled:false,message:'off'})]]});
- await sleep(40);
+ await idle(d);
  expect(terminals(d).length).toBe(2);
  expect(terminals(d).every((b)=>b.hidden)).toBe(true);
 });
@@ -117,7 +117,7 @@ t('a poll re-render keeps focus on the terminal button and the node link',async(
 
 const vmsPage=async(vms)=>{
  const env=boot({noDialogs:true});envs.push(env);
- await sleep(60);
+ await idle(env);
  const {d}=env;
  const host=d.createElement('div');host.id='services';
  const content=d.createElement('div');content.className='detail-content';

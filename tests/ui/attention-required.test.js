@@ -1,5 +1,6 @@
 const {test,expect}=require('bun:test');
-const {main:{boot}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 
 const data=(extra={})=>({deployment:'blacksmith',env:'lab',plans:{},instances:{
  a1:{service_id:'redis',plan:{name:'small'},instance_name:'cache-a',vm_status:'running'},
@@ -15,7 +16,7 @@ const mount=(w,d,input)=>{ const host=d.createElement('div'); d.body.appendChild
 const section=(host)=>host.querySelector('.entity-attention');
 const certRow=(host)=>section(host).querySelector('[data-attention="certificates"]');
 
-test('the summary lists instances with VM alerts above the inventory and links each one',()=>{
+t('the summary lists instances with VM alerts above the inventory and links each one',()=>{
  const {w,d}=boot();try{
   const host=mount(w,d,data());
   const panel=section(host);
@@ -31,7 +32,7 @@ test('the summary lists instances with VM alerts above the inventory and links e
  }finally{w.close();}
 });
 
-test('the certificate row says Loading until the request returns, with no fetched time',()=>{
+t('the certificate row says Loading until the request returns, with no fetched time',()=>{
  const {w,d}=boot();try{
   const host=mount(w,d,data());
   expect(certRow(host).textContent).toContain('Loading');
@@ -40,7 +41,7 @@ test('the certificate row says Loading until the request returns, with no fetche
  }finally{w.close();}
 });
 
-test('a returned request shows the count and links to the filtered certificates',async()=>{
+t('a returned request shows the count and links to the filtered certificates',async()=>{
  const {w,d,calls}=boot({routes:[inventory([{id:'x1'},{id:'x2'},{id:'x3'}])]});
  try{
   const host=mount(w,d,data());
@@ -54,7 +55,7 @@ test('a returned request shows the count and links to the filtered certificates'
  }finally{w.close();}
 });
 
-test('a failed request keeps the row Unknown rather than zero',async()=>{
+t('a failed request keeps the row Unknown rather than zero',async()=>{
  const {w,d}=boot({routes:[inventory([],403)]});
  try{
   const host=mount(w,d,data());
@@ -64,7 +65,7 @@ test('a failed request keeps the row Unknown rather than zero',async()=>{
  }finally{w.close();}
 });
 
-test('a first scan that never completed says Unknown with a reason, never all clear',async()=>{
+t('a first scan that never completed says Unknown with a reason, never all clear',async()=>{
  for(const scan of [{state:'never'},{state:'failed',completed_at:'2026-10-30T10:00:00Z',errors:[{instance_id:'a1',error:'x'}]}]){
   const {w,d}=boot({routes:[inventory([],200,scan)]});
   try{
@@ -79,7 +80,7 @@ test('a first scan that never completed says Unknown with a reason, never all cl
  }
 });
 
-test('leaving the summary while the request runs does not strand it on Unknown',async()=>{
+t('leaving the summary while the request runs does not strand it on Unknown',async()=>{
  const {w,d}=boot({routes:[inventory([{id:'x1'}])]});
  try{
   const host=mount(w,d,data());
@@ -93,7 +94,7 @@ test('leaving the summary while the request runs does not strand it on Unknown',
  }finally{w.close();}
 });
 
-test('with nothing to flag the section says so in one line',async()=>{
+t('with nothing to flag the section says so in one line',async()=>{
  const {w,d}=boot({routes:[inventory([]),...settled]});
  try{
   const host=mount(w,d,quiet());
@@ -105,7 +106,7 @@ test('with nothing to flag the section says so in one line',async()=>{
  }finally{w.close();}
 });
 
-test('instance names are escaped in the section',()=>{
+t('instance names are escaped in the section',()=>{
  const {w,d}=boot();try{
   const evil='"><img src=x onerror=alert(1)>';
   const input=data(); input.instances.b2.instance_name=evil;
@@ -124,15 +125,15 @@ const bootFleet=()=>boot({noDialogs:true,routes:[
   c3:{service_id:'redis',plan:{name:'small'},instance_name:'cache-c',vm_status:'failing'}}})]]});
 const attentionCalls=(calls)=>calls.filter(c=>c==='GET /b/certificates/inventory?attention=true').length;
 
-test('page load makes one attention request and the instances screen shares it',async()=>{
+t('page load makes one attention request and the instances screen shares it',async()=>{
  const {w,d,calls}=bootFleet();
  try{
-  await new Promise(r=>setTimeout(r,150));
+  await idle(w);
   expect(attentionCalls(calls)).toBe(1);
   expect(w.blacksmithData.instances.a1.instance_name).toBe('cache-a');
   expect(typeof w.blacksmithDataFetchedAt).toBe('number');
   await w.blacksmithViews.activate({screen:'services'},{});
-  await new Promise(r=>setTimeout(r,150));
+  await idle(w);
   expect(attentionCalls(calls)).toBe(1);
   const column=[...d.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim());
   expect(column.sort()).toEqual(['0','0','1']);

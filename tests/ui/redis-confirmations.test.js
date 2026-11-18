@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // The Redis and Valkey writes ask in tiers. Flush asks the operator to type
 // the instance's name. Delete key and Command ask in the page's dialog, which
@@ -50,40 +50,40 @@ const none={attributes:[],toasts:[],logs:[],urls:[]};
 
 t('Flush asks the operator to type the instance name',async()=>{
  const env=start(); const {w,d}=env;
- const done=w.executeRedisFlush('i1'); await sleep(10);
+ const done=w.executeRedisFlush('i1'); await idle(w);
  expect(overlay(d).open).toBe(true);
  expect(overlay(d).querySelector('.dialog-modal-title').textContent).toBe('Flush database 2 of orders-cache?');
  expect(overlay(d).querySelector('.dialog-modal-ack-label').textContent).toBe('To continue, type "orders-cache" below.');
- confirmBtn(d).click(); await sleep(10);
+ confirmBtn(d).click(); await idle(w);
  expect(posts(env,'flush')).toEqual([]);
  const input=overlay(d).querySelector('.dialog-modal-ack-input');
  input.value='orders'; input.dispatchEvent(new w.Event('input',{bubbles:true}));
- confirmBtn(d).click(); await sleep(10);
+ confirmBtn(d).click(); await idle(w);
  expect(posts(env,'flush')).toEqual([]);
  input.value='Orders-Cache'; input.dispatchEvent(new w.Event('input',{bubbles:true}));
- confirmBtn(d).click(); await done; await sleep(10);
+ confirmBtn(d).click(); await done; await idle(w);
  expect(posts(env,'flush').length).toBe(1);
  expect(posts(env,'flush')[0]).toContain('"database":2');
 });
 
 t('Flush sends nothing on Cancel',async()=>{
  const env=start(); const {w,d}=env;
- const done=w.executeRedisFlush('i1'); await sleep(10);
- cancelBtn(d).click(); await done; await sleep(10);
+ const done=w.executeRedisFlush('i1'); await idle(w);
+ cancelBtn(d).click(); await done; await idle(w);
  expect(posts(env,'flush')).toEqual([]);
 });
 
 t('Delete key names the instance and shows each key as visible text',async()=>{
  const env=start(); const {w,d}=env;
  d.getElementById('redis-delete-keys-i1').value=`${KEY}\n\n ${OTHER} \n`;
- const done=w.executeRedisDelete('i1'); await sleep(10);
+ const done=w.executeRedisDelete('i1'); await idle(w);
  expect(overlay(d).open).toBe(true);
  expect(overlay(d).querySelector('.dialog-modal-title').textContent).toBe('Delete 2 keys from orders-cache?');
  expect([...overlay(d).querySelectorAll('.dialog-modal-command')].map(n=>n.textContent)).toEqual([KEY,OTHER]);
  expect(overlay(d).textContent).toContain('orders-cache');
  expect(posts(env,'delete')).toEqual([]);
  expect(leaks(env,KEY)).toEqual(none);
- confirmBtn(d).click(); await done; await sleep(10);
+ confirmBtn(d).click(); await done; await idle(w);
  expect(posts(env,'delete').length).toBe(1);
  expect(posts(env,'delete')[0]).toContain(`"keys":["${KEY}","${OTHER}"]`);
  expect(leaks(env,KEY).attributes).toEqual([]);
@@ -94,9 +94,9 @@ t('Delete key names the instance and shows each key as visible text',async()=>{
 t('Delete of one key says key, and Cancel sends nothing',async()=>{
  const env=start(); const {w,d}=env;
  d.getElementById('redis-delete-keys-i1').value=KEY;
- const done=w.executeRedisDelete('i1'); await sleep(10);
+ const done=w.executeRedisDelete('i1'); await idle(w);
  expect(overlay(d).querySelector('.dialog-modal-title').textContent).toBe('Delete 1 key from orders-cache?');
- cancelBtn(d).click(); await done; await sleep(10);
+ cancelBtn(d).click(); await done; await idle(w);
  expect(posts(env,'delete')).toEqual([]);
  expect(leaks(env,KEY)).toEqual(none);
 });
@@ -105,13 +105,13 @@ t('Command names the instance and shows the command only as visible text',async(
  const env=start(); const {w,d}=env;
  d.getElementById('redis-cmd-i1').value=CMD;
  d.getElementById('redis-args-i1').value=JSON.stringify(['GET',ARG]);
- const done=w.executeRedisCommand('i1'); await sleep(10);
+ const done=w.executeRedisCommand('i1'); await idle(w);
  expect(overlay(d).open).toBe(true);
  expect(overlay(d).querySelector('.dialog-modal-title').textContent).toBe('Run a command on orders-cache?');
  expect(overlay(d).querySelector('.dialog-modal-command').textContent).toBe(`${CMD} GET ${ARG}`);
  expect(posts(env,'command')).toEqual([]);
  expect(leaks(env,ARG)).toEqual(none);
- confirmBtn(d).click(); await done; await sleep(10);
+ confirmBtn(d).click(); await done; await idle(w);
  expect(posts(env,'command').length).toBe(1);
  expect(posts(env,'command')[0]).toContain(`"command":"${CMD}","args":["GET","${ARG}"]`);
  expect(leaks(env,ARG).toasts).toEqual([]);
@@ -122,10 +122,10 @@ t('Command names the instance and shows the command only as visible text',async(
 t('Command sends nothing on Cancel or Escape',async()=>{
  const env=start(); const {w,d}=env;
  d.getElementById('redis-cmd-i1').value=CMD;
- let done=w.executeRedisCommand('i1'); await sleep(10);
- cancelBtn(d).click(); await done; await sleep(10);
- done=w.executeRedisCommand('i1'); await sleep(10);
- d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})); await done; await sleep(10);
+ let done=w.executeRedisCommand('i1'); await idle(w);
+ cancelBtn(d).click(); await done; await idle(w);
+ done=w.executeRedisCommand('i1'); await idle(w);
+ d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})); await done; await idle(w);
  expect(posts(env,'command')).toEqual([]);
  expect(leaks(env,CMD+' ')).toEqual(none);
 });
@@ -134,7 +134,7 @@ t('Set runs with no dialog',async()=>{
  const env=start(); const {w,d}=env;
  d.getElementById('redis-key-i1').value='k';
  d.getElementById('redis-value-i1').value='v';
- await w.executeRedisSet('i1'); await sleep(10);
+ await w.executeRedisSet('i1'); await idle(w);
  expect(overlay(d)?.open||false).toBe(false);
  expect(posts(env,'set').length).toBe(1);
 });
@@ -148,13 +148,13 @@ const IDENTITY=['Instance: Orders-Cache','Instance ID: i1','Organization: paymen
 t('Flush shows the instance ID, org, and space, and the name in its own case',async()=>{
  const env=start(); const {w,d}=env;
  placed(w);
- const done=w.executeRedisFlush('i1'); await sleep(10);
+ const done=w.executeRedisFlush('i1'); await idle(w);
  expect(identity(d)).toEqual(IDENTITY);
  expect(overlay(d).querySelector('.dialog-modal-ack-label').textContent).toBe('To continue, type "Orders-Cache" below.');
  const input=overlay(d).querySelector('.dialog-modal-ack-input');
  expect(input.placeholder).toBe('Orders-Cache');
  input.value='Orders-Cache'; input.dispatchEvent(new w.Event('input',{bubbles:true}));
- confirmBtn(d).click(); await done; await sleep(10);
+ confirmBtn(d).click(); await done; await idle(w);
  expect(posts(env,'flush').length).toBe(1);
 });
 
@@ -162,11 +162,11 @@ t('Delete key shows the instance ID, org, and space beside the keys',async()=>{
  const env=start(); const {w,d}=env;
  placed(w);
  d.getElementById('redis-delete-keys-i1').value=KEY;
- const done=w.executeRedisDelete('i1'); await sleep(10);
+ const done=w.executeRedisDelete('i1'); await idle(w);
  expect(identity(d)).toEqual(IDENTITY);
  expect([...overlay(d).querySelectorAll('.dialog-modal-command')].map(n=>n.textContent)).toEqual([KEY]);
  expect(leaks(env,KEY)).toEqual(none);
- cancelBtn(d).click(); await done; await sleep(10);
+ cancelBtn(d).click(); await done; await idle(w);
 });
 
 t('Command shows where each argument starts and ends, as visible text only',async()=>{
@@ -174,12 +174,12 @@ t('Command shows where each argument starts and ends, as visible text only',asyn
  placed(w);
  d.getElementById('redis-cmd-i1').value='SET';
  d.getElementById('redis-args-i1').value=JSON.stringify(['my SECRET-ARG key','','plain',7,'say "hi"']);
- const done=w.executeRedisCommand('i1'); await sleep(10);
+ const done=w.executeRedisCommand('i1'); await idle(w);
  expect(identity(d)).toEqual(IDENTITY);
  expect(overlay(d).querySelector('.dialog-modal-command').textContent).toBe('SET "my SECRET-ARG key" "" plain 7 "say \\"hi\\""');
  expect(overlay(d).querySelector('.dialog-modal-run-warning').textContent).toContain('Quotation marks show where an argument with spaces, or an empty one, starts and ends.');
  expect(leaks(env,'SECRET-ARG')).toEqual(none);
- confirmBtn(d).click(); await done; await sleep(10);
+ confirmBtn(d).click(); await done; await idle(w);
  expect(posts(env,'command')[0]).toContain('"args":["my SECRET-ARG key","","plain",7,"say \\"hi\\""]');
  expect(leaks(env,'SECRET-ARG').toasts).toEqual([]);
  expect(leaks(env,'SECRET-ARG').logs).toEqual([]);

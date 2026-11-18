@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 // Routes for the page's own load, so a console error means something broke.
@@ -18,7 +18,7 @@ async function setup({post,put}={}){
  const record=(method)=>(u,o,j)=>{sent.push({method,url:u,body:o.body?JSON.parse(o.body):null});const handler=method==='POST'?post:put;return handler?handler(u,o,j):j(200,{message:'ok'});};
  w.__routes.push([/\/b\/cf\/registrations$/,(u,o,j)=>(o.method||'GET')==='POST'?record('POST')(u,o,j):j(200,{registrations:[],count:0})],
   [/\/b\/cf\/registrations\/[^/]+$/,(u,o,j)=>(o.method||'GET')==='PUT'?record('PUT')(u,o,j):undefined]);
- await sleep(40);
+ await idle(w);
  return {...env,sent,manager:w.__T.CFRegistrationManager};
 }
 const form=(d)=>d.getElementById('registration-form');
@@ -30,14 +30,14 @@ function fill(d,over={}){
  d.getElementById('reg-password').value=v.password;d.getElementById('reg-broker-name').value=v.broker_name;
 }
 const toasts=(d)=>[...d.querySelectorAll('.toast-message')].map(n=>n.textContent);
-const settle=()=>sleep(30);
+const settle=(d)=>idle(d);
 
 t('Save posts the registration with an id and closes the dialog',async()=>{
  const env=await setup();const {d,manager,sent}=env;
  manager.showRegistrationModal();
  expect(d.getElementById('registration-modal').open).toBe(true);
  fill(d);
- save(d).click();await settle();
+ save(d).click();await settle(d);
  expect(sent.length).toBe(1);
  const {method,url,body}=sent[0];
  expect(method).toBe('POST');expect(url).toContain('/b/cf/registrations');
@@ -52,14 +52,14 @@ t('Save shows progress in the dialog while the request is pending',async()=>{
  let release;const gate=new Promise((r)=>{release=r;});
  const env=await setup({post:(u,o,j)=>gate.then(()=>j(200,{message:'ok'}))});const {d,manager,sent}=env;
  manager.showRegistrationModal();fill(d);
- save(d).click();await settle();
+ save(d).click();await settle(d);
  expect(save(d).disabled).toBe(true);
  expect(save(d).textContent).toBe('Saving…');
  expect(form(d).getAttribute('aria-busy')).toBe('true');
  // A second submit while the first is pending sends nothing more.
- form(d).requestSubmit();await settle();
+ form(d).requestSubmit();await settle(d);
  expect(sent.length).toBe(1);
- release();await settle();
+ release();await settle(d);
  expect(save(d).disabled).toBe(false);
  expect(save(d).textContent).toBe('Save Registration');
  expect(form(d).hasAttribute('aria-busy')).toBe(false);
@@ -68,7 +68,7 @@ t('Save shows progress in the dialog while the request is pending',async()=>{
 t('Save keeps the dialog open and reports the server error',async()=>{
  const env=await setup({post:(u,o,j)=>j(500,{error:'vault is sealed'})});const {d,manager}=env;
  manager.showRegistrationModal();fill(d);
- save(d).click();await settle();
+ save(d).click();await settle(d);
  expect(toasts(d).some((m)=>m.includes('Failed to create registration')&&m.includes('vault is sealed'))).toBe(true);
  expect(d.getElementById('registration-modal').open).toBe(true);
  expect(save(d).disabled).toBe(false);
@@ -82,13 +82,13 @@ t('Save reports a failed request and lets the operator try again',async()=>{
  let fail=true;
  const env=await setup({post:(u,o,j)=>fail?Promise.reject(new Error('network down')):j(200,{message:'ok'})});const {d,manager,sent}=env;
  manager.showRegistrationModal();fill(d);
- save(d).click();await settle();
+ save(d).click();await settle(d);
  expect(toasts(d).some((m)=>m.includes('Failed to save registration')&&m.includes('network down'))).toBe(true);
  expect(save(d).disabled).toBe(false);
  expect(d.getElementById('registration-modal').open).toBe(true);
  env.errors.length=0;
  fail=false;
- save(d).click();await settle();
+ save(d).click();await settle(d);
  expect(sent.length).toBe(2);
  expect(d.getElementById('registration-modal').open).toBe(false);
 });
@@ -96,7 +96,7 @@ t('Save reports a failed request and lets the operator try again',async()=>{
 t('Save sends nothing while a required field is empty',async()=>{
  const env=await setup();const {d,manager,sent}=env;
  manager.showRegistrationModal();fill(d,{name:''});
- save(d).click();await settle();
+ save(d).click();await settle(d);
  expect(sent.length).toBe(0);
  expect(d.getElementById('registration-modal').open).toBe(true);
 });
@@ -108,7 +108,7 @@ t('Save on an edited registration puts the merged record under its own id',async
  manager.editRegistration('reg-1');
  expect(d.getElementById('registration-modal-title').textContent).toBe('Edit CF Registration');
  d.getElementById('reg-name').value='renamed';d.getElementById('reg-password').value='s3cret';
- save(d).click();await settle();
+ save(d).click();await settle(d);
  expect(sent.length).toBe(1);
  expect(sent[0].method).toBe('PUT');expect(sent[0].url).toContain('/b/cf/registrations/reg-1');
  expect(sent[0].body).toMatchObject({id:'reg-1',name:'renamed',status:'active',created_at:'2026-10-01T00:00:00Z'});
@@ -123,7 +123,7 @@ t('a new registration after an edit posts as a create again',async()=>{
  manager.editRegistration('reg-1');
  manager.hideRegistrationModal();
  manager.showRegistrationModal();fill(d);
- save(d).click();await settle();
+ save(d).click();await settle(d);
  expect(sent.length).toBe(1);
  expect(sent[0].method).toBe('POST');expect(sent[0].body.id).toMatch(UUID);expect(sent[0].body.id).not.toBe('reg-1');
 });
@@ -145,7 +145,7 @@ const summary=(d)=>results(d).querySelector('.test-connection-summary').textCont
 
 t('Test Connection posts the form credentials and shows every check passing',async()=>{
  const env=await testSetup((u,o,j)=>j(200,{success:true,message:'Connected to Cloud Foundry, and the credentials got a token.',checks:CHECKS_PASS}));const {d,tests,sent}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(tests).toEqual([{method:'POST',body:{api_url:'https://api.cf.example.com',username:'admin',password:'s3cret'}}]);
  expect(sent.length).toBe(0);
  expect(results(d).hidden).toBe(false);
@@ -158,7 +158,7 @@ t('Test Connection posts the form credentials and shows every check passing',asy
 
 t('Test Connection names the failed check and the checks it did not run',async()=>{
  const env=await testSetup((u,o,j)=>j(200,{success:false,error:CHECKS_TLS[1].message,code:'cf_tls_failed',checks:CHECKS_TLS}));const {d}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(summary(d)).toBe('Connection test failed. '+CHECKS_TLS[1].message);
  expect(rows(d).map(r=>r.check+'='+r.state)).toEqual(['reachable=passed','tls=failed','cloud_foundry=skipped','token=skipped']);
  expect(rows(d)[1].text).toContain('Failed');expect(rows(d)[1].text).toContain('not signed by a trusted authority');
@@ -170,13 +170,13 @@ t('Test Connection names the failed check and the checks it did not run',async()
 t('Test Connection is disabled while its request is in flight',async()=>{
  let release;const gate=new Promise((r)=>{release=r;});
  const env=await testSetup((u,o,j)=>gate.then(()=>j(200,{success:true,checks:CHECKS_PASS})));const {d,tests}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(test_(d).disabled).toBe(true);
  expect(test_(d).textContent).toBe('Testing…');
  expect(results(d).getAttribute('aria-busy')).toBe('true');
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(tests.length).toBe(1);
- release();await settle();
+ release();await settle(d);
  expect(test_(d).disabled).toBe(false);
  expect(test_(d).textContent).toBe('Test Connection');
  expect(results(d).hasAttribute('aria-busy')).toBe(false);
@@ -185,12 +185,12 @@ t('Test Connection is disabled while its request is in flight',async()=>{
 t('Test Connection shows a readable error when the request fails',async()=>{
  let fail=true;
  const env=await testSetup((u,o,j)=>fail?Promise.reject(new TypeError('Failed to fetch')):j(200,{success:true,checks:CHECKS_PASS}));const {d,tests}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(summary(d)).toBe('Connection test failed. The broker could not be reached: Failed to fetch');
  expect(rows(d)).toEqual([]);
  expect(test_(d).disabled).toBe(false);
  fail=false;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(tests.length).toBe(2);
  expect(summary(d)).toBe('Connection test passed.');
 });
@@ -198,7 +198,7 @@ t('Test Connection shows a readable error when the request fails',async()=>{
 t('Test Connection shows a readable error for an HTML answer and never the HTML',async()=>{
  const page='<html><body><h1>Bad Gateway</h1><script>window.__owned=1</script></body></html>';
  const env=await testSetup(()=>Promise.resolve({ok:false,status:502,statusText:'Bad Gateway',headers:{get:()=>'text/html'},json:()=>Promise.reject(new SyntaxError('Unexpected token <')),text:()=>Promise.resolve(page)}));const {d,w}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(summary(d)).toBe('Connection test failed. The broker answered HTTP 502 with a page, not a test result.');
  expect(results(d).textContent).not.toContain('<');
  expect(results(d).textContent).not.toContain('Bad Gateway');
@@ -208,14 +208,14 @@ t('Test Connection shows a readable error for an HTML answer and never the HTML'
 
 t('Test Connection shows the broker refusal for an invalid field',async()=>{
  const env=await testSetup((u,o,j)=>j(400,{success:false,error:'CF API URL is required',code:'invalid_request'}));const {d}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(summary(d)).toBe('Connection test failed. CF API URL is required');
  expect(rows(d)).toEqual([]);
 });
 
 t('Test Connection results clear when the dialog opens again',async()=>{
  const env=await testSetup((u,o,j)=>j(200,{success:true,checks:CHECKS_PASS}));const {d,manager}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(results(d).hidden).toBe(false);
  manager.hideRegistrationModal();manager.showRegistrationModal();
  expect(results(d).hidden).toBe(true);
@@ -225,16 +225,16 @@ t('Test Connection results clear when the dialog opens again',async()=>{
 t('a result that lands after the dialog reopens is not shown',async()=>{
  let release;const gate=new Promise((r)=>{release=r;});
  const env=await testSetup((u,o,j)=>gate.then(()=>j(200,{success:true,checks:CHECKS_PASS})));const {d,manager}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  manager.hideRegistrationModal();manager.showRegistrationModal();
- release();await settle();
+ release();await settle(d);
  expect(results(d).hidden).toBe(true);
  expect(test_(d).disabled).toBe(false);
 });
 
 // The saved-endpoint test posted to a route the broker never had.
 t('the saved-endpoint connection test is gone',async()=>{
- const env=boot({noDialogs:true,oat:true,routes:QUIET});envs.push(env);await sleep(40);
+ const env=boot({noDialogs:true,oat:true,routes:QUIET});envs.push(env);await idle(env);
  expect(env.w.CFEndpointManager).toBeDefined();
  expect(env.w.CFEndpointManager.testConnection).toBe(undefined);
  const src=require('fs').readFileSync(require('path').join(__dirname,'../../ui/blacksmith.js'),'utf8');
@@ -246,7 +246,7 @@ t('the saved-endpoint connection test is gone',async()=>{
 // sentence for a screen reader.
 t('each check is a row with a status badge',async()=>{
  const env=await testSetup((u,o,j)=>j(200,{success:false,error:CHECKS_TLS[1].message,code:'cf_tls_failed',checks:CHECKS_TLS}));const {d}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  const items=[...results(d).querySelectorAll('.test-connection-checks > li')];
  expect(items.map(li=>li.querySelector('.test-connection-check-name')?.textContent)).toEqual(['API answers','TLS certificate','Cloud Foundry API','Credentials']);
  expect(items.map(li=>{const b=li.querySelector('.badge');return b&&b.dataset.variant+':'+b.textContent;})).toEqual(['success:Passed','danger:Failed','secondary:Not run','secondary:Not run']);
@@ -257,7 +257,7 @@ t('each check is a row with a status badge',async()=>{
 
 t('the summary carries the result for its color',async()=>{
  const env=await testSetup((u,o,j)=>j(200,{success:true,checks:CHECKS_PASS}));const {d}=env;
- test_(d).click();await settle();
+ test_(d).click();await settle(d);
  expect(results(d).dataset.result).toBe('passed');
  expect(rows(d)[0].text).toBe('API answers: Passed. The API answered with HTTP 200.');
 });

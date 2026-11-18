@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // Each Batch Activity job says who started it and where the request came
 // from, in the list and on the job's own page, from the created_by and
@@ -15,12 +15,12 @@ const task=(over={})=>Object.assign({id:'t1',kind:'upgrade',status:'completed',t
  instances:[{instance_id:'inst-a',instance_name:'cache-a',status:'success'}]},over);
 
 const list=async(tasks)=>{
- const env=boot({noDialogs:true});envs.push(env);await sleep(50);
+ const env=boot({noDialogs:true});envs.push(env);await idle(env.w);
  env.w.__T._setTasks(tasks);env.w.__T.renderUpgradeTaskList();
  return env;
 };
 const detail=async(one)=>{
- const env=boot({noDialogs:true});envs.push(env);await sleep(50);
+ const env=boot({noDialogs:true});envs.push(env);await idle(env.w);
  env.w.__T.renderTaskDetail(one);
  return env;
 };

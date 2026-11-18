@@ -1,6 +1,7 @@
 const {test,expect}=require('bun:test');
 const {watchUncaught}=require('./watch-uncaught.js');
-const {main:{boot}}=require('./certificates/harness.js');
+const {main:{boot,idle,until,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 const hours=(n)=>new Date(Date.now()-n*3600000).toISOString();
 
 const data=()=>({deployment:'blacksmith',env:'lab',plans:{'redis/small':{id:'small',name:'small',service:{id:'redis',name:'Redis'}}},instances:{
@@ -27,7 +28,7 @@ const mount=async(routes,input=data())=>{
 };
 const rows=(panel)=>[...panel.querySelectorAll('[data-attention]')].map(r=>r.dataset.attention);
 
-test('rows come in three fixed tiers, failures first',async()=>{
+t('rows come in three fixed tiers, failures first',async()=>{
  const {w,panel}=await mount([
   certs([{id:'e',expiry:'expired'},{id:'w',expiry:'warning'},{id:'c',expiry:'critical'}]),
   tasks([{id:1,state:'error',started_at:hours(2)}]),
@@ -37,7 +38,7 @@ test('rows come in three fixed tiers, failures first',async()=>{
  }finally{w.close();}
 });
 
-test('failed tasks counts only error tasks from the last 24 hours and links to Tasks with the Error chip',async()=>{
+t('failed tasks counts only error tasks from the last 24 hours and links to Tasks with the Error chip',async()=>{
  const {w,panel}=await mount([certs([]),health(okHealth),tasks([
   {id:1,state:'error',started_at:hours(1)},{id:2,state:'error',started_at:hours(23)},
   {id:3,state:'error',started_at:hours(30)},{id:4,state:'done',started_at:hours(1)}])],quiet());
@@ -52,7 +53,7 @@ test('failed tasks counts only error tasks from the last 24 hours and links to T
  }finally{w.close();}
 });
 
-test('broker health row appears only when unhealthy and names the failed component',async()=>{
+t('broker health row appears only when unhealthy and names the failed component',async()=>{
  const bad=await mount([certs([]),tasks([]),health({...okHealth,overall_status:'degraded',vault:{status:'unhealthy',available:false}})],quiet());
  try{
   const row=bad.panel.querySelector('[data-attention="broker-health"]');
@@ -64,12 +65,12 @@ test('broker health row appears only when unhealthy and names the failed compone
  try{ expect(good.panel.querySelector('[data-attention="broker-health"]')).toBeNull(); }finally{good.w.close();}
 });
 
-test('with nothing to flag the section keeps its plain line',async()=>{
+t('with nothing to flag the section keeps its plain line',async()=>{
  const {w,panel}=await mount([certs([]),tasks([]),health(okHealth)],quiet());
  try{ expect(panel.textContent).toContain('Nothing needs attention'); expect(panel.querySelector('[data-attention]')).toBeNull(); }finally{w.close();}
 });
 
-test('a failed tasks or health request says Unknown and never claims clear',async()=>{
+t('a failed tasks or health request says Unknown and never claims clear',async()=>{
  const {w,panel}=await mount([certs([]),tasks([],500),health({},500)],quiet());
  try{
   expect(panel.textContent).not.toContain('Nothing needs attention');
@@ -77,7 +78,7 @@ test('a failed tasks or health request says Unknown and never claims clear',asyn
  }finally{w.close();}
 });
 
-test('each row carries a severity word, an icon, and a tone',async()=>{
+t('each row carries a severity word, an icon, and a tone',async()=>{
  const {w,panel}=await mount([certs([{id:'e',expiry:'expired'},{id:'w',expiry:'warning'}]),tasks([{id:1,state:'error',started_at:hours(1)}]),health(okHealth)]);
  try{
   const expect_=(name,tone,word)=>{
@@ -93,13 +94,13 @@ test('each row carries a severity word, an icon, and a tone',async()=>{
  }finally{w.close();}
 });
 
-test('attention links are underlined',()=>{
+t('attention links are underlined',()=>{
  const css=require('fs').readFileSync(require('path').join(__dirname,'..','..','ui','blacksmith.css'),'utf8');
  expect(css).toMatch(/\.entity-attention a[^{]*\{[^}]*text-decoration:\s*underline/);
  expect(css).toMatch(/\.entity-attention-row\[data-tone="critical"\][^{]*\{[^}]*border-left[^}]*var\(--cert-expired\)/);
 });
 
-test('the tasks route carries a state and parses back',()=>{
+t('the tasks route carries a state and parses back',()=>{
  const {JSDOM}=require('./certificates/support.js');
  const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1></main>',{url:'http://localhost/',runScripts:'outside-only'});
  const w=watchUncaught(dom.window);w.eval(require('fs').readFileSync(require('path').join(__dirname,'..','..','ui','routes.js'),'utf8'));
@@ -112,7 +113,7 @@ test('the tasks route carries a state and parses back',()=>{
  }finally{w.close();}
 });
 
-test('failures are counted past the newest 100 tasks, because the server filters to errors',async()=>{
+t('failures are counted past the newest 100 tasks, because the server filters to errors',async()=>{
  const list=[...Array.from({length:120},(_,i)=>({id:1000+i,state:'done',started_at:hours(1)})),
   ...Array.from({length:150},(_,i)=>({id:i,state:'error',started_at:hours(2)}))];
  const {w,calls,panel}=await mount([certs([]),health(okHealth),tasks(list)],quiet());
@@ -123,13 +124,13 @@ test('failures are counted past the newest 100 tasks, because the server filters
  }finally{w.close();}
 });
 
-test('a full response reads as a lower bound',async()=>{
+t('a full response reads as a lower bound',async()=>{
  const list=Array.from({length:230},(_,i)=>({id:i,state:'error',started_at:hours(2)}));
  const {w,panel}=await mount([certs([]),health(okHealth),tasks(list)],quiet());
  try{ expect(panel.querySelector('[data-attention="failed-tasks"]').textContent).toContain('at least 200'); }finally{w.close();}
 });
 
-test('a hung request times out into Unknown while the other rows still show',async()=>{
+t('a hung request times out into Unknown while the other rows still show',async()=>{
  const env=boot({setup:(w)=>{w.blacksmithAttentionTimeoutMs=30;},routes:[certs([{id:'e',expiry:'expired'}]),['/b/tasks',()=>new Promise(()=>{})],['/b/internal/health',()=>new Promise(()=>{})]]});
  const {w,d}=env;
  try{
@@ -142,14 +143,15 @@ test('a hung request times out into Unknown while the other rows still show',asy
  }finally{w.close();}
 });
 
-test('each tier paints as its data arrives',async()=>{
+t('each tier paints as its data arrives',async()=>{
  let release;const slow=new Promise(r=>{release=r;});
  const env=boot({routes:[certs([{id:'e',expiry:'expired'}]),['/b/tasks',(u,o,json)=>slow.then(()=>json(200,[]))],health(okHealth)]});
  const {w,d}=env;
  try{
   const host=d.createElement('div');d.body.appendChild(host);host.innerHTML=w.__T.renderBlacksmithOverview(quiet());
   const done=w.__T.refreshAttentionRequired(host,quiet());
-  await new Promise(r=>setTimeout(r,60));
+  // The tasks request stays in flight, so this waits on the row that does not depend on it.
+  await until(()=>host.querySelector('[data-attention="certificates-expired"]'),'the certificates row');
   expect(host.querySelector('[data-attention="certificates-expired"]')).not.toBeNull();
   expect(host.querySelector('[data-attention="failed-tasks"]').textContent).toContain('Loading');
   release();await done;
@@ -157,7 +159,7 @@ test('each tier paints as its data arrives',async()=>{
  }finally{w.close();}
 });
 
-test('the failed-tasks link carries keep keys that appear once in the UI',()=>{
+t('the failed-tasks link carries keep keys that appear once in the UI',()=>{
  const fs=require('fs'),path=require('path');
  const ui=path.join(__dirname,'..','..','ui');
  const all=fs.readdirSync(ui).filter(f=>f.endsWith('.js')||f.endsWith('.html')).map(f=>fs.readFileSync(path.join(ui,f),'utf8')).join('\n');
@@ -172,12 +174,12 @@ const bootTasks=()=>boot({noDialogs:true,routes:[tasks(taskList),certs([]),healt
 const pressed=(d)=>[...d.querySelectorAll('#blacksmith .compact-tasks-controls input[type="checkbox"][value]')].filter(b=>b.checked).map(b=>b.value);
 const visible=(d)=>[...d.querySelectorAll('#blacksmith .tasks-table tbody tr')].filter(r=>r.style.display!=='none').map(r=>r.querySelector('.task-state .status-badge')?.dataset.state);
 
-test('opening the tasks route with state=error leaves only Error pressed and only error rows visible',async()=>{
+t('opening the tasks route with state=error leaves only Error pressed and only error rows visible',async()=>{
  const {w,d}=bootTasks();
  try{
-  await new Promise(r=>setTimeout(r,150));
+  await idle(w);
   await w.blacksmithViews.activate({screen:'blacksmith',section:'tasks',state:'error'},{});
-  await new Promise(r=>setTimeout(r,150));
+  await idle(w);
   expect(pressed(d)).toEqual(['error']);
   expect(visible(d)).toEqual(['error']);
   expect(w.blacksmithViews.read('blacksmith').state).toBe('error');
@@ -190,14 +192,15 @@ test('opening the tasks route with state=error leaves only Error pressed and onl
 });
 
 
-test('a repaint keeps focus on a certificate link and a VM-alert link',async()=>{
+t('a repaint keeps focus on a certificate link and a VM-alert link',async()=>{
  let release;const slow=new Promise(r=>{release=r;});
  const input=data();
  const {w,d}=boot({routes:[certs([{id:'e',expiry:'expired'}]),['/b/tasks',(u,o,json)=>slow.then(()=>json(200,[]))],['/b/internal/health',(u,o,json)=>slow.then(()=>json(200,okHealth))]]});
  try{
   const host=d.createElement('div');d.body.appendChild(host);host.innerHTML=w.__T.renderBlacksmithOverview(input);
   const done=w.__T.refreshAttentionRequired(host,input);
-  await new Promise(r=>setTimeout(r,60));
+  // The tasks and health requests stay in flight, so this waits on the two links instead.
+  await until(()=>host.querySelector('[data-attention="certificates-expired"] a')&&host.querySelector('[data-attention="instances"] a'),'the certificate and instance links');
   for(const selector of ['[data-attention="certificates-expired"] a','[data-attention="instances"] a']){
    const link=host.querySelector(selector);
    link.focus();
@@ -210,7 +213,7 @@ test('a repaint keeps focus on a certificate link and a VM-alert link',async()=>
  }finally{w.close();}
 });
 
-test('the attention links carry keep keys that appear once in the UI',()=>{
+t('the attention links carry keep keys that appear once in the UI',()=>{
  const fs=require('fs'),path=require('path');
  const ui=path.join(__dirname,'..','..','ui');
  const all=fs.readdirSync(ui).filter(f=>f.endsWith('.js')||f.endsWith('.html')).map(f=>fs.readFileSync(path.join(ui,f),'utf8')).join('\n');

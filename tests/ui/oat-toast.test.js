@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -17,7 +17,8 @@ const start=({oat=true}={})=>{
  const {w}=env;
  if(oat){
   require('./dom-stubs.js').install(w,{dismiss:false});
-  w.requestAnimationFrame=(fn)=>setTimeout(fn,0);
+  // A frame runs on the window's own timer, which idle() counts.
+  w.requestAnimationFrame=(fn)=>w.setTimeout(fn,0);
   w.eval(OAT);
  }
  return env;
@@ -78,7 +79,7 @@ t('a toast stays announced and reachable while a modal is open',async()=>{
  const {w,d}=start();
  w.showNotification('Before','info');
  const done=w.showConfirmDialog({title:'Sure?',message:'Really?'});
- await sleep(10);
+ await idle(w);
  expect(d.getElementById('dialog-modal').open).toBe(true);
  w.showNotification('During','error');
  const box=container(d);
@@ -91,7 +92,7 @@ t('a toast stays reachable while the password dialog is open',async()=>{
  const {w,d}=start();
  w.showNotification('Before','info');
  const done=w.__T.CFRegistrationManager.startRegistration('r1');
- await sleep(10);
+ await idle(w);
  expect(d.getElementById('dialog-modal').open).toBe(true);
  w.showNotification('During','error');
  const box=container(d);
@@ -119,6 +120,6 @@ t('without Oat the notification falls back to the page banner and live region',a
  const banner=d.querySelector('.notification');
  expect(banner.textContent).toBe('Saved it');
  expect(banner.classList.contains('notification-success')).toBe(true);
- await sleep(120);
+ await idle(w);
  expect(d.getElementById('blacksmith-live-region').textContent).toBe('Saved it');
 });

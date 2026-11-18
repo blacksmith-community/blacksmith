@@ -1,8 +1,8 @@
 const {test,expect}=require('bun:test');
 const H=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
-const {boot,openInstanceTab,sleep,iso,now,day}=H.instance;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?H.main.TEST_LIMIT:l):test.skip;
+const {boot,openInstanceTab,idle,iso,now,day}=H.instance;
 
 // The page title is an h2 and the section toolbar that would hold an h3 is
 // hidden, so the first heading in a section must be an h3 and no heading may
@@ -21,7 +21,7 @@ t('broker Certificates headings skip no level',async()=>{
  w.__routes=[[/certificates\/inventory/,(u,o,json)=>json(200,{generated_at:iso(now),summary:{certificates:1},scan:{state:'idle'},capabilities:{},certificates:[cert('b1')]})]];
  const host=d.createElement('div');d.body.appendChild(host);host.innerHTML=w.__T.renderCertificatesTab();
  w.__T.initializeCertificatesTab();
- await sleep(150);
+ await idle(w);
  expect(host.querySelector('#cert-broker-overview .cert-ov-title').tagName).toBe('H3');
  expect(skips(host)).toEqual([]);
  w.close();
@@ -30,7 +30,7 @@ t('instance Certificates headings skip no level',async()=>{
  const {w,d}=boot({oat:true});
  w.__routes=[[/certificates\/trusted/,(u,o,json)=>json(200,{success:true,data:{files:[]}})],[/certificates\/instances\//,(u,o,json)=>json(200,{certificates:[cert('i1')],scan:{state:'idle'}})]];
  const host=await openInstanceTab(w,d,'i1');
- await sleep(60);
+ await idle(w);
  expect(skips(host)).toEqual([]);
  w.close();
 });

@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,until,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -22,7 +22,7 @@ const start=async()=>{
  const {w,d}=env;
  w.eval(OAT);
  w.eval(ROUTES);
- await sleep(100);
+ await idle(w);
  w.Element.prototype.getClientRects=function(){return this.matches('dialog[open]')?[1]:[]};
  w.eval(NAVIGATION);
  if(d.readyState==='loading') d.dispatchEvent(new w.Event('DOMContentLoaded'));
@@ -35,11 +35,12 @@ t('the keyboard shortcuts button opens its dialog after the task details view cl
  const env=await start(); const {w,d,stubs}=env;
  const help=d.getElementById('keyboard-help-dialog');
  expect(help).not.toBeNull();
- w.showTaskDetails(42); await sleep(60);
+ // The view opens and closes through the router, which reacts to history changes jsdom delivers on its own clock.
+ w.showTaskDetails(42); await until(()=>{ const m=d.getElementById('task-details-modal'); return !!(m&&m.open); },'the task details view to open'); await idle(env);
  const task=d.getElementById('task-details-modal');
  expect(task.open).toBe(true);
  d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
- await sleep(200); await stubs.settle();
+ await until(()=>!task.open&&!w.location.hash.includes('inspect='),'the task details view to close and leave the address'); await idle(env);
  expect(task.open).toBe(false);
  expect(w.location.hash).not.toContain('inspect=');
  d.getElementById('keyboard-help-trigger').click();

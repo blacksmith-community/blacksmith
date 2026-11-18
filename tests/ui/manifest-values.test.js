@@ -1,9 +1,9 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const css=fs.readFileSync(path.join(UI,'blacksmith.css'),'utf8');
@@ -29,7 +29,7 @@ const data={
 };
 const render=async()=>{
  const env=boot();
- await sleep(40);
+ await idle(env);
  env.d.body.innerHTML=env.w.__T.formatManifestDetails(data,'instance');
  return env;
 };

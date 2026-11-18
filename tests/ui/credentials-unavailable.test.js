@@ -1,7 +1,7 @@
 const { test, expect, afterEach } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main: { boot, idle, TEST_LIMIT } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const envs = [];
 afterEach(() => { while (envs.length) envs.pop().w.close(); });
@@ -21,7 +21,7 @@ async function mount(tab, credentialsRoute) {
   const host = d.createElement('div');
   d.body.appendChild(host);
   host.innerHTML = await w.__T.fetchServiceDetail('inst-1', tab);
-  await sleep(30);
+  await idle(w);
   return { env, host };
 }
 

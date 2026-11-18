@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','blacksmith.css'),'utf8');
 const envs=[];
@@ -12,7 +12,7 @@ afterEach(()=>{ while(envs.length) envs.pop().w.close(); });
 const PEM='-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----';
 const html=async(fn)=>{
  const env=boot();envs.push(env);
- await sleep(40);
+ await idle(env);
  env.d.body.innerHTML=fn(env.w.__T);
  return env;
 };

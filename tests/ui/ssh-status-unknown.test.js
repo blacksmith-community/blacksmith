@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const envs=[];
 afterEach(()=>{ while(envs.length){ const env=envs.pop(); try{ expect(env.alerts).toEqual([]); } finally { env.w.close(); } } });
@@ -20,9 +20,9 @@ const sshStart=async(answer)=>{
   },
   routes:[['/b/config/ssh/ui-terminal-status',(u,o,j)=>state.answer(u,o,j)],['/v2/catalog',okCatalog],['/b/status',okStatus]]});
  envs.push(env);
- await sleep(60);
+ await idle(env.w);
  const button=env.d.querySelector('.ssh-btn');
- const poll=async()=>{ for(const fn of ticks) fn(); await sleep(40); };
+ const poll=async()=>{ for(const fn of ticks) fn(); await idle(env.w); };
  return {env,state,button,poll};
 };
 const answer503=(u,o,j)=>j(503,{enabled:false,message:'Unavailable right now'});
