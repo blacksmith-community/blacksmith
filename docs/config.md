@@ -285,7 +285,7 @@ The broker takes the interval from the first of these that holds a usable value,
 
 - The default of `15m`
 
-Every layer takes a duration of at least `1m`, so a bare number is refused, and so is a shorter value. A layer that is refused is skipped, and the broker writes a warning to its log that names the layer and the reason. A refused value in the configuration file also fails the load. The sweep reads the interval again before each wait, so a saved change takes effect after the current wait without a restart. The Settings page and the settings API show the interval now in effect, and the layer it comes from.
+Every layer takes a duration from `1m` to `6h`, so a bare number is refused, and so is a value outside that range. Six hours is also the longest the sweep backs off from one instance and the time between its full scans, so a longer interval would only delay both. A layer that is refused is skipped, and the broker writes a warning to its log that names the layer and the reason. A refused value in the configuration file also fails the load. The sweep reads the interval again before each wait, so a saved change takes effect after the current wait without a restart. The Settings page and the settings API show the interval now in effect, and the layer it comes from.
 
 #### `tls` (TLSConfig)
 **Default:** See TLS Configuration section

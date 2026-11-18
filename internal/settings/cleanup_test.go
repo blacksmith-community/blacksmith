@@ -33,6 +33,10 @@ func TestCleanupRetryIntervalFollowsItsPrecedence(t *testing.T) {
 		"config beats the default": {store: &memoryStore{}, configured: minutes(40), want: 40 * time.Minute, source: settings.SourceCleanupRetryConfig},
 		"the default last":         {store: &memoryStore{}, want: config.DefaultCleanupRetryInterval, source: settings.SourceDefault},
 		"seconds in vault refused": {store: savedInterval("30s"), env: twentyMinutes, want: 20 * time.Minute, source: config.CleanupRetryIntervalEnvKey, refused: 1},
+		"a day in vault refused":   {store: savedInterval("24h"), env: twentyMinutes, want: 20 * time.Minute, source: config.CleanupRetryIntervalEnvKey, refused: 1},
+		"a day in env refused":     {store: &memoryStore{}, env: "24h", configured: minutes(40), want: 40 * time.Minute, source: settings.SourceCleanupRetryConfig, refused: 1},
+		"a day in config refused":  {store: &memoryStore{}, configured: minutes(24 * 60), want: config.DefaultCleanupRetryInterval, source: settings.SourceDefault, refused: 1},
+		"six hours allowed":        {store: savedInterval("6h"), want: 6 * time.Hour, source: settings.SourceVault},
 		"negative env refused":     {store: &memoryStore{}, env: "-5m", configured: minutes(40), want: 40 * time.Minute, source: settings.SourceCleanupRetryConfig, refused: 1},
 		"a non-string is refused":  {store: savedInterval(600), want: config.DefaultCleanupRetryInterval, source: settings.SourceDefault, refused: 1},
 		"unreadable vault skipped": {store: &memoryStore{getErr: errVaultDown}, env: twentyMinutes, want: 20 * time.Minute, source: config.CleanupRetryIntervalEnvKey, refused: 1},
@@ -69,7 +73,7 @@ func TestSavingTheCleanupRetryIntervalKeepsTheOtherSettings(t *testing.T) {
 		t.Errorf("record = %v, want the errand timeout kept and the interval saved as 20m0s", store.record)
 	}
 
-	for _, bad := range []string{"59s", "0s", "-1m", "90", "soon", ""} {
+	for _, bad := range []string{"59s", "0s", "-1m", "90", "soon", "", "6h1m", "24h"} {
 		err := settings.SaveCleanupRetryInterval(t.Context(), store, bad)
 		if !errors.Is(err, settings.ErrInvalidCleanupRetryInterval) {
 			t.Errorf("SaveCleanupRetryInterval(%q) = %v, want ErrInvalidCleanupRetryInterval", bad, err)

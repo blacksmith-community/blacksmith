@@ -10,8 +10,8 @@ import (
 )
 
 // cleanupRetryRefusal is the answer to a cleanup_retry_interval that is
-// not a duration of at least a minute.
-const cleanupRetryRefusal = "cleanup_retry_interval must be a duration of at least 1m, such as '15m' or '1h'"
+// not a duration from a minute to six hours.
+const cleanupRetryRefusal = "cleanup_retry_interval must be a duration from 1m to 6h, such as '15m' or '1h'"
 
 // cleanupRetryChoice is the interval between retries of owed cleanups in
 // effect, from the Vault settings, the environment, the configuration, or

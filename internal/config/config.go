@@ -29,6 +29,9 @@ var (
 	// ErrBrokerCleanupRetryIntervalTooShort means
 	// broker.cleanup_retry_interval was set below MinCleanupRetryInterval.
 	ErrBrokerCleanupRetryIntervalTooShort = errors.New("broker.cleanup_retry_interval must be at least one minute")
+	// ErrBrokerCleanupRetryIntervalTooLong means
+	// broker.cleanup_retry_interval was set above MaxCleanupRetryInterval.
+	ErrBrokerCleanupRetryIntervalTooLong = errors.New("broker.cleanup_retry_interval must be at most six hours")
 	// ErrBOSHDirectorWorkersTooFew is the error a bosh.director_workers of 1 or
 	// less loads with, other than 0.
 	ErrBOSHDirectorWorkersTooFew = errors.New("bosh.director_workers must be at least 2")
@@ -266,8 +269,9 @@ type BrokerConfig struct {
 	// CleanupRetryInterval is how often the broker tries again to delete
 	// the deployments of failed provisions whose cleanup is still owed, as
 	// a duration such as 15m. Absent means 15 minutes, and a value under
-	// one minute fails the load. A value saved in the Vault settings or
-	// set in BLACKSMITH_CLEANUP_RETRY_INTERVAL comes first.
+	// one minute or over six hours fails the load. A value saved in the
+	// Vault settings or set in BLACKSMITH_CLEANUP_RETRY_INTERVAL comes
+	// first.
 	CleanupRetryInterval *time.Duration `yaml:"cleanup_retry_interval,omitempty"`
 }
 
@@ -289,8 +293,14 @@ const UpdateRollbackEnvKey = "BLACKSMITH_UPDATE_ROLLBACK"
 const DefaultCleanupRetryInterval = 15 * time.Minute
 
 // MinCleanupRetryInterval is the shortest interval between retries of owed
-// cleanups, because each pass reads every instance's record.
+// cleanups, because each pass reads records from Vault.
 const MinCleanupRetryInterval = time.Minute
+
+// MaxCleanupRetryInterval is the longest interval between retries of owed
+// cleanups. It is the longest the sweep backs off from one cleanup, and
+// the time between its full scans, so a longer interval would only delay
+// both.
+const MaxCleanupRetryInterval = 6 * time.Hour
 
 // CleanupRetryIntervalEnvKey is the environment variable that sets the
 // interval between retries of owed cleanups, below a value saved in the
@@ -447,8 +457,13 @@ func ReadConfig(path string) (Config, error) {
 	}
 
 	if config.Broker.CleanupRetryInterval != nil && *config.Broker.CleanupRetryInterval < MinCleanupRetryInterval {
-		return config, fmt.Errorf("%w: it is %v, and it must be a duration such as 15m, or absent for the default of %v",
+		return config, fmt.Errorf("%w: it is %v, and it must be a duration from 1m to 6h such as 15m, or absent for the default of %v",
 			ErrBrokerCleanupRetryIntervalTooShort, *config.Broker.CleanupRetryInterval, DefaultCleanupRetryInterval)
+	}
+
+	if config.Broker.CleanupRetryInterval != nil && *config.Broker.CleanupRetryInterval > MaxCleanupRetryInterval {
+		return config, fmt.Errorf("%w: it is %v, and it must be a duration from 1m to 6h such as 15m, or absent for the default of %v",
+			ErrBrokerCleanupRetryIntervalTooLong, *config.Broker.CleanupRetryInterval, DefaultCleanupRetryInterval)
 	}
 
 	err = setBOSHDefaults(&config)

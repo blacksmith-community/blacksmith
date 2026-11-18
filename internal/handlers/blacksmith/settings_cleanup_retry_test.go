@@ -54,12 +54,12 @@ func TestUpdateSettingsSavesTheCleanupRetryInterval(t *testing.T) {
 	}
 }
 
-// A value under a minute, a bare number, or anything that is not a
-// duration is refused with a 400, and nothing is saved.
+// A value under a minute or over six hours, a bare number, or anything
+// that is not a duration is refused with a 400, and nothing is saved.
 func TestUpdateSettingsRefusesABadCleanupRetryInterval(t *testing.T) {
 	t.Setenv(config.CleanupRetryIntervalEnvKey, "")
 
-	for _, bad := range []string{"59s", "0s", "-5m", "600", "eventually", ""} {
+	for _, bad := range []string{"59s", "0s", "-5m", "600", "eventually", "", "6h1m", "24h"} {
 		vault := &settingsRecordVault{}
 		handler, _ := errandSettingsHandler(vault)
 

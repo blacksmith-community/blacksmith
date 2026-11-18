@@ -31,6 +31,7 @@ t('the cleanup retry interval shows its value and where it comes from',async()=>
  expect(s.host.querySelector('#settings-cleanup-retry-interval').value).toBe('15m0s');
  expect(s.host.querySelector('label[for="settings-cleanup-retry-interval"]').textContent).toBe('Cleanup Retry Interval');
  expect(s.host.querySelector('#help-cleanup-retry-interval').textContent).toContain('Now set by: BLACKSMITH_CLEANUP_RETRY_INTERVAL.');
+ expect(s.host.querySelector('#help-cleanup-retry-interval').textContent).toContain('from 1m to 6h');
 });
 
 t('Apply sends cleanup_retry_interval and shows the saved interval',async()=>{
@@ -51,5 +52,5 @@ t('an empty cleanup retry interval is refused before any request',async()=>{
  s.host.querySelector('#apply-cleanup-retry-interval').click();
  await sleep(20);
  expect(sent).toEqual([]);
- expect(s.host.querySelector('#feedback-cleanup-retry-interval').textContent).toBe('Enter an interval of at least 1m, for example 15m or 1h.');
+ expect(s.host.querySelector('#feedback-cleanup-retry-interval').textContent).toBe('Enter an interval from 1m to 6h, for example 15m or 1h.');
 });

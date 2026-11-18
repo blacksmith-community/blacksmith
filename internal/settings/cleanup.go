@@ -19,9 +19,9 @@ const CleanupRetryIntervalKey = "cleanup_retry_interval"
 // and the default are named as for the other settings.
 const SourceCleanupRetryConfig = "broker.cleanup_retry_interval"
 
-// ErrInvalidCleanupRetryInterval means a value is not a duration of at
-// least config.MinCleanupRetryInterval.
-var ErrInvalidCleanupRetryInterval = errors.New("the cleanup retry interval must be a duration of at least 1m, such as 15m")
+// ErrInvalidCleanupRetryInterval means a value is not a duration from
+// config.MinCleanupRetryInterval to config.MaxCleanupRetryInterval.
+var ErrInvalidCleanupRetryInterval = errors.New("the cleanup retry interval must be a duration from 1m to 6h, such as 15m")
 
 // CleanupRetryChoice is the interval between retries of owed cleanups,
 // where it came from, and every layer above it that was refused.
@@ -32,11 +32,11 @@ type CleanupRetryChoice struct {
 }
 
 // ParseCleanupRetryInterval reads a duration such as 15m. A bare number, a
-// value under a minute, and anything else that isn't a duration is
-// refused.
+// value under a minute or over six hours, and anything else that isn't a
+// duration is refused, whichever layer it comes from.
 func ParseCleanupRetryInterval(raw string) (time.Duration, error) {
 	parsed, err := time.ParseDuration(strings.TrimSpace(raw))
-	if err != nil || parsed < config.MinCleanupRetryInterval {
+	if err != nil || parsed < config.MinCleanupRetryInterval || parsed > config.MaxCleanupRetryInterval {
 		return 0, fmt.Errorf("%w (got %q)", ErrInvalidCleanupRetryInterval, raw)
 	}
 
