@@ -3,6 +3,7 @@ package services_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,6 +19,19 @@ func ccSchemaOfSize(size int) string {
 	const suffix = `"}`
 
 	return prefix + strings.Repeat("x", size-len(prefix)-len(suffix)) + suffix
+}
+
+// refChain is a schema whose root starts a chain of hops $ref, each from
+// one definition to the next, that ends in a definition of its own.
+func refChain(hops int) string {
+	definitions := make([]string, 0, hops)
+	for index := range hops - 1 {
+		definitions = append(definitions, fmt.Sprintf(`"d%d": {"$ref": "#/definitions/d%d"}`, index, index+1))
+	}
+
+	definitions = append(definitions, fmt.Sprintf(`"d%d": {"type": "object"}`, hops-1))
+
+	return draft4(`"$ref": "#/definitions/d0", "definitions": {` + strings.Join(definitions, ", ") + `}`)
 }
 
 // profileCase is a schema and the error the broker refuses it with,
@@ -97,6 +111,11 @@ func profileCases() []profileCase {
 		{"ref-self-loop", draft4(`"definitions": {"a": {"$ref": "#/definitions/a"}}`), services.ErrPlanSchemaUnsupported},
 		{"ref-loop", draft4(`"$ref": "#/definitions/a",
 			"definitions": {"a": {"$ref": "#/definitions/b"}, "b": {"$ref": "#/definitions/a"}}`), services.ErrPlanSchemaUnsupported},
+		// The gem follows each $ref of a chain one level deeper into Ruby's
+		// stack, and a request thread's stack runs out at a few hundred.
+		{"ref-chain-32", refChain(32), nil},
+		{"ref-chain-33", refChain(33), services.ErrPlanSchemaUnsupported},
+		{"ref-chain-800", refChain(800), services.ErrPlanSchemaUnsupported},
 		{"nested-definitions", draft4(`"properties": {"a": {"definitions": {"b": {}}}}`), services.ErrPlanSchemaUnsupported},
 
 		// Every other keyword is one the profile lists.
@@ -246,6 +265,8 @@ func TestValidateParameterSchema_NamesTheMember(t *testing.T) {
 			"outside this one, so copy that schema into the root's definitions",
 		draft4(`"default": ` + strings.Repeat("[", 32) + strings.Repeat("]", 32)): "/default" + strings.Repeat("/0", 31) +
 			" nests more than 32 levels deep",
+		refChain(33): "/$ref starts a chain of more than 32 $ref hops, so give a definition in the chain a schema of " +
+			"its own in place of its $ref",
 		`{"type": "object"}`: `add "$schema": "http://json-schema.org/draft-04/schema#" at the root`,
 		`{"$schema": "http://json-schema.org/draft-06/schema#"}`: `/$schema is not the draft-04 meta-schema, so set it to ` +
 			`"http://json-schema.org/draft-04/schema#"`,

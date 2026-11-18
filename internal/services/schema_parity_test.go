@@ -32,7 +32,9 @@ const (
 // fails when the gem refuses any schema the profile publishes. It runs
 // the gem once with a fresh cache for each schema, and once with one
 // cache for the whole run, seeded with schemas whose ids try to take
-// over keys.
+// over keys. It also hands the gem a few schemas the gem refuses, and
+// fails when the oracle accepts one, so an oracle that checks nothing
+// can't pass.
 //
 //nolint:paralleltest // it runs one oracle process at a time
 func TestSchemaParity(t *testing.T) {
@@ -43,43 +45,97 @@ func TestSchemaParity(t *testing.T) {
 
 	corpus := parityCorpus(t)
 	random := randomSchemas(t, parityEnvInt(t, paritySeedEnv, parityDefaultSeed), parityEnvInt(t, parityCountEnv, parityDefaultCount))
-	lines := append(append([]string{}, corpus...), random...)
+	run := parityRun{
+		lines:  append(append(append([]string{}, corpus...), random...), parityControls(t)...),
+		corpus: len(corpus),
+		random: len(random),
+	}
 
-	published := make([]bool, len(lines))
-	for index, line := range lines {
-		published[index] = services.ValidateParameterSchema(decodeSchema(t, line)) == nil
+	run.published = make([]bool, len(run.lines))
+	for index, line := range run.lines {
+		run.published[index] = services.ValidateParameterSchema(decodeSchema(t, line)) == nil
 	}
 
 	for _, mode := range []string{"fresh", "shared"} {
-		verdicts := runOracle(t, oracle, mode, lines)
+		run.check(t, mode, runOracle(t, oracle, mode, run.lines))
+	}
 
-		faults, gemAccepts, strict := 0, 0, 0
+	if randomPublished := countTrue(run.published[run.corpus : run.corpus+run.random]); randomPublished < run.random/10 {
+		t.Errorf("the profile publishes only %d of %d random schemas, too few to check it", randomPublished, run.random)
+	}
+}
 
-		for index, verdict := range verdicts {
-			accepted := verdict == "accept"
+// parityRun is the schemas of one parity run, from the tests, then the
+// random ones, then the controls the gem refuses, and which of them the
+// profile publishes.
+type parityRun struct {
+	lines     []string
+	published []bool
+	corpus    int
+	random    int
+}
+
+// check compares the gem's verdicts in mode with the profile's.
+func (run parityRun) check(t *testing.T, mode string, verdicts []string) {
+	t.Helper()
+
+	faults, gemAccepts, strict, controlRefusals := 0, 0, 0, 0
+	controls := run.corpus + run.random
+
+	for index, verdict := range verdicts {
+		accepted := verdict == "accept"
+
+		switch {
+		case index >= controls:
 			if accepted {
-				gemAccepts++
+				t.Errorf("%s cache: the oracle accepts a schema Cloud Controller's gem refuses, so it checks nothing: %s",
+					mode, shorten(run.lines[index]))
+			} else {
+				controlRefusals++
 			}
 
-			switch {
-			case published[index] && !accepted:
-				faults++
-				if faults <= parityShownFaults {
-					t.Errorf("%s cache: the profile publishes a schema the gem refuses (%s): %s", mode, verdict, shorten(lines[index]))
-				}
-			case !published[index] && accepted:
-				strict++
+			continue
+		case run.published[index] && !accepted:
+			faults++
+			if faults <= parityShownFaults {
+				t.Errorf("%s cache: the profile publishes a schema the gem refuses (%s): %s", mode, verdict, shorten(run.lines[index]))
 			}
+		case !run.published[index] && accepted:
+			strict++
 		}
 
-		t.Logf("%s cache: %d schemas (%d from the tests, %d random), the profile publishes %d, the gem accepts %d, "+
-			"the gem refuses %d the profile publishes, and the profile refuses %d the gem accepts",
-			mode, len(lines), len(corpus), len(random), countTrue(published), gemAccepts, faults, strict)
+		if accepted {
+			gemAccepts++
+		}
 	}
 
-	if randomPublished := countTrue(published[len(corpus):]); randomPublished < len(random)/10 {
-		t.Errorf("the profile publishes only %d of %d random schemas, too few to check it", randomPublished, len(random))
+	t.Logf("%s cache: %d schemas (%d from the tests, %d random), the profile publishes %d, the gem accepts %d, "+
+		"the gem refuses %d the profile publishes, and the profile refuses %d the gem accepts. "+
+		"The oracle refuses %d of the %d controls the gem must refuse",
+		mode, controls, run.corpus, run.random, countTrue(run.published[:controls]), gemAccepts, faults, strict,
+		controlRefusals, len(run.lines)-controls)
+}
+
+// parityControls are schemas Cloud Controller's gem refuses, as served
+// JSON. The profile refuses each of them too.
+func parityControls(t *testing.T) []string {
+	t.Helper()
+
+	// The gem runs out of a request thread's stack following 800 hops.
+	texts := []string{refChain(800)}
+
+	controls := make([]string, 0, len(texts))
+
+	for _, text := range texts {
+		schema := decodeSchema(t, text)
+		if services.ValidateParameterSchema(schema) == nil {
+			t.Fatalf("the profile publishes a schema Cloud Controller's gem refuses: %s", shorten(text))
+		}
+
+		controls = append(controls, servedJSON(t, schema))
 	}
+
+	return controls
 }
 
 // parityCorpus is the JSON the broker serves for every schema these
@@ -285,6 +341,10 @@ func (g *schemaGenerator) root() map[string]any {
 		schema[genRef] = g.pick(generatorRefs)
 	}
 
+	if g.chance(20) {
+		g.addChain(schema)
+	}
+
 	switch g.rng.IntN(24) {
 	case 0:
 		schema["$schema"] = "http://json-schema.org/draft-06/schema#"
@@ -297,6 +357,30 @@ func (g *schemaGenerator) root() map[string]any {
 	}
 
 	return schema
+}
+
+// addChain points schema's $ref at the first of a chain of definitions,
+// each referring to the next. Most chains run near the profile's 32
+// hops, and some run past the few hundred where a thread's stack runs
+// out in the gem.
+func (g *schemaGenerator) addChain(schema map[string]any) {
+	hops := g.rng.IntN(64) + 1
+	if g.chance(4) {
+		hops = g.rng.IntN(800) + 1
+	}
+
+	definitions, ok := schema["definitions"].(map[string]any)
+	if !ok {
+		definitions = map[string]any{}
+		schema["definitions"] = definitions
+	}
+
+	for index := range hops - 1 {
+		definitions["d"+strconv.Itoa(index)] = map[string]any{genRef: "#/definitions/d" + strconv.Itoa(index+1)}
+	}
+
+	definitions["d"+strconv.Itoa(hops-1)] = g.object(1)
+	schema[genRef] = "#/definitions/d0"
 }
 
 func (g *schemaGenerator) object(depth int) map[string]any {

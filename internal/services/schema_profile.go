@@ -25,7 +25,12 @@ import (
 //   - A $ref is #/definitions/<name>, naming a definition the root
 //     holds, so it always resolves inside the schema itself. No chain of
 //     definitions refers back to itself through $ref alone, which would
-//     send the gem round the loop until Ruby's stack runs out. A $ref
+//     send the gem round the loop until Ruby's stack runs out. No chain
+//     of $ref alone, from the root or from a definition, takes more than
+//     32 hops, because the gem follows each hop one level deeper into
+//     Ruby's stack, and the stack of a Cloud Controller request thread
+//     runs out after a few hundred. Ruby's SystemStackError is not one
+//     Cloud Controller rescues, so it fails the whole catalog. A $ref
 //     under properties, additionalProperties, or items may point back up,
 //     because the gem never follows those for an empty object.
 //   - Definitions sit at the root only.
@@ -114,7 +119,12 @@ func checkProfile(root *rubyHash) error {
 		return err
 	}
 
-	return walk.refLoops()
+	err = walk.refLoops()
+	if err != nil {
+		return err
+	}
+
+	return walk.refChains(root)
 }
 
 // schema checks value, at path, as a schema object.
@@ -350,6 +360,51 @@ func (walk *profileWalk) refLoops() error {
 			}
 
 			name = next
+		}
+	}
+
+	return nil
+}
+
+// maxRefChain bounds how many $ref hops in a row a schema may take, from
+// the root or from a definition, well inside the few hundred a Cloud
+// Controller request thread's stack holds.
+const maxRefChain = maxSchemaNesting
+
+// refChains refuses a chain of $ref, followed from definition to
+// definition, longer than maxRefChain hops. It runs after refLoops, so
+// every chain ends.
+func (walk *profileWalk) refChains(root *rubyHash) error {
+	if walk.definitions == nil {
+		return nil
+	}
+
+	starts := make([]string, 0, len(walk.definitions.keys)+1)
+	starts = append(starts, "")
+
+	for _, name := range walk.definitions.keys {
+		starts = append(starts, "/definitions/"+pointerToken(name))
+	}
+
+	for index, path := range starts {
+		var current any = root
+		if index > 0 {
+			current = walk.definitions.get(walk.definitions.keys[index-1])
+		}
+
+		for hops := 0; ; hops++ {
+			next, ok := directRef(current)
+			if !ok || !walk.definitions.has(next) {
+				break
+			}
+
+			if hops == maxRefChain {
+				return profileFault(ErrPlanSchemaUnsupported, path+"/$ref",
+					fmt.Sprintf("starts a chain of more than %d $ref hops", maxRefChain),
+					"give a definition in the chain a schema of its own in place of its $ref")
+			}
+
+			current = walk.definitions.get(next)
 		}
 	}
 
