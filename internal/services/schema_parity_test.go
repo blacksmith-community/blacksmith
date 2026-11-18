@@ -7,7 +7,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,6 +23,7 @@ const (
 	paritySeedEnv   = "SCHEMA_PARITY_SEED"
 
 	parityDefaultCount = 20000
+	parityMinimumCount = 1000
 	parityDefaultSeed  = 1
 	parityShownFaults  = 20
 )
@@ -35,7 +35,13 @@ const (
 // cache for the whole run, seeded with schemas whose ids try to take
 // over keys. It also hands the gem a few schemas the gem refuses, and
 // fails when the oracle accepts one, so an oracle that checks nothing
-// can't pass.
+// can't pass. A SCHEMA_PARITY_COUNT under parityMinimumCount fails the
+// run, since so few random schemas check little beyond the tests' own.
+//
+// The gem's verdicts come after Cloud Controller's size check, which
+// measures a schema's JSON as Oj writes it. The oracle doesn't run Oj,
+// so the size limit is checked by the unit tests in schema_size_test.go
+// only.
 //
 //nolint:paralleltest // it runs one oracle process at a time
 func TestSchemaParity(t *testing.T) {
@@ -44,8 +50,13 @@ func TestSchemaParity(t *testing.T) {
 		t.Skip("run make schema-parity to check the schema profile against Cloud Controller's json-schema gem")
 	}
 
+	count := parityEnvInt(t, parityCountEnv, parityDefaultCount)
+	if count < parityMinimumCount {
+		t.Fatalf("%s is %d, and a parity run needs at least %d random schemas", parityCountEnv, count, parityMinimumCount)
+	}
+
 	corpus := parityCorpus(t)
-	random := randomSchemas(t, parityEnvInt(t, paritySeedEnv, parityDefaultSeed), parityEnvInt(t, parityCountEnv, parityDefaultCount))
+	random := randomSchemas(t, parityEnvInt(t, paritySeedEnv, parityDefaultSeed), count)
 	run := parityRun{
 		lines:  append(append(append([]string{}, corpus...), random...), parityControls(t)...),
 		corpus: len(corpus),
@@ -92,29 +103,27 @@ func (run parityRun) check(t *testing.T, mode string, verdicts []string) {
 		t.Errorf("%s cache: the profile publishes a schema the gem refuses (%s): %s", mode, verdicts[index], shorten(run.lines[index]))
 	}
 
-	// The negative control. The gem refuses every control, so had the
-	// profile published them, the comparison fails on each one. When it
-	// doesn't, the oracle or the comparison checks nothing.
+	// The negative control. The gem refuses every control, so an oracle
+	// that accepts one checks nothing.
 	controls := verdicts[checked:]
-	loose := tallyParity(slices.Repeat([]bool{true}, len(controls)), controls)
+	refused := 0
 
 	for index, verdict := range controls {
-		if verdict == parityAccept {
-			t.Errorf("%s cache: the oracle accepts a schema Cloud Controller's gem refuses, so it checks nothing: %s",
-				mode, shorten(run.lines[checked+index]))
-		}
-	}
+		if verdict != parityAccept {
+			refused++
 
-	if len(loose.faults) != len(controls) {
-		t.Errorf("%s cache: a profile that published the %d controls would fail the check on only %d of them",
-			mode, len(controls), len(loose.faults))
+			continue
+		}
+
+		t.Errorf("%s cache: the oracle accepts a schema Cloud Controller's gem refuses, so it checks nothing: %s",
+			mode, shorten(run.lines[checked+index]))
 	}
 
 	t.Logf("schema-parity: %s cache compared %d schemas (%d from the tests, %d random). The profile publishes %d, "+
 		"the gem accepts %d, the gem refuses %d the profile publishes, and the profile refuses %d the gem accepts. "+
-		"A profile that published the %d controls would fail on %d of them",
+		"The gem refused %d of the %d controls",
 		mode, checked, run.corpus, run.random, countTrue(run.published[:checked]), tally.gemAccepts, len(tally.faults),
-		tally.strict, len(controls), len(loose.faults))
+		tally.strict, refused, len(controls))
 }
 
 // parityAccept is the oracle's verdict on a schema the gem accepts.

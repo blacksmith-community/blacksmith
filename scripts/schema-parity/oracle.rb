@@ -1,7 +1,10 @@
 # Cloud Controller's verdict on catalog schemas, from the checks in its
 # lib/services/service_brokers/v2/schema.rb after the size check: a truthy
 # $schema, the draft-04 meta-schema, and an empty object validated against
-# the schema, where only a validation error is harmless.
+# the schema, where only a validation error is harmless. It doesn't run
+# the size check, which measures a schema's JSON as Oj writes it, so the
+# unit tests in internal/services/schema_size_test.go are the only check
+# of the size limit.
 #
 # It reads one JSON schema per line on stdin and writes one verdict per
 # line, "accept" or "refuse: <reason>". With "fresh" as its argument it

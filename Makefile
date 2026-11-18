@@ -87,7 +87,10 @@ report: coverage-html ## Alias for coverage-html (backwards compatibility)
 
 # The gems Cloud Controller checks catalog schemas with, pinned to its
 # Gemfile.lock. schema-parity is not part of test or check, because it
-# needs Ruby and Bundler.
+# needs Ruby and Bundler. It doesn't check Cloud Controller's 64 KB size
+# limit, which measures a schema as Oj writes it, and the oracle doesn't
+# run Oj. Only the unit tests in internal/services/schema_size_test.go
+# check the size limit. A SCHEMA_PARITY_COUNT under 1000 fails the run.
 SCHEMA_PARITY_GEMFILE := $(CURDIR)/scripts/schema-parity/Gemfile
 
 .PHONY: schema-parity
@@ -97,6 +100,7 @@ schema-parity: ## Check the parameter schema profile against Cloud Controller's 
 	@export BUNDLE_GEMFILE="$(SCHEMA_PARITY_GEMFILE)"; \
 	bundle check >/dev/null 2>&1 || bundle install || { echo "schema-parity could not install the gems in $(SCHEMA_PARITY_GEMFILE)"; exit 1; }
 	@echo "$(GREEN)Checking the schema profile against Cloud Controller's json-schema gem, which takes a few minutes...$(RESET)"
+	@echo "schema-parity doesn't check the 64 KB size limit. Only the unit tests in internal/services/schema_size_test.go check it."
 	@log="$$(mktemp)"; \
 	BUNDLE_GEMFILE="$(SCHEMA_PARITY_GEMFILE)" \
 	SCHEMA_PARITY_ORACLE="bundle exec ruby $(CURDIR)/scripts/schema-parity/oracle.rb" \
