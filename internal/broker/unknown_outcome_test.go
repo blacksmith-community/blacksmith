@@ -2207,6 +2207,48 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(recorded().State).To(Equal(outcomeStateFailed))
 		})
 
+		It("an unknown deploy failed while its history entry is not appended is cleaned up once", func() {
+			loseDeploy()
+			passGrace()
+
+			// The deploy reaches the director late, so its deployment
+			// appears only once the failure is on the record, which is the
+			// deployment the cleanup is there to delete.
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				record, err := suite.vault.ReadSecret(instanceID + "/task")
+				if err != nil || record["state"] != outcomeStateFailed {
+					return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+				}
+
+				return &bosh.DeploymentDetail{Name: name, Manifest: "name: " + name}, nil
+			}
+
+			var deletes atomic.Int32
+
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				deletes.Add(1)
+
+				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskQueued, Description: outcomeDeleteDeployment}, nil
+			}
+
+			proxy := useProxy()
+			proxy.FailWrites(instanceID+"/metadata", http.StatusBadRequest, "history write refused by the test", -1)
+
+			for range 3 {
+				response := poll(outcomeProvision)
+				Expect(response.State).To(Equal(osbapi.StateFailed), "a poll over the recorded failure answered %+v", response)
+			}
+
+			Expect(readRecord()).To(HaveKeyWithValue("state", outcomeStateFailed))
+
+			waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+
+			brokerInstance.WaitForBackground(waitCtx)
+
+			Expect(deletes.Load()).To(Equal(int32(1)), "the failed provision's deployment was not deleted exactly once")
+		})
+
 		It("an unknown deploy is not failed while lookups error past the grace period", func() {
 			contextID := loseDeploy()
 

@@ -712,8 +712,11 @@ func (b *Broker) settleUnknownDeleteAsDeleted(ctx context.Context, instanceID, d
 // recordSettledOutcome records taskID, or the failure -1, as the outcome of
 // the operation whose unknown outcome the record holds, and reports true
 // when the write landed. The write is made only while the record still
-// holds that unknown outcome. When it does not land, it returns the in
-// progress answer to give instead, and nothing more is done on this poll.
+// holds that unknown outcome. A write that landed while its history entry
+// did not counts as landed, because the record no longer holds the
+// unknown outcome, and no later poll would start what this one skipped.
+// When it does not land, it returns the in progress answer to give
+// instead, and nothing more is done on this poll.
 func (b *Broker) recordSettledOutcome(ctx context.Context, instanceID string, operation recordedOperation, description string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
@@ -722,6 +725,12 @@ func (b *Broker) recordSettledOutcome(ctx context.Context, instanceID string, op
 
 	err := b.Vault.SettleOutcomeUnknown(recordCtx, instanceID, operation.Action, description, operation.ContextID, taskID)
 	if err == nil {
+		return osbapi.LastOperationResponse{}, true
+	}
+
+	if errors.Is(err, internalVault.ErrHistoryNotAppended) {
+		logger.Warning("Instance %s: the settled outcome of the %s with context ID %s is recorded, and its history entry is not: %s", instanceID, noun, operation.ContextID, err)
+
 		return osbapi.LastOperationResponse{}, true
 	}
 
