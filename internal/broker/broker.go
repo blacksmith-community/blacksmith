@@ -4126,8 +4126,10 @@ func (b *Broker) recordSucceeded(ctx context.Context, instanceID, description st
 // recordProvisionFailed records the provision that recorded holds, which
 // ran as taskID, as failed, and reports true when the write landed. The
 // write lands only while the record still holds that provision unsettled.
-// When it does not land, it returns the in progress answer to give
-// instead. A record that now holds another operation is left to that
+// A write that landed while its history entry did not counts as landed,
+// because later polls answer failed from the record and start no
+// cleanup. When it does not land, it returns the in progress answer to
+// give instead. A record that now holds another operation is left to that
 // operation. A write that failed is tried again by the next poll, which
 // finds the same failed task, because Cloud Controller stops polling on a
 // failed answer and nothing else would record the failure or start the
@@ -4138,6 +4140,12 @@ func (b *Broker) recordProvisionFailed(ctx context.Context, instanceID string, r
 
 	err := b.Vault.TrackFailed(recordCtx, instanceID, operationTypeProvision, description, recorded.ContextID, taskID)
 	if err == nil {
+		return osbapi.LastOperationResponse{}, true
+	}
+
+	if errors.Is(err, internalVault.ErrHistoryNotAppended) {
+		logger.Warning("Instance %s: the failure of task %d of its provision is recorded, and its history entry is not: %s", instanceID, taskID, err)
+
 		return osbapi.LastOperationResponse{}, true
 	}
 

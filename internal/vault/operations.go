@@ -55,6 +55,12 @@ const TaskRecordUnknownSinceKey = "unknown_since"
 // or holds a newer one.
 var ErrTaskRecordReplaced = errors.New("the task record no longer holds the operation to settle")
 
+// ErrHistoryNotAppended is returned when a progress write has landed on
+// the task record and the history entry written after it has not. The
+// record holds what was written, so a caller that acts once a write lands
+// acts on this error too.
+var ErrHistoryNotAppended = errors.New("the task record was written, and its history entry was not appended")
+
 // TrackSucceeded records the operation of action that ran as taskID as
 // finished, with the state succeeded and description. Every other field
 // of the record is kept. It writes only when the record still holds action
@@ -101,7 +107,9 @@ func (vault *Vault) TrackSucceeded(ctx context.Context, instanceID, action, desc
 // under the instance's task record lock, so it never replaces an
 // operation recorded since the caller read the record. Otherwise it
 // writes nothing and returns an error that wraps ErrTaskRecordReplaced. A
-// record that cannot be read stops the write.
+// record that cannot be read stops the write. A write that lands while
+// its history entry does not returns an error that wraps
+// ErrHistoryNotAppended.
 func (vault *Vault) TrackFailed(ctx context.Context, instanceID, action, description, contextID string, taskID int) error {
 	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", -1, nil, holdingUnsettled(instanceID, action, contextID, taskID))
 }
@@ -443,7 +451,9 @@ func settlingOutcomeUnknown(instanceID, action, contextID string) func(current m
 // record holds. It writes only when the record holds the unknown outcome of
 // action with contextID, checked under the instance's task record lock, and
 // otherwise writes nothing and returns an error that wraps
-// ErrOutcomeUnknownSettled. A record that cannot be read stops the write.
+// ErrOutcomeUnknownSettled. A record that cannot be read stops the write. A
+// write that lands while its history entry does not returns an error that
+// wraps ErrHistoryNotAppended.
 func (vault *Vault) SettleOutcomeUnknown(ctx context.Context, instanceID, action, description, contextID string, taskID int) error {
 	if contextID == "" {
 		return fmt.Errorf("%w: instance %s, action %s, settled outcome", ErrEmptyContextID, instanceID, action)
@@ -641,8 +651,14 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 
 	logger.Debug("successfully stored task progress with ID %d", taskID)
 
-	// Append to history
-	return vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(state, taskID))
+	// Append to history. The record has landed by now, so a failure here
+	// is told apart from one that left the record as it was.
+	err = vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(state, taskID))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrHistoryNotAppended, err)
+	}
+
+	return nil
 }
 
 // keptUnknownOutcome returns the state, the context ID, and the
