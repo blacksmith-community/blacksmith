@@ -9,11 +9,14 @@ import (
 // refuses a whole catalog when one schema in it fails any of its checks.
 // So the broker publishes a plan's schema only when it falls inside a
 // strict draft-04 profile, which schema_profile.go defines, where every
-// rule is enough on its own for Cloud Controller to accept the schema in
-// any process, whatever schemas that process has cached before. A schema
-// outside the profile is published without, and the refusal names the
-// member that broke the rule and what to change. The profile refuses some
-// schemas Cloud Controller would accept, such as ones with an id, a
+// rule is enough on its own for Cloud Controller to accept the schema,
+// whatever schemas other catalogs have cached in that process. The one
+// exception is outside any broker's control. Another broker could file a
+// schema on purpose under the key the gem derives from this schema's
+// body, and a $ref in this schema would then resolve against that one. A
+// schema outside the profile is published without, and the refusal names
+// the member that broke the rule and what to change. The profile refuses
+// some schemas Cloud Controller would accept, such as ones with an id, a
 // remote $ref, or another draft, which is the safe direction.
 const (
 	maxParameterSchemaLen = 64 * 1024

@@ -18,8 +18,10 @@ import (
 //     id in a cache that lasts as long as the Cloud Controller process,
 //     and the first schema filed under a key wins, so a $ref can resolve
 //     to a schema another catalog filed earlier. A schema with no id is
-//     filed under a key the gem derives from its whole body, which only
-//     an identical schema shares.
+//     filed under a key the gem derives from its whole body, which an
+//     identical schema shares and which no other schema takes by chance.
+//     Another broker could still file a schema with that key as its id
+//     on purpose, and no broker can guard against that.
 //   - A $ref is #/definitions/<name>, naming a definition the root
 //     holds, so it always resolves inside the schema itself. No chain of
 //     definitions refers back to itself through $ref alone, which would
