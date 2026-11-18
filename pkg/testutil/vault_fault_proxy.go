@@ -32,6 +32,9 @@ type faultRule struct {
 	message      string
 	remaining    int
 	hold         bool
+	// apply sends the request on to the Vault server before the failure
+	// is answered, so the write lands and its answer is lost.
+	apply bool
 	// skip is how many more matching requests pass through before the
 	// rule applies.
 	skip int
@@ -49,7 +52,12 @@ func NewVaultFaultProxy(target string) (*VaultFaultProxy, error) {
 	reverse := httputil.NewSingleHostReverseProxy(targetURL)
 
 	proxy.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if proxy.injectFault(writer, request) {
+		rule := proxy.matchRule(request)
+		if rule != nil && rule.apply {
+			reverse.ServeHTTP(httptest.NewRecorder(), request)
+		}
+
+		if injectFault(writer, request, rule) {
 			return
 		}
 
@@ -92,6 +100,19 @@ func (p *VaultFaultProxy) FailWritesAfter(pathContains string, skip, status int,
 	p.rules = append(p.rules, &faultRule{write: true, pathContains: pathContains, status: status, message: message, remaining: times, skip: skip})
 }
 
+// FailWritesAfterApplying sends the next times writes and deletes whose
+// path contains pathContains on to the Vault server, and then answers
+// them with status and a Vault error body carrying message in place of
+// the server's answer. Each write lands, and the caller sees it fail, as
+// when an answer is lost on its way back. A negative times does this to
+// every matching write.
+func (p *VaultFaultProxy) FailWritesAfterApplying(pathContains string, status int, message string, times int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.rules = append(p.rules, &faultRule{write: true, pathContains: pathContains, status: status, message: message, remaining: times, apply: true})
+}
+
 // HoldWrites makes the next times writes and deletes whose path contains
 // pathContains hang until the caller gives up on them, and then answer nothing.
 // A negative times holds every matching write. The held requests still count in
@@ -117,7 +138,7 @@ func (p *VaultFaultProxy) HoldReads(pathContains string, times int) {
 }
 
 // ClearFaults removes every failure and hold set by FailReads, FailWrites,
-// HoldReads, and HoldWrites.
+// FailWritesAfter, FailWritesAfterApplying, HoldReads, and HoldWrites.
 func (p *VaultFaultProxy) ClearFaults() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -152,8 +173,9 @@ func (p *VaultFaultProxy) Close() {
 	p.server.Close()
 }
 
-func (p *VaultFaultProxy) injectFault(writer http.ResponseWriter, request *http.Request) bool {
-	rule := p.matchRule(request)
+// injectFault answers request as rule says, and reports false when there
+// is no rule, so the request goes on to the Vault server.
+func injectFault(writer http.ResponseWriter, request *http.Request, rule *faultRule) bool {
 	if rule == nil {
 		return false
 	}

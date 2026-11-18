@@ -112,6 +112,13 @@ type readoptOperation struct {
 	claim          *operationClaim
 }
 
+// owedCleanup is a failed provision that the first phase found still
+// owing the delete of its deployment.
+type owedCleanup struct {
+	instanceID     string
+	deploymentName string
+}
+
 // readoptMigration is a record that the first phase found finished, and
 // that one write marks as finished.
 type readoptMigration struct {
@@ -133,7 +140,10 @@ type readoptMigration struct {
 // A record that is finished but not marked so, a provision whose index
 // entry has created_at and whose credentials are stored, or a delete whose
 // deleted_at is on record, is not claimed. One goroutine marks each of
-// them, with no director call. With no director, nothing is re-adopted.
+// them, with no director call. A failed provision of an indexed instance
+// whose record still owes its cleanup is not claimed either, and one more
+// goroutine runs each of those cleanups in turn. With no director, nothing
+// is re-adopted.
 func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	logger := logger.Get().Named("readopt")
 
@@ -167,6 +177,7 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	}
 
 	operations, migrations := sortReadoptCandidates(candidates, logger)
+	cleanups := owedCleanups(candidates)
 
 	loaded := time.Now()
 	claimed := make([]readoptOperation, 0, len(operations))
@@ -197,8 +208,14 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 		claimed = append(claimed, operation)
 	}
 
-	logger.Info("Re-adoption listed %d folders, read %d records, claimed %d operations, and found %d finished records to mark, in %v",
-		listed, len(candidates), len(claimed), len(migrations), time.Since(started).Round(time.Millisecond))
+	logger.Info("Re-adoption listed %d folders, read %d records, claimed %d operations, and found %d finished records to mark and %d failed provisions owing their cleanup, in %v",
+		listed, len(candidates), len(claimed), len(migrations), len(cleanups), time.Since(started).Round(time.Millisecond))
+
+	if len(cleanups) > 0 {
+		b.track("cleanup of failed deployments owed at start", func() { //nolint:contextcheck // the cleanups outlive the boot call and run under the service context
+			b.runOwedCleanups(cleanups, logger)
+		})
+	}
 
 	if len(migrations) > 0 {
 		b.track("marking of finished service operations", func() { //nolint:contextcheck // the marking outlives the boot call and runs under the service context
@@ -543,6 +560,44 @@ func sortReadoptCandidates(candidates []*readoptCandidate, logger logger.Logger)
 	}
 
 	return operations, migrations
+}
+
+// owedCleanups returns the failed provisions of indexed instances whose
+// records still owe the delete of their deployments. A provision whose
+// index entry is gone is left alone, because no deployment name is on
+// record for it.
+func owedCleanups(candidates []*readoptCandidate) []owedCleanup {
+	var cleanups []owedCleanup
+
+	for _, candidate := range candidates {
+		recorded := candidate.recorded
+
+		if candidate.indexed && candidate.exists && candidate.parsed && recorded.Action == operationTypeProvision &&
+			recorded.State == recordedStateFailed && recorded.CleanupPending {
+			cleanups = append(cleanups, owedCleanup{instanceID: candidate.instanceID, deploymentName: candidate.deploymentName})
+		}
+	}
+
+	return cleanups
+}
+
+// runOwedCleanups runs each owed cleanup in turn, under the service
+// context, and stops early when the broker shuts down. A cleanup reads
+// the record again under the settle lock, so one a poll ran first deletes
+// nothing more.
+func (b *Broker) runOwedCleanups(cleanups []owedCleanup, logger logger.Logger) {
+	ctx := b.serviceContext()
+
+	for _, cleanup := range cleanups {
+		if ctx.Err() != nil {
+			logger.Info("The broker is shutting down, so the owed cleanups that remain are left for the next start")
+
+			return
+		}
+
+		logger.Info("Instance %s: its failed provision still owes the delete of deployment %s, so the cleanup starts", cleanup.instanceID, cleanup.deploymentName)
+		b.cleanupFailedDeployment(ctx, cleanup.instanceID, cleanup.deploymentName, logger)
+	}
 }
 
 // logDebugUnindexed logs, at Debug, why a folder the index does not name

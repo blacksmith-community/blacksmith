@@ -87,6 +87,23 @@ func recordTimeout() time.Duration {
 	return recordWriteTimeout
 }
 
+// cleanupTimeoutOverride, when positive, replaces
+// failedDeploymentCleanupTimeout in nanoseconds.
+//
+//nolint:gochecknoglobals // a test seam, set only through export_test.go
+var cleanupTimeoutOverride atomic.Int64
+
+// cleanupTimeout returns how long the director calls of a failed
+// deployment's cleanup may take.
+func cleanupTimeout() time.Duration {
+	override := cleanupTimeoutOverride.Load()
+	if override > 0 {
+		return time.Duration(override)
+	}
+
+	return failedDeploymentCleanupTimeout
+}
+
 // taskPollOverride, when positive, replaces defaultTaskPollInterval in
 // nanoseconds. It is atomic because monitors started earlier may read it
 // while a test changes it.

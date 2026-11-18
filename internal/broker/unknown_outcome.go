@@ -723,7 +723,15 @@ func (b *Broker) recordSettledOutcome(ctx context.Context, instanceID string, op
 
 	noun := requestNoun(operation.Action)
 
-	err := b.Vault.SettleOutcomeUnknown(recordCtx, instanceID, operation.Action, description, operation.ContextID, taskID)
+	var err error
+	if taskID == -1 && operation.Action == operationTypeProvision {
+		// A provision settled as failed owes the delete of whatever its
+		// deploy left, and the write says so.
+		err = b.Vault.SettleOutcomeUnknownCleanupPending(recordCtx, instanceID, operation.Action, description, operation.ContextID)
+	} else {
+		err = b.Vault.SettleOutcomeUnknown(recordCtx, instanceID, operation.Action, description, operation.ContextID, taskID)
+	}
+
 	if err == nil {
 		return osbapi.LastOperationResponse{}, true
 	}

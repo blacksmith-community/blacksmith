@@ -46,6 +46,13 @@ const TaskStateSucceeded = "succeeded"
 // leaves it alone.
 const TaskStateDeleted = "deleted"
 
+// TaskRecordCleanupPendingKey is the key of the mark a failed provision's
+// record carries while the delete of its deployment is owed. The write
+// that records the failure sets it, and ClearCleanupPending removes it
+// once the delete is sent or the deployment is gone, so a broker that
+// stops in between still finds the cleanup owed.
+const TaskRecordCleanupPendingKey = "cleanup_pending"
+
 // TaskRecordUnknownSinceKey is the key of the time a task record's outcome
 // became unknown, in RFC 3339 form with nanoseconds, in UTC.
 const TaskRecordUnknownSinceKey = "unknown_since"
@@ -111,7 +118,49 @@ func (vault *Vault) TrackSucceeded(ctx context.Context, instanceID, action, desc
 // its history entry does not returns an error that wraps
 // ErrHistoryNotAppended.
 func (vault *Vault) TrackFailed(ctx context.Context, instanceID, action, description, contextID string, taskID int) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", -1, nil, holdingUnsettled(instanceID, action, contextID, taskID))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", -1, nil, false, holdingUnsettled(instanceID, action, contextID, taskID))
+}
+
+// TrackFailedCleanupPending records the failure as TrackFailed does, and
+// marks the record, in the same write, as owing the delete of the failed
+// deployment.
+func (vault *Vault) TrackFailedCleanupPending(ctx context.Context, instanceID, action, description, contextID string, taskID int) error {
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", -1, nil, true, holdingUnsettled(instanceID, action, contextID, taskID))
+}
+
+// ClearCleanupPending removes the cleanup mark from the record of the
+// failed operation of action with contextID, and keeps every other field.
+// It writes only when the record holds that operation, failed and marked,
+// checked under the instance's task record lock, and otherwise writes
+// nothing and returns an error that wraps ErrTaskRecordReplaced. A record
+// that cannot be read stops the write. No history entry is written.
+func (vault *Vault) ClearCleanupPending(ctx context.Context, instanceID, action, contextID string) error {
+	logger := logger.Get().Named("vault clear cleanup pending " + instanceID)
+
+	guard := func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrTaskRecordReplaced, instanceID)
+		}
+
+		recordedAction, _ := current["action"].(string)
+		recordedContextID, _ := current[taskRecordContextIDKey].(string)
+		state, _ := current["state"].(string)
+		marked, _ := current[TaskRecordCleanupPendingKey].(bool)
+
+		if recordedAction != action || recordedContextID != contextID || state != eventStateFailed || !marked {
+			return fmt.Errorf("%w: instance %s records the %s state of a %s with context ID %q and the cleanup mark %v, not the marked failure of the %s with context ID %q",
+				ErrTaskRecordReplaced, instanceID, state, recordedAction, recordedContextID, marked, action, contextID)
+		}
+
+		return nil
+	}
+
+	return vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
+		cleared := maps.Clone(replaced)
+		delete(cleared, TaskRecordCleanupPendingKey)
+
+		return cleared
+	})
 }
 
 // TrackFoundTask records taskID, a task the director started for the
@@ -139,7 +188,7 @@ func (vault *Vault) TrackFoundTask(ctx context.Context, instanceID, action, desc
 		return nil
 	}
 
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, nil, guard)
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, nil, false, guard)
 }
 
 // holdingUnsettled returns a guard that lets a write through only when the
@@ -385,7 +434,7 @@ var ErrOutcomeUnknownRecorded = errors.New("the task record holds an operation w
 // ID. The check and the write happen under the instance's task record
 // lock, and a current record that cannot be read stops the write too.
 func (vault *Vault) TrackProgressUnlessOutcomeUnknown(ctx context.Context, instanceID, action, description string, taskID int, params interface{}) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, unlessOutcomeUnknown(instanceID, "", ""))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, false, unlessOutcomeUnknown(instanceID, "", ""))
 }
 
 // TrackProgressReplacingOutcomeUnknown stores progress information as
@@ -395,7 +444,7 @@ func (vault *Vault) TrackProgressUnlessOutcomeUnknown(ctx context.Context, insta
 // ErrOutcomeUnknownRecorded. An empty replacedContextID replaces no
 // unknown outcome.
 func (vault *Vault) TrackProgressReplacingOutcomeUnknown(ctx context.Context, instanceID, action, description, replacedAction, replacedContextID string, taskID int, params interface{}) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, unlessOutcomeUnknown(instanceID, replacedAction, replacedContextID))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, false, unlessOutcomeUnknown(instanceID, replacedAction, replacedContextID))
 }
 
 // unlessOutcomeUnknown returns a guard that refuses a write over a record
@@ -463,7 +512,19 @@ func (vault *Vault) SettleOutcomeUnknown(ctx context.Context, instanceID, action
 		return fmt.Errorf("%w: instance %s, a write with no task would keep the outcome unknown", ErrOutcomeUnknownSettled, instanceID)
 	}
 
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, "", taskID, nil, settlingOutcomeUnknown(instanceID, action, contextID))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, "", taskID, nil, false, settlingOutcomeUnknown(instanceID, action, contextID))
+}
+
+// SettleOutcomeUnknownCleanupPending records the failure -1 as the outcome
+// of the operation whose unknown outcome the record holds, as
+// SettleOutcomeUnknown does, and marks the record, in the same write, as
+// owing the delete of the failed deployment.
+func (vault *Vault) SettleOutcomeUnknownCleanupPending(ctx context.Context, instanceID, action, description, contextID string) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s, settled outcome", ErrEmptyContextID, instanceID, action)
+	}
+
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, "", -1, nil, true, settlingOutcomeUnknown(instanceID, action, contextID))
 }
 
 // ErrUnknownSinceRecorded is returned when StampUnknownSince finds that the
@@ -575,26 +636,18 @@ func (vault *Vault) TrackProgressWithDeployment(ctx context.Context, instanceID,
 // task ID, unless it settles the outcome. A write settles it when it names
 // a task, or the failure -1, or a context ID other than the recorded one.
 func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, deploymentName, taskID, params, nil)
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, deploymentName, taskID, params, false, nil)
 }
 
 // trackProgressGuarded writes the task record as trackProgress does, and
 // writes nothing when guard returns an error. See writeTaskRecordGuarded.
-func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}, guard func(current map[string]interface{}) error) error {
+// When cleanupPending is true, the record it writes carries the cleanup
+// mark; see TaskRecordCleanupPendingKey.
+func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}, cleanupPending bool, guard func(current map[string]interface{}) error) error {
 	logger := logger.Get().Named("vault track progress " + instanceID)
 	logger.Debug("tracking progress for '%s': %s (taskID: %d)", action, description, taskID)
 
-	// Determine the state based on task ID
-	var state string
-
-	switch taskID {
-	case -1:
-		state = eventStateFailed
-	case 0:
-		state = "initializing"
-	default:
-		state = "in_progress"
-	}
+	state := progressState(taskID)
 
 	task := struct {
 		Action         string      `json:"action"`
@@ -605,6 +658,7 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 		Params         interface{} `json:"params"`
 		ContextID      string      `json:"context_id,omitempty"`
 		DeploymentName string      `json:"deployment_name,omitempty"`
+		CleanupPending bool        `json:"cleanup_pending,omitempty"`
 	}{
 		Action:         action,
 		Task:           taskID,
@@ -614,6 +668,7 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 		Params:         copyParams(params),
 		ContextID:      contextID,
 		DeploymentName: deploymentName,
+		CleanupPending: cleanupPending,
 	}
 
 	err := vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
@@ -659,6 +714,20 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 	}
 
 	return nil
+}
+
+// progressState is the state a progress write records for taskID: failed
+// for the failure -1, initializing for no task yet, and in_progress for a
+// task the director started.
+func progressState(taskID int) string {
+	switch taskID {
+	case -1:
+		return eventStateFailed
+	case 0:
+		return "initializing"
+	default:
+		return "in_progress"
+	}
 }
 
 // keptUnknownOutcome returns the state, the context ID, and the

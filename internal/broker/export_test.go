@@ -349,6 +349,15 @@ func SetRecordWriteTimeout(d time.Duration) func() {
 	return func() { recordTimeoutOverride.Store(previous) }
 }
 
+// SetFailedDeploymentCleanupTimeout shortens or lengthens the bound on the
+// director calls of a failed deployment's cleanup, and returns a function
+// that restores the previous bound.
+func SetFailedDeploymentCleanupTimeout(d time.Duration) func() {
+	previous := cleanupTimeoutOverride.Swap(int64(d))
+
+	return func() { cleanupTimeoutOverride.Store(previous) }
+}
+
 // StoreDeploymentDetails exposes the write of a provision's details, and the
 // cleanup that follows when it fails.
 func (b *Broker) StoreDeploymentDetails(ctx context.Context, instanceID, deploymentName string, details osbapi.ProvisionRequest) error {

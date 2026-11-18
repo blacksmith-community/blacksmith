@@ -624,7 +624,8 @@ var _ = Describe("Detached broker work", func() {
 			return nil, errDirectorUnreachable
 		}
 
-		Expect(vaultClient.TrackProgress(ctx, instanceID, "provision", "BOSH deployment task 7 is error", -1, nil)).To(Succeed())
+		Expect(vaultClient.TrackProgress(ctx, instanceID, "provision", "BOSH deployment in progress (task 7)", 7, nil)).To(Succeed())
+		Expect(vaultClient.TrackFailedCleanupPending(ctx, instanceID, "provision", "BOSH deployment task 7 is error", "", 7)).To(Succeed())
 
 		started := time.Now()
 
@@ -654,7 +655,8 @@ var _ = Describe("Detached broker work", func() {
 			return nil, errDirectorUnreachable
 		}
 
-		Expect(vaultClient.TrackProgress(ctx, instanceID, "provision", "BOSH deployment task 7 is error", -1, nil)).To(Succeed())
+		Expect(vaultClient.TrackProgress(ctx, instanceID, "provision", "BOSH deployment in progress (task 7)", 7, nil)).To(Succeed())
+		Expect(vaultClient.TrackFailedCleanupPending(ctx, instanceID, "provision", "BOSH deployment task 7 is error", "", 7)).To(Succeed())
 
 		// The poll that starts the cleanup returns, and the server cancels its
 		// context, before the cleanup runs.

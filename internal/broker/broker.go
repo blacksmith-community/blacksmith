@@ -3634,6 +3634,12 @@ type recordedOperation struct {
 	// UnknownSince is when the outcome of the operation's director request
 	// became unknown. It is zero unless State is outcome_unknown.
 	UnknownSince time.Time
+	// CleanupPending is true while a failed provision still owes the
+	// delete of its deployment. The write that records the failure sets
+	// it, and the cleanup clears it once the delete is sent or the
+	// deployment is gone. A record written before the mark existed has
+	// none, and is never cleaned up from it.
+	CleanupPending bool
 }
 
 // hasTask reports whether a BOSH task ID was recorded. Zero means no task
@@ -3661,6 +3667,7 @@ func parseRecordedOperation(instanceID, state string, taskID int, task map[strin
 	recorded.Description, _ = task["description"].(string)
 	recorded.ContextID, _ = task["context_id"].(string)
 	recorded.DeploymentName, _ = task[internalVault.TaskRecordDeploymentNameKey].(string)
+	recorded.CleanupPending, _ = task[internalVault.TaskRecordCleanupPendingKey].(bool)
 
 	if since, isString := task[internalVault.TaskRecordUnknownSinceKey].(string); isString && since != "" {
 		recorded.UnknownSince, err = time.Parse(time.RFC3339Nano, since)
@@ -3707,6 +3714,7 @@ func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName
 	switch {
 	case recorded.State == recordedStateFailed:
 		logger.Error("provision of instance %s failed: %s", instanceID, recorded.Description)
+		b.resumeOwedCleanup(ctx, instanceID, deploymentName, recorded, logger)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
 	case recorded.State == internalVault.TaskStateOutcomeUnknown:
@@ -4062,6 +4070,7 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 
 	if isSettled {
 		logger.Debug("provision of instance %s was already settled as %s", instanceID, settled.State)
+		b.resumeOwedCleanup(cleanupCtx, instanceID, deploymentName, recorded, logger)
 
 		return settled, nil
 	}
@@ -4083,13 +4092,14 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 	description := fmt.Sprintf("BOSH deployment task %d is %s", taskID, task.State)
 	logger.Error("provision operation failed: %s", description)
 
-	// Record the failure so later polls answer from it, and start the
-	// cleanup while the settle lock is still held, so it starts only once.
-	// The cleanup's director calls can be slow, so it runs in the
-	// background rather than holding up the poll. An operation is
+	// Record the failure so later polls answer from it, with the mark
+	// that says the cleanup is owed in the same write, and start the
+	// cleanup. The cleanup's director calls can be slow, so it runs in
+	// the background rather than holding up the poll. An operation is
 	// accepted without the settle lock, so the write lands only while the
 	// record still holds this provision, and no cleanup starts unless it
-	// lands.
+	// lands. A write that lands while its answer is lost leaves the mark,
+	// and the next poll or start runs the cleanup from it.
 	unrecorded, recordedFailure := b.recordProvisionFailed(ctx, instanceID, recorded, description, taskID, logger)
 	if !recordedFailure {
 		return unrecorded, nil
@@ -4138,7 +4148,7 @@ func (b *Broker) recordProvisionFailed(ctx context.Context, instanceID string, r
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	err := b.Vault.TrackFailed(recordCtx, instanceID, operationTypeProvision, description, recorded.ContextID, taskID)
+	err := b.Vault.TrackFailedCleanupPending(recordCtx, instanceID, operationTypeProvision, description, recorded.ContextID, taskID)
 	if err == nil {
 		return osbapi.LastOperationResponse{}, true
 	}
@@ -4217,55 +4227,85 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 	}
 }
 
+// resumeOwedCleanup starts the cleanup of a failed provision's deployment
+// in the background when recorded still says the cleanup is owed, which
+// it does when the broker stopped before the cleanup sent its delete, or
+// when the failure write landed and its answer was lost. The cleanup
+// checks the mark again under the settle lock, so a cleanup started more
+// than once deletes once.
+func (b *Broker) resumeOwedCleanup(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) {
+	if recorded.Action != operationTypeProvision || recorded.State != recordedStateFailed || !recorded.CleanupPending {
+		return
+	}
+
+	logger.Info("Instance %s: its failed provision still owes the delete of deployment %s, so the cleanup starts", instanceID, deploymentName)
+
+	b.track("cleanup of failed deployment "+deploymentName, func() {
+		b.cleanupFailedDeployment(ctx, instanceID, deploymentName, logger)
+	})
+}
+
 // cleanupFailedDeployment deletes a failed deployment on a best-effort basis.
-// It keeps the values of ctx but not its cancellation, and gives up after
-// failedDeploymentCleanupTimeout.
+// It keeps the values of ctx but not its cancellation. The lock, the
+// record check, and the director calls give up after
+// failedDeploymentCleanupTimeout, and the clear of the mark has a bound
+// of its own.
 //
 // Deleting the deployment is right only for a provision that never produced
 // a usable instance. A failed update or deprovision leaves a deployment
 // that holds a tenant's data. So the cleanup takes no caller's word for
 // what failed: it reads the instance's own record under the settle lock,
 // and it asks the director nothing unless that record holds a provision
-// recorded as failed. A record it cannot read, or one that holds any
-// other action, an unknown one, or none, deletes nothing. The lock is
-// released before the director is asked, so a slow director holds up no
-// poll.
+// recorded as failed that still owes its cleanup. A record it cannot
+// read, or one that holds any other action, an unknown one, or none,
+// deletes nothing.
+//
+// The settle lock is held until the cleanup is done, so of the cleanups a
+// failure, its polls, and a start may begin, only the first sends the
+// delete. Once the delete is sent, or the director says the deployment is
+// gone, the mark comes off the record. When the director cannot be asked
+// or refuses the delete, the mark stays, and the next poll or start tries
+// again.
 func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failedDeploymentCleanupTimeout)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout())
 	defer cancel()
 
-	if !b.recordHoldsFailedProvision(ctx, instanceID, deploymentName, logger) {
-		return
-	}
-
-	logger.Debug("checking if failed deployment exists and needs cleanup")
-
-	_, deploymentErr := b.BOSH.GetDeployment(ctx, deploymentName)
-	if deploymentErr == nil {
-		logger.Info("Failed deployment %s still exists, attempting cleanup", deploymentName)
-		// Attempt to delete the failed deployment (best effort)
-		cleanupTask, cleanupErr := b.BOSH.DeleteDeployment(ctx, deploymentName)
-		if cleanupErr != nil {
-			logger.Error("Failed to initiate cleanup of failed deployment %s: %s", deploymentName, cleanupErr)
-		} else {
-			logger.Info("Initiated cleanup of failed deployment %s (task %d)", deploymentName, cleanupTask.ID)
-		}
-	}
-}
-
-// recordHoldsFailedProvision reads the instance's record under the settle
-// lock and reports whether it holds a provision recorded as failed, which
-// is the only record a failed deployment may be deleted for. Every other
-// answer is logged as a refusal to delete deploymentName.
-func (b *Broker) recordHoldsFailedProvision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) bool {
-	unlock, err := b.lockSettle(ctx, instanceID)
+	unlock, err := b.lockSettle(cleanupCtx, instanceID)
 	if err != nil {
 		logger.Error("Refusing to delete deployment %s: the record of instance %s could not be read under the settle lock: %s", deploymentName, instanceID, err)
 
-		return false
+		return
 	}
 	defer unlock()
 
+	recorded, owed := b.recordOwesCleanup(cleanupCtx, instanceID, deploymentName, logger)
+	if !owed {
+		return
+	}
+
+	if !b.deleteFailedDeployment(cleanupCtx, deploymentName, logger) {
+		return
+	}
+
+	// The clear takes its bound from ctx, not from cleanupCtx, so a
+	// director whose answer used up the cleanup's bound still lets the
+	// mark come off once the delete was sent.
+	clearCtx, cancelClear := recordContext(ctx)
+	defer cancelClear()
+
+	err = b.Vault.ClearCleanupPending(clearCtx, instanceID, operationTypeProvision, recorded.ContextID)
+	if err != nil {
+		logger.Error("Instance %s: the cleanup of deployment %s is done, and the record still says it is owed, so a later poll or start sends the delete again: %s",
+			instanceID, deploymentName, err)
+	}
+}
+
+// recordOwesCleanup reads the instance's record, under the settle lock its
+// caller holds, and reports whether it holds a provision recorded as
+// failed that still owes its cleanup, which is the only record a failed
+// deployment may be deleted for. Every other answer is logged as a
+// refusal to delete deploymentName.
+func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (recordedOperation, bool) {
 	readCtx, cancelRead := recordContext(ctx)
 	defer cancelRead()
 
@@ -4273,15 +4313,61 @@ func (b *Broker) recordHoldsFailedProvision(ctx context.Context, instanceID, dep
 	if err != nil {
 		logger.Error("Refusing to delete deployment %s: %s", deploymentName, err)
 
-		return false
+		return recordedOperation{}, false
 	}
 
 	if recorded.Action != operationTypeProvision || recorded.State != recordedStateFailed {
 		logger.Error("Refusing to delete deployment %s: the record of instance %s holds a %q %s, and only a failed provision's deployment is deleted",
 			deploymentName, instanceID, recorded.Action, recorded.State)
 
+		return recordedOperation{}, false
+	}
+
+	if !recorded.CleanupPending {
+		logger.Debug("Deployment %s is not deleted: the failed provision of instance %s owes no cleanup, because one already ran", deploymentName, instanceID)
+
+		return recordedOperation{}, false
+	}
+
+	return recorded, true
+}
+
+// deleteFailedDeployment sends the delete of a failed deployment when the
+// director still has it. It reports true once the delete is sent or the
+// director says the deployment is gone, and false when the director could
+// not be asked or refused the delete.
+func (b *Broker) deleteFailedDeployment(ctx context.Context, deploymentName string, logger logger.Logger) bool {
+	logger.Debug("checking if failed deployment exists and needs cleanup")
+
+	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
+
+	switch {
+	case errors.Is(err, bosh.ErrDeploymentNotFound):
+		logger.Info("Failed deployment %s is already gone, so nothing is deleted", deploymentName)
+
+		return true
+	case err != nil:
+		logger.Error("Failed deployment %s is not deleted yet, because the director could not say whether it exists: %s", deploymentName, err)
+
 		return false
 	}
+
+	logger.Info("Failed deployment %s still exists, attempting cleanup", deploymentName)
+
+	cleanupTask, err := b.BOSH.DeleteDeployment(ctx, deploymentName)
+
+	switch {
+	case errors.Is(err, bosh.ErrDeploymentNotFound):
+		logger.Info("Failed deployment %s went before its delete was sent", deploymentName)
+
+		return true
+	case err != nil:
+		logger.Error("Failed to initiate cleanup of failed deployment %s: %s", deploymentName, err)
+
+		return false
+	}
+
+	logger.Info("Initiated cleanup of failed deployment %s (task %d)", deploymentName, cleanupTask.ID)
 
 	return true
 }
