@@ -61,6 +61,20 @@ const (
 // broker's registrations.
 const secretFolder = "secret"
 
+// listlessReadoptStore is the re-adopter's Vault seam over a real Vault
+// whose listing of the mount always fails, and that counts the listings.
+type listlessReadoptStore struct {
+	*internalVault.Vault
+
+	listings atomic.Int32
+}
+
+func (s *listlessReadoptStore) ListOperationRecordIDs(context.Context) ([]string, bool, error) {
+	s.listings.Add(1)
+
+	return nil, false, errReadoptVaultDown
+}
+
 // failingReadoptStore is the re-adopter's Vault seam over a real Vault.
 // It fails a given number of listings and then a given number of record
 // reads. Each failing call reports itself on failed and waits for proceed,
@@ -1105,6 +1119,44 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 
 		Expect(director.Calls(directorDeleteDeployment)).To(HaveLen(5), "the sweep must back off rather than try on every pass")
 		Expect(recorded().CleanupPending).To(BeTrue())
+	})
+
+	It("the cleanup sweep runs the suspects' cleanups while its full scan keeps failing, and tries the full scan on every pass until it succeeds", func() {
+		indexInstance(nil)
+		Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
+
+		var attempts atomic.Int32
+
+		director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {
+			if attempts.Add(1) == 1 {
+				return nil, errDirectorUnreachable
+			}
+
+			return &bosh.Task{ID: cleanupTask, State: outcomeTaskDone, Description: outcomeDeleteDeployment}, nil
+		}
+
+		brokerInstance := newBroker(director)
+		store := &listlessReadoptStore{Vault: vaultClient}
+		brokerInstance.SetReadoptStore(store)
+
+		brokerInstance.CleanupFailedDeployment(ctx, instanceID, deploymentName)
+		Expect(recorded().CleanupPending).To(BeTrue(), "the refused delete leaves the cleanup owed")
+
+		now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+
+		brokerInstance.SetSweepClock(func() time.Time { return now })
+
+		// The first pass is a full scan, whose listing fails, so the pass
+		// reads the suspect and runs its cleanup.
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		Expect(director.Calls(directorDeleteDeployment)).To(Equal([]string{deploymentName, deploymentName}))
+		Expect(recorded().CleanupPending).To(BeFalse())
+
+		// The full scan stays due, so the next pass tries it again.
+		now = now.Add(time.Minute)
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		Expect(store.listings.Load()).To(Equal(int32(2)))
+		Expect(brokerInstance.OwedCleanupSuspects()).To(BeEmpty(), "the suspect pass found the cleanup settled")
 	})
 
 	It("the cleanup sweep reads only the suspects between full scans, and a full scan finds an owed cleanup no suspect names", func() {

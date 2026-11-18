@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	// cleanupSweepPassTimeout bounds one pass's reads of the index, the
-	// listing, and the records, so a Vault that does not answer ends the
-	// pass and the next pass reads again.
+	// cleanupSweepPassTimeout bounds a full scan's reads of the index, the
+	// listing, and the records, and bounds the reads of the suspects'
+	// records on its own, so a Vault that does not answer ends the reads
+	// and the next pass reads again.
 	cleanupSweepPassTimeout = 5 * time.Minute
 
 	// cleanupSweepMaxBackoff is the longest the sweep waits before it
@@ -194,33 +195,11 @@ func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 
 	now := sweep.now()
 	full := sweep.lastFull.IsZero() || now.Sub(sweep.lastFull) >= cleanupSweepFullScanInterval
-
-	passCtx, cancel := context.WithTimeout(ctx, cleanupSweepPassTimeout)
-	defer cancel()
-
-	store := b.readoptVaultStore()
 	suspects, notes := sweep.snapshot()
 
-	var (
-		candidates []*readoptCandidate
-		err        error
-	)
-
-	if full {
-		candidates, _, err = readoptListOnce(passCtx, store)
-	} else {
-		candidates, err = suspectCandidates(passCtx, store, suspects)
-	}
-
+	candidates, full, err := b.sweepCandidates(ctx, suspects, full, interval, logger)
 	if err != nil {
-		logger.Warning("The sweep of owed cleanups could not read the instances from Vault, and reads them again in %v: %s", interval, err)
-
-		return
-	}
-
-	err = readoptReadRecords(passCtx, store, candidates, logger)
-	if err != nil {
-		logger.Warning("The sweep of owed cleanups could not read the records from Vault, and reads them again in %v: %s", interval, err)
+		logger.Warning("The sweep of owed cleanups could not read the records of the suspects from Vault, and reads them again in %v: %s", interval, err)
 
 		return
 	}
@@ -417,6 +396,58 @@ func (b *Broker) forgetSettledSuspects(candidates []*readoptCandidate, owed map[
 			b.forgetCleanupAttention(entry.InstanceID)
 		}
 	}
+}
+
+// sweepCandidates reads the records a pass works from, and reports
+// whether they come from a full scan. When full is true it reads every
+// instance's record. A full scan that fails is logged and leaves the next
+// full scan due, and the pass reads the suspects' records instead, so a
+// scan that keeps failing never stops the cleanups the suspects owe. Each
+// read has a bound of its own, so a full scan that used up its bound
+// leaves the suspects theirs.
+func (b *Broker) sweepCandidates(ctx context.Context, suspects []string, full bool, interval time.Duration, logger logger.Logger) ([]*readoptCandidate, bool, error) {
+	store := b.readoptVaultStore()
+
+	if full {
+		candidates, err := readAllCandidates(ctx, store, logger)
+		if err == nil {
+			return candidates, true, nil
+		}
+
+		logger.Warning("The full scan of the sweep of owed cleanups could not read the records from Vault, so this pass reads only the suspects, and the next pass, in %v, tries the full scan again: %s", interval, err)
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, cleanupSweepPassTimeout)
+	defer cancel()
+
+	candidates, err := suspectCandidates(readCtx, store, suspects)
+	if err == nil {
+		err = readoptReadRecords(readCtx, store, candidates, logger)
+	}
+
+	if err != nil {
+		return nil, false, err
+	}
+
+	return candidates, false, nil
+}
+
+// readAllCandidates reads the index, the listing, and every record, under
+// a bound of cleanupSweepPassTimeout.
+func readAllCandidates(ctx context.Context, store readoptStore, logger logger.Logger) ([]*readoptCandidate, error) {
+	readCtx, cancel := context.WithTimeout(ctx, cleanupSweepPassTimeout)
+	defer cancel()
+
+	candidates, _, err := readoptListOnce(readCtx, store)
+	if err == nil {
+		err = readoptReadRecords(readCtx, store, candidates, logger)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return candidates, nil
 }
 
 // suspectCandidates reads the index and returns a candidate for each
