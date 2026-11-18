@@ -624,9 +624,11 @@ var _ = Describe("Detached broker work", func() {
 			return nil, errDirectorUnreachable
 		}
 
+		Expect(vaultClient.TrackProgress(ctx, instanceID, "provision", "BOSH deployment task 7 is error", -1, nil)).To(Succeed())
+
 		started := time.Now()
 
-		brokerInstance.CleanupFailedDeployment(ctx, "provision", deploymentName)
+		brokerInstance.CleanupFailedDeployment(ctx, instanceID, deploymentName)
 
 		mu.Lock()
 		defer mu.Unlock()
@@ -652,6 +654,8 @@ var _ = Describe("Detached broker work", func() {
 			return nil, errDirectorUnreachable
 		}
 
+		Expect(vaultClient.TrackProgress(ctx, instanceID, "provision", "BOSH deployment task 7 is error", -1, nil)).To(Succeed())
+
 		// The poll that starts the cleanup returns, and the server cancels its
 		// context, before the cleanup runs.
 		callerCtx, cancel := context.WithCancel(ctx)
@@ -659,7 +663,7 @@ var _ = Describe("Detached broker work", func() {
 
 		started := time.Now()
 
-		brokerInstance.CleanupFailedDeployment(callerCtx, "provision", deploymentName)
+		brokerInstance.CleanupFailedDeployment(callerCtx, instanceID, deploymentName)
 
 		mu.Lock()
 		defer mu.Unlock()

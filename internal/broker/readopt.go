@@ -846,9 +846,16 @@ func (b *Broker) completePrunedProvision(ctx context.Context, operation readoptO
 	}
 	defer unlock()
 
-	settled, isSettled, err := b.settledProvision(ctx, operation.instanceID)
+	recorded, settled, isSettled, err := b.settledProvision(ctx, operation.instanceID)
 	if err != nil {
 		return osbapi.LastOperationResponse{}, err
+	}
+
+	if recorded.Action != operationTypeProvision {
+		logger.Error("Instance %s: the record holds a %q %s, not a provision, so re-adoption runs no completion step for deployment %s",
+			operation.instanceID, recorded.Action, recorded.State, deploymentName)
+
+		return inProgress, nil
 	}
 
 	if isSettled {

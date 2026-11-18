@@ -765,7 +765,7 @@ func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentN
 		// The cleanup outlives this poll, as it does for a deploy task
 		// that failed.
 		b.track("cleanup of failed deployment "+deploymentName, func() {
-			b.cleanupFailedDeployment(ctx, operation.Action, deploymentName, logger)
+			b.cleanupFailedDeployment(ctx, instanceID, deploymentName, logger)
 		})
 	}
 

@@ -3699,7 +3699,7 @@ func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName
 	}
 
 	if recorded.Action != operationTypeProvision {
-		recorded = recordedOperation{}
+		return provisionPollOverOtherRecord(instanceID, deploymentName, recorded, logger), nil
 	}
 
 	switch {
@@ -3722,6 +3722,33 @@ func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName
 	}
 
 	return b.recoverProvision(ctx, instanceID, deploymentName, nil, logger)
+}
+
+// provisionPollOverOtherRecord answers a provision poll over a record that
+// holds no provision. Every provision the broker accepts is recorded
+// before it answers, so such a record holds a later operation, or nothing
+// at all for an instance the reconciler adopted. Settling the poll as a
+// provision would record a provision the broker never accepted and could
+// delete a deployment that holds a tenant's data, so the poll changes
+// nothing. A record of another operation answers in progress, as that
+// operation settles itself. An instance with no operation on record
+// answers failed, because nothing will ever settle the provision.
+func provisionPollOverOtherRecord(instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) osbapi.LastOperationResponse {
+	if recorded.Action == "" {
+		logger.Error("Instance %s: a provision poll found no operation on record, so it changes nothing and leaves deployment %s as it is", instanceID, deploymentName)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateFailed,
+			Description: "No provision is on record for this instance; its deployment is left as it is",
+		}
+	}
+
+	logger.Warning("Instance %s: a provision poll found the %s %s on record, which only its own poll settles, so it changes nothing", instanceID, recorded.Action, recorded.State)
+
+	return osbapi.LastOperationResponse{
+		State:       osbapi.StateInProgress,
+		Description: fmt.Sprintf("The instance's record holds a %s, not a provision", recorded.Action),
+	}
 }
 
 // unknownOutcomeOfOtherOperation answers a poll for one operation over a
@@ -3973,11 +4000,25 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 	}
 	defer unlock()
 
-	settled, isSettled, err := b.settledProvision(ctx, instanceID)
+	recorded, settled, isSettled, err := b.settledProvision(ctx, instanceID)
 	if err != nil {
 		logger.Error("provision of instance %s was not settled: %s", instanceID, err)
 
 		return osbapi.LastOperationResponse{}, err
+	}
+
+	// Only the instance's own record, read under the settle lock, says
+	// what the ended task belongs to. A task whose record holds anything
+	// but a provision is left unsettled: nothing is recorded, no
+	// completion step runs, and nothing is deleted.
+	if recorded.Action != operationTypeProvision {
+		logger.Error("Instance %s: BOSH task %d is %s, but the record holds a %q %s, not a provision, so the task is not settled as one and deployment %s is left as it is",
+			instanceID, taskID, task.State, recorded.Action, recorded.State, deploymentName)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("BOSH task %d is %s, and the instance's record holds a %q, not a provision", taskID, task.State, recorded.Action),
+		}, nil
 	}
 
 	if isSettled {
@@ -4012,7 +4053,7 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 	// The cleanup outlives this poll; it keeps the values of cleanupCtx
 	// and sets its own deadline.
 	b.track("cleanup of failed deployment "+deploymentName, func() {
-		b.cleanupFailedDeployment(cleanupCtx, operationTypeProvision, deploymentName, logger)
+		b.cleanupFailedDeployment(cleanupCtx, instanceID, deploymentName, logger)
 	})
 
 	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
@@ -4037,31 +4078,31 @@ func (b *Broker) recordSucceeded(ctx context.Context, instanceID, description st
 	}
 }
 
-// settledProvision reads the instance's record again and reports whether
-// it holds a provision that is already settled, with the answer that
-// settled it. A provision recorded as failed or succeeded is settled. The
-// read runs under a bound of its own.
-func (b *Broker) settledProvision(ctx context.Context, instanceID string) (osbapi.LastOperationResponse, bool, error) {
+// settledProvision reads the instance's record again and returns it. It
+// also reports whether the record holds a provision that is already
+// settled, with the answer that settled it. A provision recorded as failed
+// or succeeded is settled. The read runs under a bound of its own.
+func (b *Broker) settledProvision(ctx context.Context, instanceID string) (recordedOperation, osbapi.LastOperationResponse, bool, error) {
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
 
 	recorded, err := b.readRecordedOperation(readCtx, instanceID)
 	if err != nil {
-		return osbapi.LastOperationResponse{}, false, err
+		return recordedOperation{}, osbapi.LastOperationResponse{}, false, err
 	}
 
 	if recorded.Action != operationTypeProvision {
-		return osbapi.LastOperationResponse{}, false, nil
+		return recorded, osbapi.LastOperationResponse{}, false, nil
 	}
 
 	switch recorded.State {
 	case recordedStateFailed:
-		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, true, nil
+		return recorded, osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, true, nil
 	case internalVault.TaskStateSucceeded:
-		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: recorded.Description}, true, nil
+		return recorded, osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: recorded.Description}, true, nil
 	}
 
-	return osbapi.LastOperationResponse{}, false, nil
+	return recorded, osbapi.LastOperationResponse{}, false, nil
 }
 
 func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
@@ -4093,18 +4134,21 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 // failedDeploymentCleanupTimeout.
 //
 // Deleting the deployment is right only for a provision that never produced
-// a usable instance, so the cleanup refuses every other action before it
-// asks the director anything. A failed update or deprovision leaves a
-// deployment that holds a tenant's data, and nothing may route it here.
-func (b *Broker) cleanupFailedDeployment(ctx context.Context, action, deploymentName string, logger logger.Logger) {
-	if action != operationTypeProvision {
-		logger.Error("Refusing to delete deployment %s: the cleanup of a failed deployment runs only for a provision, not for a %q", deploymentName, action)
-
-		return
-	}
-
+// a usable instance. A failed update or deprovision leaves a deployment
+// that holds a tenant's data. So the cleanup takes no caller's word for
+// what failed: it reads the instance's own record under the settle lock,
+// and it asks the director nothing unless that record holds a provision
+// recorded as failed. A record it cannot read, or one that holds any
+// other action, an unknown one, or none, deletes nothing. The lock is
+// released before the director is asked, so a slow director holds up no
+// poll.
+func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failedDeploymentCleanupTimeout)
 	defer cancel()
+
+	if !b.recordHoldsFailedProvision(ctx, instanceID, deploymentName, logger) {
+		return
+	}
 
 	logger.Debug("checking if failed deployment exists and needs cleanup")
 
@@ -4119,6 +4163,39 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, action, deployment
 			logger.Info("Initiated cleanup of failed deployment %s (task %d)", deploymentName, cleanupTask.ID)
 		}
 	}
+}
+
+// recordHoldsFailedProvision reads the instance's record under the settle
+// lock and reports whether it holds a provision recorded as failed, which
+// is the only record a failed deployment may be deleted for. Every other
+// answer is logged as a refusal to delete deploymentName.
+func (b *Broker) recordHoldsFailedProvision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) bool {
+	unlock, err := b.lockSettle(ctx, instanceID)
+	if err != nil {
+		logger.Error("Refusing to delete deployment %s: the record of instance %s could not be read under the settle lock: %s", deploymentName, instanceID, err)
+
+		return false
+	}
+	defer unlock()
+
+	readCtx, cancelRead := recordContext(ctx)
+	defer cancelRead()
+
+	recorded, err := b.readRecordedOperation(readCtx, instanceID)
+	if err != nil {
+		logger.Error("Refusing to delete deployment %s: %s", deploymentName, err)
+
+		return false
+	}
+
+	if recorded.Action != operationTypeProvision || recorded.State != recordedStateFailed {
+		logger.Error("Refusing to delete deployment %s: the record of instance %s holds a %q %s, and only a failed provision's deployment is deleted",
+			deploymentName, instanceID, recorded.Action, recorded.State)
+
+		return false
+	}
+
+	return true
 }
 
 func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {

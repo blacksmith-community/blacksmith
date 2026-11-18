@@ -220,9 +220,10 @@ func (b *Broker) DeleteDeploymentWithRetry(ctx context.Context, instanceID, depl
 	return err
 }
 
-// CleanupFailedDeployment exposes the best-effort delete of a failed deployment.
-func (b *Broker) CleanupFailedDeployment(ctx context.Context, action, deploymentName string) {
-	b.cleanupFailedDeployment(ctx, action, deploymentName, logger.Get().Named("broker"))
+// CleanupFailedDeployment exposes the best-effort delete of a failed
+// deployment, which decides from the instance's own record.
+func (b *Broker) CleanupFailedDeployment(ctx context.Context, instanceID, deploymentName string) {
+	b.cleanupFailedDeployment(ctx, instanceID, deploymentName, logger.Get().Named("broker"))
 }
 
 // TearDownAbandonedDeployment exposes the delete of a deployment whose
@@ -529,4 +530,13 @@ func (b *Broker) CredentialReaders() map[string]func(ctx context.Context, instan
 			return err
 		},
 	}
+}
+
+// SettleReadoptedTask exposes the settling of a re-adopted operation of an
+// indexed instance whose record names a task, as re-adoption runs it
+// after a restart.
+func (b *Broker) SettleReadoptedTask(ctx context.Context, instanceID, deploymentName string, current RecordedOperation) (osbapi.LastOperationResponse, error) {
+	operation := readoptOperation{instanceID: instanceID, indexed: true, deploymentName: deploymentName, recorded: current}
+
+	return b.settleReadoptedTask(ctx, operation, current, logger.Get().Named("broker"))
 }
