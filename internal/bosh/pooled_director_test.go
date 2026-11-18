@@ -39,6 +39,7 @@ func finishedMockTask(taskID int, deployment string) *bosh.Task {
 type MockDirector struct {
 	delay     time.Duration
 	gate      chan struct{} // when set, CreateDeployment blocks until it is closed
+	entered   chan struct{} // when set, CreateDeployment signals it each time it is called
 	callCount int
 	mu        sync.Mutex
 }
@@ -81,6 +82,13 @@ func (m *MockDirector) GetDeployment(_ context.Context, name string) (*bosh.Depl
 
 func (m *MockDirector) CreateDeployment(_ context.Context, manifest string) (*bosh.Task, error) {
 	m.incrementCallCount()
+
+	if m.entered != nil {
+		select {
+		case m.entered <- struct{}{}:
+		default:
+		}
+	}
 
 	if m.gate != nil {
 		<-m.gate
@@ -1303,7 +1311,8 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 	t.Parallel()
 
 	mockDirector := &MockDirector{
-		delay: 2 * time.Second, // Very slow responses
+		delay:   2 * time.Second, // Very slow responses
+		entered: make(chan struct{}, 1),
 	}
 	pooled := bosh.NewPooledDirector(mockDirector, 1, 500*time.Millisecond, nil)
 	t.Cleanup(pooled.Stop)
@@ -1314,8 +1323,13 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 		_, _ = pooled.CreateDeployment(t.Context(), testManifest)
 	}()
 
-	// Give first request time to acquire the slot
-	time.Sleep(100 * time.Millisecond)
+	// The director is called only by a request that holds the slot, so the
+	// slot is taken once it signals.
+	select {
+	case <-mockDirector.entered:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the first request had not reached the director 20s after it started, so it never took the slot")
+	}
 
 	// Second request should timeout
 	start := time.Now()
