@@ -486,6 +486,10 @@ func (h *Handler) GetSettings(responseWriter http.ResponseWriter, req *http.Requ
 	result[settingErrandTimeout] = choice.Wait.String()
 	result[settingErrandTimeout+"_source"] = choice.Source
 
+	rollback := h.rollbackChoice(ctx)
+	result[settingUpdateRollback] = rollback.On
+	result[settingUpdateRollback+"_source"] = rollback.Source
+
 	response.HandleJSON(responseWriter, result, nil)
 }
 
@@ -563,6 +567,10 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 		return
 	}
 
+	if body.UpdateRollback != nil && !h.saveUpdateRollback(ctx, responseWriter, *body.UpdateRollback, result) {
+		return
+	}
+
 	response.HandleJSON(responseWriter, result, nil)
 }
 
@@ -572,6 +580,7 @@ type settingsRequest struct {
 	VaultMaxVersions   *int    `json:"vault_max_versions"`
 	ReconcilerInterval *string `json:"reconciler_interval"`
 	ErrandTimeout      *string `json:"errand_timeout"`
+	UpdateRollback     *bool   `json:"update_rollback"`
 }
 
 // Cleanup reports that the manual cleanup job does not exist. The reconciler
@@ -1163,7 +1172,7 @@ func (h *Handler) validateSettings(responseWriter http.ResponseWriter, body *set
 		}
 	}
 
-	if (body.VaultMaxVersions != nil || body.ErrandTimeout != nil) && h.vault == nil {
+	if (body.VaultMaxVersions != nil || body.ErrandTimeout != nil || body.UpdateRollback != nil) && h.vault == nil {
 		return refuse(http.StatusServiceUnavailable, "vault is not available")
 	}
 

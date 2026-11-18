@@ -10960,6 +10960,8 @@
     const reconcilerInterval = settings.reconciler_interval || '';
     const errandTimeout = settings.errand_timeout || '';
     const errandSource = settings.errand_timeout_source ? ` Now set by: ${settings.errand_timeout_source}.` : '';
+    const updateRollback = settings.update_rollback === true;
+    const rollbackSource = settings.update_rollback_source ? ` Now set by: ${settings.update_rollback_source}.` : '';
 
     let html = '<div class="blacksmith-settings">';
 
@@ -10994,6 +10996,18 @@
           <span id="help-errand-timeout" class="settings-hint">The longest the broker waits for a BOSH errand to finish, above zero. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(errandSource)}</span>
           <span id="feedback-errand-timeout" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settings-update-rollback">Update Rollback</label>
+          <div class="settings-input-group">
+            <select id="settings-update-rollback" class="settings-input" data-keep-key="settings:update-rollback" aria-describedby="help-update-rollback feedback-update-rollback">
+              <option value="false"${updateRollback ? '' : ' selected'}>Off</option>
+              <option value="true"${updateRollback ? ' selected' : ''}>On</option>
+            </select>
+            <button type="button" id="apply-update-rollback" class="settings-apply-btn" data-keep-key="settings:apply-update-rollback" aria-label="Apply update rollback">Apply</button>
+          </div>
+          <span id="help-update-rollback" class="settings-hint">When on, the broker redeploys the last good manifest once after a failed instance update. Off by default. The broker doesn't accept instance updates yet, so this has no effect until it does. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(rollbackSource)}</span>
+          <span id="feedback-update-rollback" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
+        </div>
       </div>
     `;
 
@@ -11021,7 +11035,8 @@
     const fields = [
       {id:'max-versions', key:'vault_max_versions', name:'Vault maximum versions', number:true},
       {id:'reconciler-interval', key:'reconciler_interval', name:'Reconciler interval', empty:'Enter an interval, for example 1h, 30m, or 5m.'},
-      {id:'errand-timeout', key:'errand_timeout', name:'Errand timeout', empty:'Enter a duration, for example 30m or 1h.'}
+      {id:'errand-timeout', key:'errand_timeout', name:'Errand timeout', empty:'Enter a duration, for example 30m or 1h.'},
+      {id:'update-rollback', key:'update_rollback', name:'Update rollback', boolean:true}
     ];
     fields.forEach(field => {
       const input = document.getElementById(`settings-${field.id}`);
@@ -11041,7 +11056,7 @@
       button.addEventListener('click', async () => {
         if (button.disabled) return;
         const raw = input.value.trim();
-        const value = field.number ? Number(raw) : raw;
+        const value = field.boolean ? raw === 'true' : (field.number ? Number(raw) : raw);
         const error = field.number
           ? (!raw || !Number.isInteger(value) || value < 0 || value > 1000 ? 'Enter a whole number between 0 and 1000.' : '')
           : (!raw ? field.empty : '');
@@ -11060,7 +11075,8 @@
             applied = String(data[field.key] ?? value);
             const unchanged = input.value.trim() === raw;
             if (unchanged) input.value = applied;
-            message(`${field.name} applied: ${applied}.${unchanged ? '' : ' You have unapplied changes.'}`, 'success');
+            const shown = field.boolean ? (applied === 'true' ? 'on' : 'off') : applied;
+            message(`${field.name} applied: ${shown}.${unchanged ? '' : ' You have unapplied changes.'}`, 'success');
             loadRecentChanges('settings');
           } else {
             if (res.status === 400 || res.status === 422) input.setAttribute('aria-invalid','true');

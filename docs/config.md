@@ -187,6 +187,7 @@ broker:
   write_timeout: 120            # HTTP write timeout (seconds)
   idle_timeout: 300             # HTTP idle timeout (seconds)
   errand_timeout: 30m           # Longest wait for a BOSH errand (duration)
+  update_rollback: false        # Redeploy the last good manifest after a failed update
   tls:                          # TLS configuration (see TLS section)
     enabled: true
     port: "443"
@@ -250,6 +251,23 @@ The broker takes the wait from the first of these that holds a usable value, in 
 - The default of `30m`
 
 Every layer takes a duration, so a bare number is refused, and so is a value of zero or less. A layer that is refused is skipped, and the broker writes a warning to its log that names the layer and the reason. A refused value in the configuration file also fails the load. The Settings page and the settings API show the wait now in effect, and the layer it comes from.
+
+#### `update_rollback` (boolean)
+**Default:** `false`
+
+When this is on, the broker redeploys the last good manifest once after a failed instance update. The broker doesn't accept instance updates yet, so for now the setting has no effect, and the Settings page shows it so an operator can choose before updates arrive.
+
+The broker takes the setting from the first of these that holds a usable value, in this order:
+
+- The runtime setting `update_rollback`, saved in Vault from the Settings page or with a POST to `/b/blacksmith/settings` whose body holds `{"update_rollback": true}` or `false`
+
+- The environment variable `BLACKSMITH_UPDATE_ROLLBACK`
+
+- This `broker.update_rollback` setting in the configuration file
+
+- The default of `false`
+
+The environment variable takes `true` or `false`, and the other forms Go's `strconv.ParseBool` reads, such as `1` and `0`. A layer whose value isn't a boolean is skipped, and the broker writes a warning to its log that names the layer and the reason. A value in the configuration file that isn't a boolean fails the load. When the Vault settings can't be read, the rollback counts as off rather than falling through to a lower layer, because a rollback is a redeploy and the broker never redeploys on a guess. The Settings page and the settings API show the value now in effect, and the layer it comes from.
 
 #### `tls` (TLSConfig)
 **Default:** See TLS Configuration section

@@ -51,6 +51,7 @@ $.Broker.Compression.ContentTypes[8]	string	"application/rss+xml"
 $.Broker.Compression.ContentTypes[9]	string	"application/atom+xml"
 $.Broker.Compression.ContentTypes[10]	string	"image/svg+xml"
 $.Broker.ErrandTimeout	*time.Duration	null
+$.Broker.UpdateRollback	*bool	null
 $.Vault.Address	string	"http://127.0.0.1:8200"
 $.Vault.Token	string	""
 $.Vault.Insecure	bool	false

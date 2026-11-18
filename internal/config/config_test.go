@@ -666,6 +666,46 @@ func TestVMMonitoringMaxConcurrentRejectsANegativeValue(t *testing.T) {
 	}
 }
 
+// broker.update_rollback is a boolean. It loads as written, an absent value
+// leaves it unset, so the default of off applies, and a value that isn't a
+// boolean fails the load.
+func TestBrokerUpdateRollbackLoadsAsWritten(t *testing.T) {
+	t.Parallel()
+
+	enabled := true
+
+	tests := []struct {
+		name    string
+		setting string
+		want    *bool
+	}{
+		{name: "absent", setting: ""},
+		{name: "on", setting: "broker:\n  update_rollback: true\n", want: &enabled},
+		{name: "off", setting: "broker:\n  update_rollback: false\n", want: new(bool)},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.ReadConfig(writeBOSHConfig(t, testCase.setting))
+			if err != nil {
+				t.Fatalf("ReadConfig: %v", err)
+			}
+
+			got := cfg.Broker.UpdateRollback
+			if (got == nil) != (testCase.want == nil) || (got != nil && *got != *testCase.want) {
+				t.Errorf("UpdateRollback = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+
+	_, err := config.ReadConfig(writeBOSHConfig(t, "broker:\n  update_rollback: sometimes\n"))
+	if err == nil {
+		t.Error("a broker.update_rollback that isn't a boolean loaded")
+	}
+}
+
 // broker.errand_timeout is a duration. It loads as written, and an absent
 // value means 30 minutes.
 func TestBrokerErrandTimeoutLoadsAndDefaultsToThirtyMinutes(t *testing.T) {

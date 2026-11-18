@@ -256,6 +256,10 @@ type BrokerConfig struct {
 	// BOSH errand to finish, as a duration such as 30m. Absent means 30
 	// minutes, and a value of zero or less fails the load.
 	ErrandTimeout *time.Duration `yaml:"errand_timeout,omitempty"`
+	// UpdateRollback turns on one redeploy of the last good manifest after
+	// a failed instance update. Absent means off. A value saved in the
+	// Vault settings or set in BLACKSMITH_UPDATE_ROLLBACK comes first.
+	UpdateRollback *bool `yaml:"update_rollback,omitempty"`
 }
 
 // DefaultErrandTimeout is the errand wait when broker.errand_timeout is
@@ -265,6 +269,11 @@ const DefaultErrandTimeout = 30 * time.Minute
 // ErrandTimeoutEnvKey is the environment variable that sets the errand wait,
 // below a value saved in the Vault settings and above broker.errand_timeout.
 const ErrandTimeoutEnvKey = "BLACKSMITH_ERRAND_TIMEOUT"
+
+// UpdateRollbackEnvKey is the environment variable that turns the rollback
+// after a failed update on or off, below a value saved in the Vault
+// settings and above broker.update_rollback.
+const UpdateRollbackEnvKey = "BLACKSMITH_UPDATE_ROLLBACK"
 
 // ErrandWait returns the longest the broker waits for an errand.
 func (b BrokerConfig) ErrandWait() time.Duration {
