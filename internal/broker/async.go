@@ -445,16 +445,17 @@ func (p *provisioningPhase) uploadReleases(ctx context.Context, manifestStr stri
 func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.Plan, manifestStr string) bool {
 	p.logger.Info("Deploying service instance to BOSH director with context ID %s", p.contextID)
 
+	deploymentName := vaultPkg.MintDeploymentName(plan.ID, p.instanceID)
+
 	// A deploy whose context ID is not on record could not be looked up
-	// if its answer were lost, so it is not sent.
-	err := p.broker.trackProgressWithContextID(ctx, p.instanceID, "provision", "Creating BOSH deployment", p.contextID, "", p.params, p.logger)
+	// if its answer were lost, so it is not sent. The record also names
+	// the deployment, so a failure's cleanup finds it without the index.
+	err := p.broker.trackProgressWithContextID(ctx, p.instanceID, "provision", "Creating BOSH deployment", p.contextID, deploymentName, p.params, p.logger)
 	if err != nil {
 		p.failStep(ctx, "Deployment creation was not started", err)
 
 		return false
 	}
-
-	deploymentName := vaultPkg.MintDeploymentName(plan.ID, p.instanceID)
 
 	// Only the deploy request carries the context ID, so a lookup by the ID
 	// finds the deploy task and nothing else the provision started.

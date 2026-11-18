@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -177,7 +178,7 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	}
 
 	operations, migrations := sortReadoptCandidates(candidates, logger)
-	cleanups := owedCleanups(candidates)
+	cleanups := owedCleanups(candidates, logger)
 
 	loaded := time.Now()
 	claimed := make([]readoptOperation, 0, len(operations))
@@ -562,23 +563,48 @@ func sortReadoptCandidates(candidates []*readoptCandidate, logger logger.Logger)
 	return operations, migrations
 }
 
-// owedCleanups returns the failed provisions of indexed instances whose
-// records still owe the delete of their deployments. A provision whose
-// index entry is gone is left alone, because no deployment name is on
-// record for it.
-func owedCleanups(candidates []*readoptCandidate) []owedCleanup {
+// owedCleanups returns the failed provisions whose records still owe the
+// delete of their deployments. An indexed instance's deployment is the one
+// its index entry names. An instance whose index entry is gone is cleaned
+// up only when its record names a deployment minted for it, and is
+// otherwise left alone, because nothing then proves the broker owns the
+// deployment.
+func owedCleanups(candidates []*readoptCandidate, logger logger.Logger) []owedCleanup {
 	var cleanups []owedCleanup
 
 	for _, candidate := range candidates {
 		recorded := candidate.recorded
 
-		if candidate.indexed && candidate.exists && candidate.parsed && recorded.Action == operationTypeProvision &&
-			recorded.State == recordedStateFailed && recorded.CleanupPending {
-			cleanups = append(cleanups, owedCleanup{instanceID: candidate.instanceID, deploymentName: candidate.deploymentName})
+		if !candidate.exists || !candidate.parsed || recorded.Action != operationTypeProvision ||
+			recorded.State != recordedStateFailed || !recorded.CleanupPending {
+			continue
 		}
+
+		deploymentName := candidate.deploymentName
+
+		if !candidate.indexed {
+			deploymentName = recorded.DeploymentName
+
+			if !mintedFor(deploymentName, candidate.instanceID) {
+				logger.Warning("Instance %s has no index entry, and its failed provision owes a cleanup, but its record names no deployment minted for it, so no deployment is deleted", candidate.instanceID)
+
+				continue
+			}
+		}
+
+		cleanups = append(cleanups, owedCleanup{instanceID: candidate.instanceID, deploymentName: deploymentName})
 	}
 
 	return cleanups
+}
+
+// mintedFor reports whether deploymentName is one MintDeploymentName gives
+// instanceID under some plan. The instance ID ends the name, so no other
+// instance's deployment has it.
+func mintedFor(deploymentName, instanceID string) bool {
+	planID, minted := strings.CutSuffix(deploymentName, "-"+instanceID)
+
+	return minted && planID != ""
 }
 
 // runOwedCleanups runs each owed cleanup in turn, under the service
@@ -938,18 +964,43 @@ func (b *Broker) settleReadoptedAnswer(ctx context.Context, operation readoptOpe
 		return
 	}
 
-	b.recordReadoptedFailure(ctx, operation.instanceID, current, response.Description, logger)
+	b.recordReadoptedFailure(ctx, operation.instanceID, operation.deploymentName, current, response.Description, logger)
 }
 
 // recordReadoptedFailure records the operation current holds as failed
 // with description, under the settle lock, while the record still holds
-// that operation unsettled.
-func (b *Broker) recordReadoptedFailure(ctx context.Context, instanceID string, current recordedOperation, description string, logger logger.Logger) {
+// that operation unsettled. A failed provision is recorded with the mark
+// that says the delete of its deployment is owed, as a provision that
+// fails on a poll is, and once that lands the cleanup of deploymentName
+// starts. When no deployment is named, the mark stays and no cleanup
+// starts.
+func (b *Broker) recordReadoptedFailure(ctx context.Context, instanceID, deploymentName string, current recordedOperation, description string, logger logger.Logger) {
+	if !b.writeReadoptedFailure(ctx, instanceID, current, description, logger) || current.Action != operationTypeProvision {
+		return
+	}
+
+	if deploymentName == "" {
+		logger.Warning("Instance %s: its failed provision owes a cleanup, and no deployment is named for it, so none is deleted", instanceID)
+
+		return
+	}
+
+	// The cleanup waits for the settle lock writeReadoptedFailure has
+	// released, and reads the record again under it.
+	b.track("cleanup of failed deployment "+deploymentName, func() {
+		b.cleanupFailedDeployment(ctx, instanceID, deploymentName, logger)
+	})
+}
+
+// writeReadoptedFailure writes the failure recordReadoptedFailure records,
+// and reports whether it landed. A failure that landed while its history
+// entry did not counts as landed.
+func (b *Broker) writeReadoptedFailure(ctx context.Context, instanceID string, current recordedOperation, description string, logger logger.Logger) bool {
 	unlock, err := b.lockSettle(ctx, instanceID)
 	if err != nil {
 		logger.Error("The failure of the %s of instance %s was not recorded: %s", current.Action, instanceID, err)
 
-		return
+		return false
 	}
 	defer unlock()
 
@@ -957,13 +1008,13 @@ func (b *Broker) recordReadoptedFailure(ctx context.Context, instanceID string, 
 	if err != nil {
 		logger.Error("The failure of the %s of instance %s was not recorded, because its record could not be read again: %s", current.Action, instanceID, err)
 
-		return
+		return false
 	}
 
 	if latest.Action != current.Action || latest.ContextID != current.ContextID || readoptTerminal(latest.State) {
 		logger.Info("The %s of instance %s was settled while re-adoption checked it", current.Action, instanceID)
 
-		return
+		return false
 	}
 
 	// An operation is accepted without the settle lock, so the failure
@@ -971,10 +1022,22 @@ func (b *Broker) recordReadoptedFailure(ctx context.Context, instanceID string, 
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	err = b.Vault.TrackFailed(recordCtx, instanceID, current.Action, description, latest.ContextID, latest.TaskID)
-	if err != nil {
-		logger.Error("The failure of the %s of instance %s was not recorded: %s", current.Action, instanceID, err)
+	if current.Action == operationTypeProvision {
+		err = b.Vault.TrackFailedCleanupPending(recordCtx, instanceID, current.Action, description, latest.ContextID, latest.TaskID)
+	} else {
+		err = b.Vault.TrackFailed(recordCtx, instanceID, current.Action, description, latest.ContextID, latest.TaskID)
 	}
+
+	switch {
+	case errors.Is(err, internalVault.ErrHistoryNotAppended):
+		logger.Warning("The failure of the %s of instance %s is recorded, and its history entry is not: %s", current.Action, instanceID, err)
+	case err != nil:
+		logger.Error("The failure of the %s of instance %s was not recorded: %s", current.Action, instanceID, err)
+
+		return false
+	}
+
+	return true
 }
 
 // readoptUnindexed settles a re-adopted operation whose index entry is
@@ -1071,7 +1134,7 @@ func (b *Broker) readoptUnindexedDelete(ctx context.Context, instanceID string, 
 	description := fmt.Sprintf("The delete of deployment %s with context ID %s %s, and the deployment still exists. Blacksmith does not send the delete again, so an operator must delete it", deploymentName, current.ContextID, outcome)
 	logger.Error("Instance %s: %s", instanceID, description)
 
-	b.recordReadoptedFailure(ctx, instanceID, current, description, logger)
+	b.recordReadoptedFailure(ctx, instanceID, deploymentName, current, description, logger)
 
 	return true
 }
@@ -1124,7 +1187,7 @@ func (b *Broker) readoptUnindexedProvision(ctx context.Context, instanceID strin
 	description := fmt.Sprintf("The index entry of instance %s is gone, so its provision cannot finish", instanceID)
 	logger.Warning("Instance %s: %s", instanceID, description)
 
-	b.recordReadoptedFailure(ctx, instanceID, current, description, logger)
+	b.recordReadoptedFailure(ctx, instanceID, current.DeploymentName, current, description, logger)
 
 	return true
 }

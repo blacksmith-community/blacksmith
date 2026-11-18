@@ -248,6 +248,13 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		}
 	}
 
+	// recordNamedProvision records a provision as an accepted one leaves
+	// it once its deploy is sent, naming name as its deployment.
+	recordNamedProvision := func(taskID int, name string) {
+		Expect(vaultClient.TrackProgressWithDeployment(ctx, instanceID, outcomeProvision, "Creating BOSH deployment", contextID, name, 0, nil)).To(Succeed())
+		Expect(vaultClient.TrackProgress(ctx, instanceID, outcomeProvision, fmt.Sprintf("BOSH deployment in progress (task %d)", taskID), taskID, nil)).To(Succeed())
+	}
+
 	recordDeprovision := func(taskID int) {
 		Expect(vaultClient.TrackProgressWithDeployment(ctx, instanceID, outcomeDeprovision, "Starting deprovisioning process", contextID, deploymentName, 0, nil)).To(Succeed())
 
@@ -961,6 +968,50 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Eventually(created, 10*time.Second).Should(BeClosed())
 		Eventually(recordState, 10*time.Second).Should(Equal("failed"))
 		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
+	})
+
+	It("boot re-adoption fails a provision whose index entry is gone and deletes the deployment its record names", func() {
+		recordNamedProvision(createTaskID, deploymentName)
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
+
+		boot(director)
+
+		Eventually(func() []string { return director.Calls(directorDeleteDeployment) }, 10*time.Second).Should(Equal([]string{deploymentName}))
+		Eventually(func() bool { return recorded().CleanupPending }, 10*time.Second).Should(BeFalse())
+		Expect(recorded().State).To(Equal("failed"))
+		Consistently(func() []string { return director.Calls(directorDeleteDeployment) }, 200*time.Millisecond).Should(HaveLen(1))
+	})
+
+	It("boot re-adoption fails a provision whose index entry is gone and whose record names no deployment, and deletes nothing", func() {
+		recordProvision(createTaskID)
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
+
+		brokerInstance := boot(director)
+
+		Eventually(recordState, 10*time.Second).Should(Equal("failed"))
+		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
+		Expect(recorded().CleanupPending).To(BeTrue(), "the failure does not say its cleanup is owed")
+		Consistently(func() []string { return director.Calls(directorDeleteDeployment) }, 200*time.Millisecond).Should(BeEmpty())
+	})
+
+	It("boot runs the owed cleanup of a failed provision whose index entry is gone, from the deployment its record names", func() {
+		recordNamedProvision(createTaskID, deploymentName)
+		Expect(vaultClient.TrackFailedCleanupPending(ctx, instanceID, outcomeProvision, "BOSH deployment task is error", contextID, createTaskID)).To(Succeed())
+
+		boot(director)
+
+		Eventually(func() []string { return director.Calls(directorDeleteDeployment) }, 10*time.Second).Should(Equal([]string{deploymentName}))
+		Eventually(func() bool { return recorded().CleanupPending }, 10*time.Second).Should(BeFalse())
+	})
+
+	It("boot leaves the owed cleanup of a failed provision without an index entry whose record names another instance's deployment", func() {
+		recordNamedProvision(createTaskID, planID+"-another-instance")
+		Expect(vaultClient.TrackFailedCleanupPending(ctx, instanceID, outcomeProvision, "BOSH deployment task is error", contextID, createTaskID)).To(Succeed())
+
+		boot(director)
+
+		Consistently(func() int { return len(director.Calls("GetDeployment")) + len(director.Calls(directorDeleteDeployment)) }, 300*time.Millisecond).Should(BeZero())
+		Expect(recorded().CleanupPending).To(BeTrue())
 	})
 
 	It("ReadoptInFlightOperations retries a failed listing and claims nothing until it succeeds", func() {

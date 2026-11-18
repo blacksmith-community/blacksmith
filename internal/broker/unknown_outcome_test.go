@@ -1632,6 +1632,12 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			return operation
 		}
 
+		It("a deploy's record names the deployment before the deploy is sent", func() {
+			loseDeploy()
+
+			Expect(recorded().DeploymentName).To(Equal(deploymentName), "the provision's record does not name the deployment its deploy creates")
+		})
+
 		It("an unknown delete is reported in progress with the context ID", func() {
 			contextID := loseDelete()
 
@@ -3907,7 +3913,12 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(recorded().State).To(Equal(outcomeStateUnknown))
 			})
 
-			It("answers in progress without asking when no plan names the deployment", func() {
+			It("answers in progress without asking when neither its record nor the poll names the deployment", func() {
+				// A record written before records named the deployment.
+				record := readRecord()
+				delete(record, internalVault.TaskRecordDeploymentNameKey)
+				Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
 				passGrace()
 
 				response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: outcomeProvision})
