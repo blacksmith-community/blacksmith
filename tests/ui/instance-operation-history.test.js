@@ -1,5 +1,5 @@
 const { test, expect, afterEach } = require('bun:test');
-const { main: { boot, idle, TEST_LIMIT } } = require('./certificates/harness.js');
+const { main: { boot, idle, until, TEST_LIMIT } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
@@ -184,8 +184,10 @@ t('an entry that stays in progress is not polled for ever', async () => {
   const { env, host, timers } = poll(RUNNING(), RUNNING);
   env.w.__T.mountOperationHistory(host, ID);
   let ticks = 0;
+  const stopped = () => /no longer refreshing/.test((host.querySelector('.operation-history .entity-status-note') || {}).textContent || '');
   for (; ticks < 500; ticks++) {
-    await idle(env);
+    // Each poll ends by queueing the next one or by showing the note that polling has stopped.
+    await until(() => timers.length > 0 || stopped(), 'the next poll or the note that polling stopped');
     if (!timers.length) break;
     timers.shift().fn();
   }
