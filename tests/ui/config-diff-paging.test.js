@@ -1,5 +1,5 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 
 const open=async(ids,opts={})=>{
  const env=boot({oat:true,noDialogs:true,...opts});const {w,d}=env;
@@ -9,14 +9,14 @@ const open=async(ids,opts={})=>{
   return j(200,{has_changes:true,diff_string:'changed '+q.get('from')+' to '+q.get('to')});
  }]);
  w.__routes.push([/\/b\/configs\/[^/]+$/,(u,o,j)=>j(200,{content:'c'})]);
- await w.showConfigVersions('cloud','alpha',ids[0]);await sleep(30);
- d.querySelector('.manifest-tab-btn[data-group="config-tabs"][data-tab="diffs"]').click();await sleep(30);
+ await w.showConfigVersions('cloud','alpha',ids[0]);await idle(w);
+ d.querySelector('.manifest-tab-btn[data-group="config-tabs"][data-tab="diffs"]').click();await idle(w);
  return env;
 };
 const btn=(d,k)=>d.querySelector('#diff-pair-'+k);
 const sel=d=>d.querySelector('#diff-version-selector');
-const pick=async(w,d,v)=>{sel(d).value=v;sel(d).dispatchEvent(new w.Event('change'));await sleep(30);};
-const press=async(d,k)=>{btn(d,k).click();await sleep(30);};
+const pick=async(w,d,v)=>{sel(d).value=v;sel(d).dispatchEvent(new w.Event('change'));await idle(w);};
+const press=async(d,k)=>{btn(d,k).click();await idle(d);};
 const state=d=>['first','prev','next','last'].map(k=>btn(d,k).disabled);
 
 test('the row reads first, previous, select, next, last with names and keys',async()=>{
@@ -82,7 +82,7 @@ test('a button loads the same diff and state as the select',async()=>{
  expect(req(b.calls)).toBe(req(a.calls));
  expect(b.calls.some(x=>/^(POST|PUT|DELETE) /.test(x))).toBe(false);
  // the retained pair survives a reopen, as it does for a select choice
- b.w.hideConfigVersionsModal();await b.w.showConfigVersions('cloud','alpha','4');await sleep(40);
+ b.w.hideConfigVersionsModal();await b.w.showConfigVersions('cloud','alpha','4');await idle(b);
  expect(sel(b.d).value).toBe('2|3');
  }finally{a.w.close();b.w.close()}
 });
@@ -90,10 +90,10 @@ test('a button loads the same diff and state as the select',async()=>{
 test('focus stays on the button after the diff reloads',async()=>{
  const {w,d}=await open(['5','4','3','2','1']);try{
  await pick(w,d,'3|4');
- btn(d,'next').focus();btn(d,'next').click();await sleep(30);
+ btn(d,'next').focus();btn(d,'next').click();await idle(w);
  expect(sel(d).value).toBe('4|5');
  expect(btn(d,'next').disabled).toBe(true);expect(d.activeElement).toBe(sel(d));
- btn(d,'prev').focus();btn(d,'prev').click();await sleep(30);
+ btn(d,'prev').focus();btn(d,'prev').click();await idle(w);
  expect(sel(d).value).toBe('3|4');expect(d.activeElement).toBe(btn(d,'prev'));
  }finally{w.close()}
 });
@@ -101,7 +101,7 @@ test('focus stays on the button after the diff reloads',async()=>{
 test('a button that disables under focus hands focus to the select',async()=>{
  const {w,d}=await open(['3','2','1']);try{
  await pick(w,d,'2|3');
- btn(d,'first').focus();btn(d,'first').click();await sleep(30);
+ btn(d,'first').focus();btn(d,'first').click();await idle(w);
  expect(sel(d).value).toBe('1|2');expect(btn(d,'first').disabled).toBe(true);
  expect(d.activeElement).toBe(sel(d));
  }finally{w.close()}
@@ -114,7 +114,7 @@ test('a single pair disables all four buttons and no pair leaves them off',async
  }finally{one.w.close()}
  const none=await open(['1']);try{
  expect(state(none.d)).toEqual([true,true,true,true]);
- none.d.querySelector('#diff-pair-first').click();await sleep(10);
+ none.d.querySelector('#diff-pair-first').click();await idle(none);
  expect(none.calls.some(x=>/\/diff\?/.test(x))).toBe(false);
  }finally{none.w.close()}
 });

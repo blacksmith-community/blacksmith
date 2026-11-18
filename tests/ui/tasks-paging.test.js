@@ -1,14 +1,14 @@
 const { test, expect } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main:{boot,sleep,idle,TEST_LIMIT} } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 
-const t = JSDOM ? test : test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const { row, history, serve } = require('./tasks-stub.js');
 
 const mount = async (all, shift, deep) => {
   const { w, d, calls } = boot();
-  await sleep(50);
+  await idle(w);
   const root = d.getElementById('blacksmith');
   root.classList.add('active');
   root.innerHTML = '<div class="entity-workspace" data-section="tasks"><div class="detail-content"></div></div>';
@@ -82,7 +82,7 @@ t('a failed Load more says loading more tasks failed and re-enables the button',
   try {
     w.__routes.unshift(['/b/tasks?', (u, o, json) => json(500, { error: 'x' })]);
     more(d).click();
-    await sleep(200);
+    await idle(w);
     const text = d.querySelector('#blacksmith .view-refresh-error').textContent;
     expect(text).toContain('Loading more tasks failed.');
     expect(text).not.toContain('The refresh failed.');
@@ -102,7 +102,7 @@ t('Load more asks for the next page by offset and the table then holds every row
     }]);
     const shown = ['done', 'error', 'processing', 'queued', 'cancelled'].map((s) => count(d, s)).join('/');
     more(d).click();
-    await sleep(200);
+    await idle(w);
     const url = calls.filter((c) => c.includes('/b/tasks?')).pop();
     expect(url).toContain('offset=200');
     expect(url).toContain('limit=200');
@@ -114,7 +114,7 @@ t('Load more asks for the next page by offset and the table then holds every row
     expect(rows(d)[399].querySelector('.task-id').textContent).toBe('51');
     expect(more(d)).not.toBeNull();
     more(d).click();
-    await sleep(200);
+    await idle(w);
     expect(rows(d).length).toBe(450);
     expect(more(d)).toBeNull();
   } finally { w.close(); }
@@ -126,11 +126,11 @@ t('chip counts come from the broker and stay the same as more rows are loaded', 
     expect(count(d, 'error') + '/' + count(d, 'done')).toBe('45/200+');
     expect(note(d)).toBe('A count stops at 200, so 200+ means that state has at least that many tasks.');
     more(d).click();
-    await sleep(200);
+    await idle(w);
     expect(rows(d).length).toBe(400);
     expect(count(d, 'error') + '/' + count(d, 'done')).toBe('45/200+');
     more(d).click();
-    await sleep(200);
+    await idle(w);
     expect(rows(d).length).toBe(450);
     expect(count(d, 'error') + '/' + count(d, 'done')).toBe('45/200+');
   } finally { w.close(); }
@@ -141,7 +141,7 @@ t('a task that moved down while paging is not shown twice', async () => {
   const { w, d } = await mount(history(450), () => 5);
   try {
     more(d).click();
-    await sleep(200);
+    await idle(w);
     const ids = rows(d).map((r) => r.querySelector('.task-id').textContent);
     expect(new Set(ids).size).toBe(ids.length);
   } finally { w.close(); }
@@ -159,7 +159,7 @@ t('a pressed chip asks the broker for its state, and Load more pages through tha
   try {
     pressOnly(d, 'error');
     await w.__T.refreshTasksTable();
-    await sleep(150);
+    await idle(w);
     const url = lastTasksUrl(calls);
     expect(url).toContain('states=error');
     expect(url).toContain('counts=1');
@@ -170,7 +170,7 @@ t('a pressed chip asks the broker for its state, and Load more pages through tha
     expect(count(d, 'error') + '/' + count(d, 'done')).toBe('200+/200+');
     expect(note(d)).toContain('200+ means');
     more(d).click();
-    await sleep(200);
+    await idle(w);
     const next = lastTasksUrl(calls);
     expect(next).toContain('states=error');
     expect(next).toContain('offset=200');
@@ -186,13 +186,13 @@ t('a pressed chip still shows its rows after a refresh, a keeping refresh, and a
   try {
     pressOnly(d, 'error');
     await w.__T.refreshTasksTable();
-    await sleep(150);
+    await idle(w);
     expect(rows(d).length).toBe(45);
     await w.__T.refreshTasksTable({ keep: true });
-    await sleep(150);
+    await idle(w);
     expect(rows(d).length).toBe(45);
     await w.__T.refreshTasksTable();
-    await sleep(150);
+    await idle(w);
     expect(rows(d).length).toBe(45);
     expect(d.querySelector('#blacksmith .toolbar-chips input[value="error"]').checked).toBe(true);
     expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').checked).toBe(false);
@@ -200,7 +200,7 @@ t('a pressed chip still shows its rows after a refresh, a keeping refresh, and a
     const done = d.querySelector('#blacksmith .toolbar-chips input[value="done"]');
     done.checked = true;
     done.dispatchEvent(new w.Event('change', { bubbles: true }));
-    await sleep(200);
+    await idle(w);
     expect(decodeURIComponent(lastTasksUrl(calls))).toContain('states=done,error');
     expect(rows(d).length).toBe(200);
   } finally { w.close(); }
@@ -221,7 +221,7 @@ t('an error task behind more than 200 newer tasks shows up when the Summary link
     ],
   });
   try {
-    await sleep(700);
+    await idle(w);
     expect(lastTasksUrl(calls)).toContain('states=error');
     expect(ids(d)).toEqual(['7']);
     expect(d.querySelector('#blacksmith .toolbar-chips input[value="error"]').checked).toBe(true);
@@ -233,13 +233,13 @@ t('a keeping refresh reads every page the reader loaded and stays on them', asyn
   const { w, d, calls } = await mount(history(900));
   try {
     more(d).click();
-    await sleep(200);
+    await idle(w);
     more(d).click();
-    await sleep(200);
+    await idle(w);
     expect(rows(d).length).toBe(600);
     const before = calls.length;
     await w.__T.refreshTasksTable({ keep: true });
-    await sleep(250);
+    await idle(w);
     const urls = calls.slice(before).filter((c) => c.includes('/b/tasks?'));
     expect(urls.length).toBe(3);
     expect(urls[0]).not.toContain('offset=');
@@ -259,7 +259,7 @@ t('a chip counts the error task behind 200 newer tasks, and it equals the rows p
     expect(count(d, 'error')).toBe('3');
     pressOnly(d, 'error');
     await w.__T.refreshTasksTable();
-    await sleep(150);
+    await idle(w);
     expect(rows(d).length).toBe(3);
     expect(count(d, 'error')).toBe('3');
   } finally { w.close(); }
@@ -282,7 +282,7 @@ t('at the broker ceiling the button is gone and the status says older tasks are 
   const { w, d } = await mount(history(500), undefined, 300);
   try {
     more(d).click();
-    await sleep(150);
+    await idle(w);
     expect(rows(d).length).toBe(300);
     expect(more(d)).toBeNull();
     const status = d.querySelector('.tasks-load-status');
@@ -295,9 +295,9 @@ t('a plain refresh goes back to the first page and its server counts', async () 
   const { w, d, calls } = await mount(history(450));
   try {
     more(d).click();
-    await sleep(200);
+    await idle(w);
     await w.__T.refreshTasksTable();
-    await sleep(200);
+    await idle(w);
     const url = calls.filter((c) => c.includes('/b/tasks?')).pop();
     expect(url).not.toContain('offset=');
     expect(rows(d).length).toBe(200);
@@ -325,7 +325,7 @@ t('a refresh whose answer names an uncounted state shows a question mark on that
       return json(200, { ...body, state_counts_unknown: ['queued'] });
     }]);
     await w.__T.refreshTasksTable();
-    await sleep(150);
+    await idle(w);
     expect(count(d, 'queued')).toBe('?');
     expect(count(d, 'done')).toBe('36');
     expect(d.querySelector('#blacksmith .toolbar-chips input[value="queued"]').disabled).toBe(false);
@@ -344,7 +344,7 @@ t('a narrowed Scope asks the broker for its team with counts, and the chips show
       ? serve(history(6, [3, 4]))(u)
       : serve(history(40))(u))]);
     await w.__T.refreshTasksTable();
-    await sleep(150);
+    await idle(w);
     const url = lastTasksUrl(calls);
     expect(url).toContain('team=valkey');
     expect(url).toContain('counts=1');

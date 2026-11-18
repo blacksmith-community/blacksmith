@@ -1,8 +1,8 @@
 const { test, expect } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main:{boot,sleep,idle,TEST_LIMIT} } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 
-const t = JSDOM ? test : test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const ID = 'inst-1';
 // The deployment's events, newest first, every one by a different action so a search can pick one out.
@@ -22,7 +22,7 @@ const serve = (all, deep = 2000) => (u) => {
 
 const mount = async (all, deep) => {
   const { w, d, calls } = boot();
-  await sleep(50);
+  await idle(w);
   const host = d.createElement('div');
   d.body.appendChild(host);
   w.__routes.push([`/b/${ID}/events`, (u, o, json) => json(200, serve(all, deep)(u))]);
@@ -61,13 +61,13 @@ t('Load more appends the next page by offset until none is left', async () => {
   const { w, d, host, calls } = await mount(history(250));
   try {
     more(host).click();
-    await sleep(100);
+    await idle(w);
     expect(calls.filter((c) => c.includes(`/b/${ID}/events`)).pop()).toContain('offset=100');
     expect(rows(host).length).toBe(200);
     expect(rows(host)[100].querySelector('.event-action').textContent).toBe('act-150');
     expect(status(host).textContent).toBe('Showing 200 events. Older events are available.');
     more(host).click();
-    await sleep(100);
+    await idle(w);
     expect(rows(host).length).toBe(250);
     expect(more(host)).toBeNull();
     expect(status(host).textContent).toBe('Showing all 250 events.');
@@ -79,19 +79,19 @@ t('a search covers rows added by Load more', async () => {
   // The refresh is the page's own path that attaches the search box after it renders the table.
   const { w, d, calls } = boot();
   try {
-    await sleep(50);
+    await idle(w);
     const root = d.getElementById('services');
     root.classList.add('active');
     root.innerHTML = '<div class="entity-workspace" data-section="events"><div class="detail-content"><div class="events-table-container"><button id="refresh"><span>Refresh</span></button></div></div></div>';
     w.currentInstanceInfo = { id: ID };
     w.__routes.push([`/b/${ID}/events`, (u, o, json) => json(200, serve(history(250))(u))]);
     await w.refreshServiceInstanceEvents(ID, { currentTarget: d.getElementById('refresh') });
-    await sleep(250);
+    await idle(w);
     expect(calls.filter((c) => c.includes(`/b/${ID}/events`)).pop()).toContain('paged=1');
     const host = root;
     expect(rows(host).length).toBe(100);
     more(host).click();
-    await sleep(100);
+    await idle(w);
     expect(rows(host).length).toBe(200);
     const input = d.getElementById('search-events-table-service-events');
     input.value = 'act-120';
@@ -101,7 +101,7 @@ t('a search covers rows added by Load more', async () => {
     expect(shown[0].querySelector('.event-action').textContent).toBe('act-120');
     // Rows added while a search is active are filtered by it too.
     more(host).click();
-    await sleep(100);
+    await idle(w);
     expect(rows(host).filter((r) => r.style.display !== 'none').length).toBe(1);
   } finally { w.close(); }
 });
@@ -114,7 +114,7 @@ t('an event that moved down a page is not added twice', async () => {
     w.__routes.length = 0;
     w.__routes.push([`/b/${ID}/events`, (u, o, json) => json(200, { events: all.slice(99, 199), has_more: true })]);
     more(host).click();
-    await sleep(100);
+    await idle(w);
     const ids = rows(host).map((r) => r.querySelector('.event-action').textContent);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids.length).toBe(199);
@@ -124,7 +124,7 @@ t('an event that moved down a page is not added twice', async () => {
 t('a bare array from an older broker still renders and offers no button', async () => {
   const { w, d } = boot();
   try {
-    await sleep(50);
+    await idle(w);
     const host = d.createElement('div');
     d.body.appendChild(host);
     w.__routes.push([`/b/${ID}/events`, (u, o, json) => json(200, history(5))]);
@@ -140,13 +140,13 @@ t('rows added by Load more fall into the sort the table already has', async () =
     w.__T.initializeAllTables();
     const header = Array.from(host.querySelectorAll('.events-table th')).find((th) => th.textContent === 'Task');
     header.click();
-    await sleep(50);
+    await idle(w);
     const tasks = () => rows(host).map((r) => Number(r.querySelector('.event-task').textContent));
     const sorted = tasks();
     expect(sorted).toEqual([...sorted].sort((a, b) => a - b));
     expect(sorted[0]).toBe(1151);
     more(host).click();
-    await sleep(150);
+    await idle(w);
     const after = tasks();
     expect(after.length).toBe(200);
     expect(after).toEqual([...after].sort((a, b) => a - b));
@@ -160,7 +160,7 @@ t('at the broker ceiling the button is gone and the status says older events are
     for (let page = 1; page < 3; page++) {
       const before = rows(host).length;
       more(host).click();
-      for (let waited = 0; rows(host).length === before && waited < 5000; waited += 20) await sleep(20);
+      for (let waited = 0; rows(host).length === before && waited < 5000; waited += 20) await idle(w);
     }
     expect(rows(host).length).toBe(300);
     expect(more(host)).toBeNull();
@@ -175,7 +175,7 @@ t('a page that adds no new rows ends the list instead of leaving a button that l
     // The broker keeps answering the same page, as an old broker that clamps the offset would.
     w.__routes.unshift([`/b/${ID}/events`, (u, o, json) => json(200, { events: history(250).slice(0, 100), has_more: true })]);
     more(host).click();
-    await sleep(150);
+    await idle(w);
     expect(rows(host).length).toBe(100);
     expect(more(host)).toBeNull();
     expect(status(host).textContent).toContain('not listed here');
@@ -187,7 +187,7 @@ t('a failed Load more says so in plain words and keeps the button', async () => 
   try {
     w.__routes.unshift([`/b/${ID}/events`, (u, o, json) => json(500, { error: 'boom' })]);
     more(host).click();
-    for (let waited = 0; !host.querySelector('.events-load-error') && waited < 3000; waited += 20) await sleep(20);
+    for (let waited = 0; !host.querySelector('.events-load-error') && waited < 3000; waited += 20) await idle(w);
     const note = host.querySelector('.events-load-error');
     expect(note.textContent).toBe('Older events could not be loaded.');
     expect(note.textContent).not.toContain('HTTP');
