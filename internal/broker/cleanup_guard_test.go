@@ -569,3 +569,67 @@ func TestCleanupFailedDeployment_KeepsTheRowWhenTheRecordCannotBeRead(t *testing
 		t.Fatalf("the cleanup deleted %v", deleted)
 	}
 }
+
+// Each write of a failed provision with the mark makes the instance a
+// suspect, so the sweep's passes between full scans read its record even
+// when the cleanup that follows the write never runs. Neither write runs
+// the cleanup itself, so the suspect can come only from the write.
+func TestFailureWrites_MakeTheInstanceASuspect(t *testing.T) {
+	t.Parallel()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start Vault: %v", err)
+	}
+
+	t.Cleanup(server.Close)
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+	ctx := context.Background()
+
+	writes := []struct {
+		name  string
+		write func(cleaner *broker.Broker, instanceID string, recorded broker.RecordedOperation) bool
+	}{
+		{"a poll records the failed task", func(cleaner *broker.Broker, instanceID string, recorded broker.RecordedOperation) bool {
+			return cleaner.RecordProvisionFailed(ctx, instanceID, recorded, "BOSH deployment task 7 is error", 7)
+		}},
+		{"re-adoption records the failure", func(cleaner *broker.Broker, instanceID string, recorded broker.RecordedOperation) bool {
+			return cleaner.WriteReadoptedFailure(ctx, instanceID, recorded, "The index entry is gone, so the provision cannot finish")
+		}},
+	}
+
+	for index, write := range writes {
+		t.Run(write.name, func(t *testing.T) {
+			t.Parallel()
+
+			instanceID := "failure-suspect-" + strconv.Itoa(index)
+
+			err := vaultClient.TrackProgressWithDeployment(ctx, instanceID, outcomeProvision, "Creating BOSH deployment", "context-7", standalonePlanID+"-"+instanceID, 0, nil)
+			if err == nil {
+				err = vaultClient.TrackProgress(ctx, instanceID, outcomeProvision, "BOSH deployment in progress (task 7)", 7, nil)
+			}
+
+			if err != nil {
+				t.Fatalf("failed to record the provision: %v", err)
+			}
+
+			cleaner := &broker.Broker{BOSH: cleanupGuardDirector(), Vault: vaultClient}
+
+			recorded, err := cleaner.RecordedOperation(ctx, instanceID)
+			if err != nil {
+				t.Fatalf("failed to read the record: %v", err)
+			}
+
+			if !write.write(cleaner, instanceID, recorded) {
+				t.Fatal("the failure was not recorded")
+			}
+
+			requireMarkKept(ctx, t, cleaner, instanceID)
+
+			if suspects := cleaner.OwedCleanupSuspects(); len(suspects) != 1 || suspects[0] != instanceID {
+				t.Fatalf("the sweep suspects %v after the failure was recorded, want only %s", suspects, instanceID)
+			}
+		})
+	}
+}

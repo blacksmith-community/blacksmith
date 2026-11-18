@@ -634,6 +634,20 @@ func (b *Broker) SettleLockFree(instanceID string, wait time.Duration) bool {
 	return true
 }
 
+// RecordProvisionFailed exposes the write a poll makes when the task of a
+// provision failed, which runs no cleanup of its own.
+func (b *Broker) RecordProvisionFailed(ctx context.Context, instanceID string, recorded RecordedOperation, description string, taskID int) bool {
+	_, landed := b.recordProvisionFailed(ctx, instanceID, recorded, description, taskID, logger.Get().Named("broker"))
+
+	return landed
+}
+
+// WriteReadoptedFailure exposes the write re-adoption makes when it fails
+// an operation, which runs no cleanup of its own.
+func (b *Broker) WriteReadoptedFailure(ctx context.Context, instanceID string, current RecordedOperation, description string) bool {
+	return b.writeReadoptedFailure(ctx, instanceID, current, description, logger.Get().Named("readopt"))
+}
+
 // SweepOwedCleanupsOnce runs one pass of the sweep of owed cleanups, with
 // interval as the interval between passes.
 func (b *Broker) SweepOwedCleanupsOnce(ctx context.Context, interval time.Duration) {

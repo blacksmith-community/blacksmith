@@ -1235,6 +1235,38 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
 	})
 
+	It("a poll of an unindexed provision in progress makes it a suspect, so the passes between full scans settle it", func() {
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
+
+		brokerInstance := newBroker(director)
+		now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+
+		brokerInstance.SetSweepClock(func() time.Time { return now })
+
+		// The first pass is a full scan, and runs before the provision is
+		// on record, so only the poll can make the instance a suspect
+		// before the next full scan six hours on.
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+		recordNamedProvision(createTaskID, deploymentName)
+
+		response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+			ServiceID: serviceID, PlanID: planID, Operation: outcomeProvision,
+		})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(response.State).To(Equal(osbapi.StateFailed))
+		Expect(brokerInstance.OwedCleanupSuspects()).To(ContainElement(instanceID), "the poll must make the instance a suspect")
+
+		now = now.Add(time.Minute)
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+		now = now.Add(time.Hour + time.Minute)
+		brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+		Eventually(recordState, 10*time.Second).Should(Equal("failed"))
+		Eventually(func() []string { return director.Calls(directorDeleteDeployment) }, 10*time.Second).Should(Equal([]string{deploymentName}))
+		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
+	})
+
 	It("the cleanup sweep leaves alone an unindexed provision in progress that a provision in this broker owns", func() {
 		recordNamedProvision(createTaskID, deploymentName)
 		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment})
