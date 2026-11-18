@@ -1,6 +1,6 @@
 // A booted Batch Operations tab with a scripted certificate inventory, for
 // the suites that drive the rotation flow's steps.
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle}}=require('./certificates/harness.js');
 
 const DAY=86400000;
 const iso=(days)=>new Date(Date.now()+days*DAY).toISOString();
@@ -13,10 +13,10 @@ async function setupRotate({certs=[],caps={rotation:{enabled:true},patch_in_plac
     ['/b/certificates/inventory',(u,o,j)=>j(200,inventory)],[/\/b\/upgrade\/tasks$/,(u,o,j)=>j(200,[])]);
   w.plansData={services:[{id:'svc1',name:'valkey'}]};
   w.serviceInstances=instances||Object.fromEntries([...new Set(certs.flatMap(c=>c.owners.map(o=>o.instance_id)))].map(id=>[id,{service_id:'svc1',plan_id:'p1',plan:{id:'p1',name:'small'}}]));
-  await sleep(40);
+  await idle(w);
   d.getElementById('upgrade').classList.add('active');
   await w.__T.initUpgradeTab();
-  if(start){ await w.__T.requestOperation('rotate'); await sleep(80); }
+  if(start){ await w.__T.requestOperation('rotate'); await idle(w); }
   return {...env,T:w.__T,sleep,setInventory:(next)=>{inventory={...inventory,...next};}};
 }
 module.exports={setupRotate,cert,iso,sleep};

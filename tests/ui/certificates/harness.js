@@ -25,6 +25,24 @@ const ICONS = fs.readFileSync(path.join(UI, 'icons.js'), 'utf8');
 // rail.js builds the navigation every full page boot has.
 const RAIL = fs.readFileSync(path.join(UI, 'rail.js'), 'utf8');
 
+// The page defers work through short timers, such as debounces and settling delays, and through animation frames. The
+// window counts the ones that are still to run, so idle() can wait for the page to finish instead of guessing a time.
+// A timer longer than SHORT_TIMER is a poll or a timeout, which a test never waits out, so it is not counted.
+const SHORT_TIMER=500;
+function trackTimers(w){
+  const live=new Set();
+  const wrap=(name,cancel)=>{
+    const start=w[name].bind(w), stop=w[cancel].bind(w);
+    w[name]=(fn,ms,...rest)=>{
+      if(typeof fn!=='function'||(name==='setTimeout'&&!(Number(ms||0)<=SHORT_TIMER))) return start(fn,ms,...rest);
+      let id; const run=(...a)=>{ live.delete(id); return fn(...a); };
+      id=name==='requestAnimationFrame'?start(run):start(run,ms,...rest); live.add(id); return id;
+    };
+    w[cancel]=(id)=>{ live.delete(id); return stop(id); };
+  };
+  wrap('setTimeout','clearTimeout'); wrap('requestAnimationFrame','cancelAnimationFrame');
+  w.__pendingTimers=()=>live.size;
+}
 const main=(()=>{
 const SRC=path.join(UI,'blacksmith.js');
 const src=fs.readFileSync(SRC,'utf8');
@@ -38,6 +56,7 @@ const NAMES=['syncTaskStateChips','retainView','fetchServiceDetail','formatConfi
 function boot(opts={}){
   const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:opts.url||'http://localhost/'});
   const w=dom.window;
+  trackTimers(w);
   const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
@@ -104,7 +123,20 @@ const until=async(condition,label,limit=UNTIL_LIMIT)=>{
     await sleep(5);
   }
 };
-return {boot,sleep,until,TEST_LIMIT,EVIL,day,now,iso};
+// Waits until the page has nothing left to run on a short timer or animation frame, and the promise work that came
+// before it has drained. Use it where a test used to sleep for the page to settle after a click, a boot, or a scripted
+// response. It takes the window, the document, or the env boot returned. It waits on the page itself, so a loaded machine only makes it wait longer.
+const tick=()=>new Promise(r=>setTimeout(r,0));
+const idle=async(page,label='the page to settle',limit=UNTIL_LIMIT)=>{
+  const w=page.w||page.defaultView||page;
+  const deadline=Date.now()+limit;
+  for(let quiet=0;quiet<3;){
+    if(Date.now()>deadline) throw new Error('Timed out waiting for '+label);
+    await tick();
+    quiet=w.__pendingTimers()===0?quiet+1:0;
+  }
+};
+return {boot,sleep,until,idle,trackTimers,TEST_LIMIT,EVIL,day,now,iso};
 })();
 
 const instance=(()=>{
@@ -117,6 +149,7 @@ const day=86400000, now=Date.now(), iso=(ms)=>new Date(ms).toISOString();
 function boot(opts={}){
   const dom=new JSDOM('<!DOCTYPE html><html><body><div id="blacksmith" class="tab-panel"></div><div id="services"></div><button id="opener">o</button></body></html>',{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;
+  trackTimers(w);
   const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
@@ -152,7 +185,7 @@ async function openInstanceTab(w,d,id){
   w.__T.CertOverview.mountInstance(d.getElementById('service-cert-overview-'+id),id);
   return box;
 }
-return {boot,openInstanceTab,sleep,EVIL,day,now,iso};
+return {boot,openInstanceTab,sleep,idle:main.idle,EVIL,day,now,iso};
 })();
 
 const fleet=(()=>{
@@ -196,6 +229,7 @@ function summarize(c){
 async function boot(opts={}){
   const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;
+  trackTimers(w);
   const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
@@ -260,7 +294,7 @@ async function boot(opts={}){
   return {w,d:w.document,server,log,errors,stubs};
 }
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
-return {boot,sleep,EVIL,day,now,iso};
+return {boot,sleep,idle:main.idle,EVIL,day,now,iso};
 })();
 
 module.exports = { main, instance, fleet, UI };
