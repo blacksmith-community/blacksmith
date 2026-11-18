@@ -1160,8 +1160,8 @@ func (b *Broker) releaseOperation(instanceID string, claim *operationClaim) {
 // SetTasksLoaded hands the broker the upgrade manager's loaded gate. Until
 // it closes, the stored upgrade and certificate tasks may not hold their
 // instances in the guard yet, so a provision or deprovision gets 422
-// ConcurrencyError and the platform retries it. The operations the broker
-// re-adopts at boot never wait for it.
+// ConcurrencyError, and the request has to be sent again. The operations
+// the broker re-adopts at boot never wait for it.
 func (b *Broker) SetTasksLoaded(loaded <-chan struct{}) {
 	b.tasksLoaded.Store(&loaded)
 }
@@ -1194,8 +1194,14 @@ var errSettleHeld = errors.New("the settle lock is held")
 // be sending a delete. A cleanup that takes the lock after the write
 // finds the deprovision on record, or its claim, and deletes nothing.
 // When the lock is not free within settleWaitForDeprovision, it returns
-// errSettleHeld and writes nothing. The wait is detached from the
-// request, as the write is. The lock is released on every way out, a
+// errSettleHeld and writes nothing, and the deprovision is answered 422
+// ConcurrencyError. The broker does not send the delete later on its own,
+// so the delete has to be sent again, and a cleanup holds the lock for up
+// to cleanupTimeout while the director answers it. Within one broker
+// process this keeps a cleanup's delete and a deprovision's delete from
+// overlapping. The lock lives in memory, so it does not hold back another
+// broker on the same Vault. The wait is detached from the request, as the
+// write is. The lock is released on every way out, a
 // panic included, so a failed write never leaves the instance locked.
 func (b *Broker) recordAcceptedDeprovision(ctx context.Context, instanceID string, superseded recordedOperation, logger logger.Logger) (bool, error) {
 	unlockSettle, err := b.lockSettleWithin(context.WithoutCancel(ctx), instanceID, settleWaitForDeprovision())
@@ -1241,8 +1247,8 @@ func (b *Broker) replacesFailedProvision(ctx context.Context, instanceID string,
 // have moved it away from the plan's name. When the index has no entry,
 // it is the deployment the plan and the instance ID name. When the entry
 // can't be read, the deployment is unknown, so it returns a 422
-// ConcurrencyError, which the platform retries, rather than reserve a
-// deployment the delete may not name.
+// ConcurrencyError, and the delete has to be sent again, rather than
+// reserve a deployment the delete may not name.
 func (b *Broker) deprovisionDeployment(ctx context.Context, instanceID, planID string, logger logger.Logger) (string, error) {
 	fallback := vaultPkg.MintDeploymentName(planID, instanceID)
 
@@ -1297,7 +1303,7 @@ func (b *Broker) tasksLoadingAnswer(instanceID, operation string, logger logger.
 
 // guardBusyAnswer is the 422 ConcurrencyError a provision or deprovision
 // gets while another operation holds the instance in the mutation guard,
-// so the platform retries it later.
+// so the request has to be sent again once that operation is done.
 func guardBusyAnswer(instanceID, operation string, err error, logger logger.Logger) error {
 	holder := "another operation"
 
@@ -1335,7 +1341,7 @@ func (b *Broker) operationActive(instanceID, operation string) bool {
 // with the first answer's operation once the provisionAsync goroutine has
 // started, because the first request was then accepted. While the first
 // request is still in its accept chain, its answer is not known yet, so an
-// identical request gets 422 ConcurrencyError and the platform retries.
+// identical request gets 422 ConcurrencyError, and has to be sent again.
 //
 // A provision that ReadoptInFlightOperations claimed after a restart holds
 // no request to compare, so the request is answered from the stored
@@ -1386,7 +1392,7 @@ func (b *Broker) answerProvisionWhileClaimed(ctx context.Context, instanceID str
 // answered 202 Accepted with the deprovision operation once the
 // deprovisionAsync goroutine has started. While the first deprovision is still
 // in its accept chain, its answer is not known yet, so the request gets 422
-// ConcurrencyError and the platform retries.
+// ConcurrencyError, and has to be sent again.
 func (b *Broker) answerDeprovisionWhileClaimed(instanceID string, held *operationClaim, logger logger.Logger) (osbapi.DeprovisionResponse, bool, error) {
 	switch {
 	case held == nil:

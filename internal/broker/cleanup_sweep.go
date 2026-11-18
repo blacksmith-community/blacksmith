@@ -59,7 +59,8 @@ type stalledProvision struct {
 // drops each one whose record no longer owes a cleanup. A full scan of
 // the index, the listing, and every record runs on the first pass and
 // then every cleanupSweepFullScanInterval, so an instance a suspect entry
-// missed waits at most that long.
+// missed waits that long, or longer while full scans keep failing. A
+// failed full scan leaves the next pass to try it again.
 type cleanupSweep struct {
 	// pass serializes passes, and guards everything below mu's fields.
 	pass     sync.Mutex
@@ -259,8 +260,11 @@ func (b *Broker) retryOwedCleanups(ctx context.Context, cleanups []owedCleanup, 
 // failure or deletes what its deploy left. Once the sweep has seen it so
 // for longer than provisionTimeout, by when no live provision can still
 // own it, the sweep claims it and settles it the way boot re-adoption
-// does, which records the failure with the mark and runs the cleanup. It
-// returns the provisions it is still watching, which stay suspects.
+// settles an unindexed provision. That waits for the task the record
+// names, when it names one, and looks no task up by the context ID. Then,
+// whatever the task's outcome, it records the provision as failed with
+// the mark and runs the cleanup. It returns the provisions it is still
+// watching, which stay suspects.
 func (b *Broker) adoptStalledProvisions(candidates []*readoptCandidate, now time.Time, full bool, logger logger.Logger) map[string]bool {
 	sweep := &b.sweep
 	watching := map[string]bool{}
