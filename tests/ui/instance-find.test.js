@@ -4,10 +4,10 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const envs=[];
 afterEach(()=>{while(envs.length){const e=envs.pop();e.w.blacksmithRouter?.destroy();e.w.close();}});
@@ -23,7 +23,7 @@ const fleet=()=>({
 const catalog={services:[{id:'redis',name:'redis',plans:[{id:'small',name:'small'}]},{id:'valkey',name:'valkey',plans:[{id:'solo',name:'solo'}]}]};
 const start=async(instances=fleet(),cat={services:[]})=>{
  const routes=[['/v2/catalog',(u,o,j)=>j(200,cat)],['/b/status',(u,o,j)=>j(200,build(instances))]];
- const env=boot({noDialogs:true,router:true,routes});envs.push(env);await sleep(150);return env;
+ const env=boot({noDialogs:true,router:true,routes});envs.push(env);await idle(env);return env;
 };
 const type=(w,box,value)=>{box.value=value;box.dispatchEvent(new w.Event('input',{bubbles:true}));};
 const shown=(d)=>[...d.querySelectorAll('.instances-overview-table tbody tr')].filter(r=>r.style.display!=='none').map(r=>r.dataset.instanceId);
@@ -92,10 +92,10 @@ t('the selected org and space are kept in the URL like the service filter',async
  const {w,d}=await start();
  const org=d.getElementById('org-filter');
  org.value='search';org.dispatchEvent(new w.Event('change',{bubbles:true}));
- await sleep(40);
+ await idle(w);
  expect(w.blacksmithViews.read('services')).toEqual({screen:'services',org:'search'});
  await w.blacksmithRouter.navigate({screen:'services',org:'payments',space:'staging'});
- await sleep(80);
+ await idle(w);
  expect(listed(d)).toEqual(['id-b']);
  expect(d.getElementById('space-filter').value).toBe('staging');
 });
@@ -208,7 +208,7 @@ t('the refresh button keeps the chosen org and space',async()=>{
  space.value='staging';space.dispatchEvent(new w.Event('change',{bubbles:true}));
  expect(listed(d)).toEqual(['id-b']);
  d.getElementById('refresh-services').click();
- await sleep(200);
+ await idle(w);
  expect(d.getElementById('org-filter').value).toBe('payments');
  expect(d.getElementById('space-filter').value).toBe('staging');
  expect(listed(d)).toEqual(['id-b']);
@@ -223,7 +223,7 @@ t('the palette status says how many instances lack cached addresses',async()=>{
  if(d.readyState==='loading')d.dispatchEvent(new w.Event('DOMContentLoaded'));
  d.getElementById('navigation-trigger').click();
  const input=d.getElementById('navigation-search'),status=dialog.querySelector('[role="status"]');
- const ask=async(q)=>{input.value=q;input.dispatchEvent(new w.Event('input'));await sleep(400);return status.textContent;};
+ const ask=async(q)=>{input.value=q;input.dispatchEvent(new w.Event('input'));await idle(w);return status.textContent;};
  expect(await ask('10.9.9.9')).toContain('1 of 4 instances have no VM addresses cached yet');
  expect(await ask('zzz-nothing')).toContain('No matches');
  w.serviceInstances=cached(fleet());

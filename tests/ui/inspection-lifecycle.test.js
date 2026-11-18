@@ -1,24 +1,25 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
-test('certificate fetch cannot open a drawer after route cancellation',async()=>{
- const {w,d}=boot();await sleep(50);let release;
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
+t('certificate fetch cannot open a drawer after route cancellation',async()=>{
+ const {w,d}=boot();await idle(w);let release;
  w.__routes.push(['/b/certificates/items/late',()=>new Promise(resolve=>release=()=>resolve({ok:true,json:async()=>({id:'late',name:'late'})}))]);
  const controller=new w.AbortController();const pending=w.blacksmithCerts.openItem('late',{signal:controller.signal});controller.abort();release();
  await expect(pending).resolves.toBe(false);expect(d.querySelector('.cert-fleet-drawer--open')===null).toBe(true);w.close();
 });
-test('missing certificate inspection reports a recoverable resource error',async()=>{
- const {w,d}=boot();await sleep(50);
+t('missing certificate inspection reports a recoverable resource error',async()=>{
+ const {w,d}=boot();await idle(w);
  await expect(w.blacksmithCerts.openItem('removed')).rejects.toThrow('This certificate is no longer available.');
  expect(d.querySelector('.cert-fleet-drawer--open')===null).toBe(true);w.close();
 });
-test('closing a pending certificate inspection invalidates its response',async()=>{
- const {w,d}=boot();await sleep(50);let release;
+t('closing a pending certificate inspection invalidates its response',async()=>{
+ const {w,d}=boot();await idle(w);let release;
  w.__routes.push(['/b/certificates/items/late',()=>new Promise(resolve=>release=()=>resolve({ok:true,json:async()=>({id:'late',name:'late'})}))]);
  const pending=w.blacksmithCerts.openItem('late');w.blacksmithCerts.closeDrawer({restore:false});release();
  await expect(pending).resolves.toBe(false);expect(d.querySelector('.cert-fleet-drawer--open')===null).toBe(true);w.close();
 });
-test('direct broker certificate inspection creates one body drawer and closes to its source',async()=>{
- const {w,d}=boot();await sleep(50);const cert={id:'direct',name:'Direct certificate',findings:[],owners:[]};
+t('direct broker certificate inspection creates one body drawer and closes to its source',async()=>{
+ const {w,d}=boot();await idle(w);const cert={id:'direct',name:'Direct certificate',findings:[],owners:[]};
  w.__routes.push(['/b/certificates/items/direct',(u,o,json)=>json(200,cert)]);
  const source={screen:'blacksmith',section:'certificates'};let restored;
  w.blacksmithRouter={applying:true,current:{...source,inspection:{kind:'certificate',id:'direct'}},closeInspection(){restored=source;this.current=source;w.blacksmithCerts.closeDrawer({restore:false});}};

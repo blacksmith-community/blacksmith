@@ -1,7 +1,7 @@
 const { test, expect, afterEach } = require('bun:test');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main: { boot, idle, TEST_LIMIT } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const envs = [];
 afterEach(() => { while (envs.length) envs.pop().w.close(); });
@@ -80,7 +80,8 @@ const poll = (history, body) => {
   const realSetTimeout = env.w.setTimeout.bind(env.w);
   let nextTimer = 0;
   env.w.setTimeout = (fn, ms, ...rest) => { if (ms !== 5000) return realSetTimeout(fn, ms, ...rest); timers.push({ fn, ms, id: -(++nextTimer) }); return -nextTimer; };
-  env.w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); };
+  const realClearTimeout = env.w.clearTimeout.bind(env.w);
+  env.w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); else realClearTimeout(id); };
   env.w.currentInstanceInfo = { id: ID };
   env.w.__routes.push([`/b/${ID}/details`, (u, o, j) => { env.fetches = (env.fetches || 0) + 1; return j(200, { history: body() }); }]);
   env.w.__T.renderServiceDetail(ID, DETAILS, { instance_id: ID, history });
@@ -98,11 +99,11 @@ t('while the latest entry is in progress the section refreshes every 5 seconds',
   let current = HISTORY.slice(0, 2);
   const { env, host, timers } = poll(current, () => current);
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   expect(timers.map((x) => x.ms)).toEqual([5000]);
   current = [...HISTORY.slice(0, 2), { timestamp: NOW - 10, action: 'provision', description: 'Provision finished', state: 'succeeded' }];
   timers.shift().fn();
-  await sleep(20);
+  await idle(env);
   expect(host.querySelector('section.operation-history tbody tr').children[2].textContent).toBe('Provision finished');
   expect(timers.length).toBe(0);
 });
@@ -110,18 +111,18 @@ t('while the latest entry is in progress the section refreshes every 5 seconds',
 t('polling stops when the operator leaves the instance', async () => {
   const { env, host, timers } = poll(HISTORY.slice(0, 2), () => HISTORY.slice(0, 2));
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   expect(timers.length).toBe(1);
   host.remove();
   timers.shift().fn();
-  await sleep(20);
+  await idle(env);
   expect(timers.length).toBe(0);
 });
 
 t('a finished operation is not polled', async () => {
   const { env, host, timers } = poll(HISTORY, () => HISTORY);
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   expect(timers.length).toBe(0);
 });
 
@@ -130,14 +131,14 @@ const RUNNING = () => HISTORY.slice(0, 2);
 t('leaving the Summary for another tab of the same instance stops the poll', async () => {
   const { env, host, timers } = poll(RUNNING(), RUNNING);
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   expect(timers.length).toBe(1);
   const fetched = env.fetches;
   env.w.__T.markSection(host, 'vms');
-  await sleep(0);
+  await idle(env);
   expect(timers.length).toBe(0);
   timers.splice(0).forEach((x) => x.fn());
-  await sleep(20);
+  await idle(env);
   expect(env.fetches).toBe(fetched);
   expect(timers.length).toBe(0);
 });
@@ -145,12 +146,12 @@ t('leaving the Summary for another tab of the same instance stops the poll', asy
 t('a tick that fires after the section changed neither fetches nor reschedules', async () => {
   const { env, host, timers, workspace } = poll(RUNNING(), RUNNING);
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   const fetched = env.fetches;
   const tick = timers.shift();
   workspace.dataset.section = 'events';
   tick.fn();
-  await sleep(20);
+  await idle(env);
   expect(env.fetches).toBe(fetched);
   expect(timers.length).toBe(0);
 });
@@ -163,18 +164,19 @@ t('a route change to another screen stops the poll', async () => {
   const env = boot({ noDialogs: true, routes });
   envs.push(env);
   const { w } = env;
-  await sleep(80);
+  await idle(env);
   const real = w.setTimeout.bind(w);
   const timers = [];
   let nextTimer = 0;
   w.setTimeout = (fn, ms, ...rest) => { if (ms !== 5000) return real(fn, ms, ...rest); timers.push({ fn, ms, id: -(++nextTimer) }); return -nextTimer; };
-  w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); };
+  const clear = w.clearTimeout.bind(w);
+  w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); else clear(id); };
   expect(await w.navigateToInstance(UUID)).toBe(true);
-  await sleep(40);
+  await idle(env);
   expect(timers.length).toBe(1);
   w.cancelInstanceSection();
   timers.splice(0).forEach((x) => x.fn());
-  await sleep(40);
+  await idle(env);
   expect(timers.length).toBe(0);
 });
 
@@ -183,7 +185,7 @@ t('an entry that stays in progress is not polled for ever', async () => {
   env.w.__T.mountOperationHistory(host, ID);
   let ticks = 0;
   for (; ticks < 500; ticks++) {
-    await sleep(2);
+    await idle(env);
     if (!timers.length) break;
     timers.shift().fn();
   }
@@ -195,7 +197,7 @@ t('an entry left in progress long ago is not polled at all', async () => {
   const old = [{ timestamp: NOW - 86400, action: 'provision', description: 'Deploying', state: 'in_progress' }];
   const { env, host, timers } = poll(old, () => old);
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   expect(timers.length).toBe(0);
   expect(host.querySelector('.operation-history').textContent).toContain('no longer refreshing');
 });
@@ -204,7 +206,7 @@ t('two mounts leave one pending timer', async () => {
   const { env, host, timers } = poll(RUNNING(), RUNNING);
   env.w.__T.mountOperationHistory(host, ID);
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(30);
+  await idle(env);
   expect(timers.length).toBe(1);
 });
 
@@ -216,21 +218,21 @@ t('a refresh already in flight cannot reschedule after a newer mount', async () 
   env.w.__T.mountOperationHistory(host, ID);
   env.w.__routes.shift();
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   release();
-  await sleep(30);
+  await idle(env);
   expect(timers.length).toBe(1);
 });
 
 t('an unchanged history is not redrawn, so focus stays on the task link', async () => {
   const { env, host, timers } = poll(RUNNING(), RUNNING);
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   const link = host.querySelector('a[data-history-task-id]');
   link.focus();
   const section = host.querySelector('[data-operation-history]');
   timers.shift().fn();
-  await sleep(20);
+  await idle(env);
   expect(host.querySelector('[data-operation-history]') === section).toBe(true);
   expect(env.d.activeElement === link).toBe(true);
 });
@@ -239,12 +241,12 @@ t('a changed history keeps focus on the same task link', async () => {
   let current = RUNNING();
   const { env, host, timers } = poll(current, () => current);
   env.w.__T.mountOperationHistory(host, ID);
-  await sleep(20);
+  await idle(env);
   host.querySelector('a[data-history-task-id]').focus();
   const key = env.d.activeElement.dataset.keepKey;
   current = [...current, { timestamp: NOW - 5, action: 'provision', description: 'Waiting for the deployment', state: 'in_progress', task_id: 4242 }];
   timers.shift().fn();
-  await sleep(20);
+  await idle(env);
   const link = host.querySelector('a[data-history-task-id]');
   expect(link.dataset.keepKey).toBe(key);
   expect(env.d.activeElement === link).toBe(true);
@@ -272,21 +274,22 @@ t('a retained shell restarts the poll', async () => {
   const env = boot({ noDialogs: true, routes });
   envs.push(env);
   const { w } = env;
-  await sleep(80);
+  await idle(env);
   const real = w.setTimeout.bind(w);
   const timers = [];
   let nextTimer = 0;
   w.setTimeout = (fn, ms, ...rest) => { if (ms !== 5000) return real(fn, ms, ...rest); timers.push({ fn, ms, id: -(++nextTimer) }); return -nextTimer; };
-  w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); };
+  const clear = w.clearTimeout.bind(w);
+  w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); else clear(id); };
   await w.navigateToInstance(UUID);
-  await sleep(40);
+  await idle(env);
   await w.navigateToInstance('other');
   w.cancelInstanceSection();
   timers.splice(0).forEach((x) => x.fn());
-  await sleep(40);
+  await idle(env);
   expect(timers.length).toBe(0);
   expect(await w.navigateToInstance(UUID)).toBe(true);
-  await sleep(40);
+  await idle(env);
   expect(timers.length).toBe(1);
 });
 
@@ -298,21 +301,22 @@ t('returning to the Summary through a retained view restarts the poll', async ()
   const env = boot({ noDialogs: true, routes });
   envs.push(env);
   const { w } = env;
-  await sleep(80);
+  await idle(env);
   const real = w.setTimeout.bind(w);
   const timers = [];
   let nextTimer = 0;
   w.setTimeout = (fn, ms, ...rest) => { if (ms !== 5000) return real(fn, ms, ...rest); timers.push({ fn, ms, id: -(++nextTimer) }); return -nextTimer; };
-  w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); };
+  const clear = w.clearTimeout.bind(w);
+  w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); else clear(id); };
   await w.navigateToInstance(ID);
   await w.loadInstanceSection(ID, 'details');
-  await sleep(40);
+  await idle(env);
   expect(timers.length).toBe(1);
   await w.loadInstanceSection(ID, 'vms');
-  await sleep(40);
+  await idle(env);
   expect(timers.length).toBe(0);
   // The Summary comes back from the retained view, not from a fresh render.
   await w.loadInstanceSection(ID, 'details');
-  await sleep(40);
+  await idle(env);
   expect(timers.length).toBe(1);
 });

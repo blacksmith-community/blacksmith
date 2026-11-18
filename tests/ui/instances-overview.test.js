@@ -1,5 +1,6 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 
 const instances=()=>({
  a1:{service_id:'redis',plan_id:'small',plan:{id:'small',name:'small'},instance_name:'cache-a',vm_status:'running'},
@@ -19,7 +20,7 @@ const scanned={state:'completed',completed_at:'2026-10-30T10:00:00Z',errors:[]};
 const inventory=(certs,status=200,scan=scanned)=>['/b/certificates/inventory?attention=true',(u,o,json)=>json(status,status===200?{certificates:certs,scan,summary:{certificates:certs.length}}:{error:'off'})];
 const owned=(...ids)=>({owners:ids.map(id=>({kind:'instance',instance_id:id}))});
 
-test('with no instance open the detail pane lists the instances in a searchable table',()=>{
+t('with no instance open the detail pane lists the instances in a searchable table',()=>{
  const {w,d}=boot();try{
   const host=mount(w,d);
   const pane=host.querySelector('.service-detail');
@@ -37,7 +38,7 @@ test('with no instance open the detail pane lists the instances in a searchable 
  }finally{w.close();}
 });
 
-test('a row opens its instance the way the card does',()=>{
+t('a row opens its instance the way the card does',()=>{
  const {w,d}=boot();try{
   const host=mount(w,d);
   const routed=[];
@@ -51,7 +52,7 @@ test('a row opens its instance the way the card does',()=>{
  }finally{w.close();}
 });
 
-test('the Certificates column counts attention certificates from one request',async()=>{
+t('the Certificates column counts attention certificates from one request',async()=>{
  const {w,d,calls}=boot({routes:[inventory([
   {id:'x1',...owned('a1')},{id:'x2',...owned('a1','c3')},{id:'x3',...owned('a1')},{id:'x4',owners:[{kind:'broker'}]}])]});
  try{
@@ -66,7 +67,7 @@ test('the Certificates column counts attention certificates from one request',as
  }finally{w.close();}
 });
 
-test('a failed certificates request says Unknown and never zero',async()=>{
+t('a failed certificates request says Unknown and never zero',async()=>{
  const {w,d}=boot({routes:[inventory([],403)]});
  try{
   const host=mount(w,d);
@@ -76,7 +77,7 @@ test('a failed certificates request says Unknown and never zero',async()=>{
  }finally{w.close();}
 });
 
-test('an instance the scan could not read is Unknown, not zero',async()=>{
+t('an instance the scan could not read is Unknown, not zero',async()=>{
  const scan={...scanned,errors:[{instance_id:'b2',error:'unreachable'},{instance_id:'c3',error:'timeout',last_success_at:'2026-10-29T10:00:00Z'}]};
  const {w,d}=boot({routes:[inventory([{id:'x1',...owned('a1')}],200,scan)]});
  try{
@@ -87,7 +88,7 @@ test('an instance the scan could not read is Unknown, not zero',async()=>{
  }finally{w.close();}
 });
 
-test('a platform-owned certificate is not counted against an instance',async()=>{
+t('a platform-owned certificate is not counted against an instance',async()=>{
  const {w,d}=boot({routes:[inventory([{id:'p1',owners:[{kind:'platform',instance_name:'cache-a'}]},{id:'x1',...owned('a1')}])]});
  try{
   const host=mount(w,d);
@@ -97,7 +98,7 @@ test('a platform-owned certificate is not counted against an instance',async()=>
  }finally{w.close();}
 });
 
-test('a first scan that never completed leaves every count Unknown',async()=>{
+t('a first scan that never completed leaves every count Unknown',async()=>{
  for(const scan of [{state:'never'},{state:'failed',completed_at:'2026-10-30T10:00:00Z'}]){
   const {w,d}=boot({routes:[inventory([],200,scan)]});
   try{
@@ -109,7 +110,7 @@ test('a first scan that never completed leaves every count Unknown',async()=>{
  }
 });
 
-test('instance names and services are escaped in the table',()=>{
+t('instance names and services are escaped in the table',()=>{
  const {w,d}=boot();try{
   const evil='"><img src=x onerror=alert(1)>';
   w.plansData=null;
@@ -120,24 +121,24 @@ test('instance names and services are escaped in the table',()=>{
  }finally{w.close();}
 });
 
-test('All instances brings the overview back after an instance was open',async()=>{
+t('All instances brings the overview back after an instance was open',async()=>{
  const {w,d,calls}=boot({noDialogs:true,routes:[
   ['/b/certificates/inventory',(u,o,json)=>json(200,{certificates:[],scan:scanned,summary:{certificates:0}})],
   ['/v2/catalog',(u,o,json)=>json(200,catalog)],
   ['/b/status',(u,o,json)=>json(200,{env:'lab',deployment:'blacksmith',plans:{},instances:instances()})]]});
  try{
-  await sleep(150);
+  await idle(w);
   await w.blacksmithViews.activate({screen:'services'},{});
   const table=()=>d.querySelectorAll('#services .instances-overview-table tbody tr').length;
   expect(table()).toBe(3);
   await w.blacksmithViews.activate({screen:'services',instance:'a1',section:'details'},{}).catch(()=>{});
-  await sleep(100);
+  await idle(w);
   expect(d.getElementById('services').classList.contains('instance-open')).toBe(true);
   expect(table()).toBe(0);
   await w.blacksmithViews.activate({screen:'services'},{});
   expect(d.getElementById('services').classList.contains('instance-open')).toBe(false);
   expect(table()).toBe(3);
-  await sleep(100);
+  await idle(w);
   expect([...d.querySelectorAll('#services .instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim())).toEqual(['0','0','0']);
   // The open instance is kept, so opening it again brings its screen back.
   await w.blacksmithViews.activate({screen:'services',instance:'a1',section:'details'},{}).catch(()=>{});

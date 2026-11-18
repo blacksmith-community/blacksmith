@@ -1,7 +1,7 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 test('resurrection exposes state, prevents duplicate writes and preserves failures',async()=>{
- const {w,d,calls}=boot();await sleep(100);
+ const {w,d,calls}=boot();await idle(w);
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([{id:'vm',resurrection_paused:false}],'i');
  const button=d.getElementById('resurrection-slider-i');
@@ -24,4 +24,4 @@ test('resurrection exposes state, prevents duplicate writes and preserves failur
  await w.toggleResurrection('i');expect(refreshed).toBe(true);expect(button.textContent).toBe('Disable');
  w.initializeResurrectionToggle('i',[]);expect(button.disabled).toBe(true);
  w.close();
-});
+},TEST_LIMIT);

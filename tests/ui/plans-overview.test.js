@@ -1,5 +1,6 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 
 const data=()=>({services:[
  {id:'redis',name:'Redis',plans:[
@@ -14,7 +15,7 @@ const mount=(w,d,input=data())=>{
 };
 const cells=(row)=>[...row.children].map(c=>c.textContent.replace(/\s+/g,' ').trim());
 
-test('with no plan open the detail pane compares every plan in one table',()=>{
+t('with no plan open the detail pane compares every plan in one table',()=>{
  const {w,d}=boot();try{
   const host=mount(w,d);
   const pane=host.querySelector('.plan-detail');
@@ -34,7 +35,7 @@ test('with no plan open the detail pane compares every plan in one table',()=>{
  }finally{w.close();}
 });
 
-test('numeric columns carry sort values',()=>{
+t('numeric columns carry sort values',()=>{
  const {w,d}=boot();try{
   const host=mount(w,d);
   const rows=[...host.querySelectorAll('.plans-overview-table tbody tr')];
@@ -43,7 +44,7 @@ test('numeric columns carry sort values',()=>{
  }finally{w.close();}
 });
 
-test('a pointer click on a row opens that plan, and the name is a real link',()=>{
+t('a pointer click on a row opens that plan, and the name is a real link',()=>{
  const {w,d}=boot();try{
   const host=mount(w,d);
   const opened=[];
@@ -59,7 +60,7 @@ test('a pointer click on a row opens that plan, and the name is a real link',()=
  }finally{w.close();}
 });
 
-test('plan names are escaped in the table',()=>{
+t('plan names are escaped in the table',()=>{
  const {w,d}=boot();try{
   const evil='"><img src=x onerror=alert(1)>';
   const host=mount(w,d,{services:[{id:'s',name:evil,plans:[{id:'p',name:evil,vms:[{name:evil}]}]}]});
@@ -68,12 +69,12 @@ test('plan names are escaped in the table',()=>{
  }finally{w.close();}
 });
 
-test('a route to the plans overview leaves an overview already showing alone',async()=>{
+t('a route to the plans overview leaves an overview already showing alone',async()=>{
  const {w,d}=boot({noDialogs:true,routes:[
   ['/v2/catalog',(u,o,json)=>json(200,data())],
   ['/b/status',(u,o,json)=>json(200,{env:'lab',deployment:'blacksmith',instances:{},plans:{}})]]});
  try{
-  await sleep(150);
+  await idle(w);
   await w.blacksmithViews.activate({screen:'blacksmith',section:'plans'},{});
   const first=d.querySelector('#blacksmith .plans-overview');
   expect(first).not.toBeNull();

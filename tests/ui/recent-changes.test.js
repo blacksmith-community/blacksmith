@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -43,13 +43,13 @@ const settingsScreen=async(state)=>{
   ['/b/blacksmith/settings',(u,o,j)=>j(200,{success:true,reconciler_interval:'30m'})]
  ]});
  envs.push(env);
- await sleep(60);
+ await idle(env);
  // The page's own boot requests are not stubbed here, so their noise is cleared first.
  env.errors.length=0;
  const host=env.d.createElement('div'); env.d.body.appendChild(host);
  host.innerHTML=env.w.__T.renderBlacksmithSettings({vault_max_versions:5,reconciler_interval:'1h'},{});
  await env.w.__T.setupBlacksmithSettingsHandlers();
- await sleep(20);
+ await idle(env);
  return {...env,host,section:()=>host.querySelector('[data-recent-changes="settings"]')};
 };
 
@@ -94,7 +94,7 @@ t('a failed load shows the failure panel and Retry loads the list',async()=>{
  expect(s.errors).toEqual([]);
  state.fail=false;
  retry.click();
- await sleep(20);
+ await idle(s);
  expect(section.querySelector('[data-load-error]')).toBeNull();
  expect(rows(section).length).toBe(3);
 });
@@ -113,7 +113,7 @@ t('a successful Apply loads the list again',async()=>{
  const input=s.host.querySelector('#settings-reconciler-interval');
  input.value='30m';
  s.host.querySelector('#apply-reconciler-interval').click();
- await sleep(40);
+ await idle(s);
  expect(state.requests.length).toBe(2);
  expect(rows(s.section()).length).toBe(3);
 });
@@ -130,11 +130,11 @@ const brokerScreen=async(state)=>{
  ]});
  envs.push(env);
  env.w.eval(OAT);
- await sleep(60);
+ await idle(env);
  const host=env.d.createElement('div'); env.d.body.appendChild(host);
  host.innerHTML=env.w.__T.renderBrokerTab();
  await env.w.__T.initBrokerTab();
- await sleep(20);
+ await idle(env);
  return {...env,host,section:()=>host.querySelector('[data-recent-changes="endpoints"]')};
 };
 
@@ -156,10 +156,11 @@ t('deleting a registration loads the endpoint changes again',async()=>{
  const state={changes:endpointChanges,requests:[]};
  const s=await brokerScreen(state);
  const done=s.w.__T.CFRegistrationManager.deleteRegistration('r1');
- await sleep(20);
+ await idle(s);
  s.d.querySelector('[data-dialog-role="confirm"]').click();
  await done;
- await sleep(20);
+ await idle(s);
+
  expect(state.requests.length).toBe(2);
 });
 

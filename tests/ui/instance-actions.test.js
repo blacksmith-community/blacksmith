@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // Restart and Recreate on a service instance's VMs tab ask in the page's
 // dialog, which names the instance and the action, and send nothing until
@@ -45,7 +45,7 @@ t('the broker VMs view shows no instance actions',()=>{
 for(const [action,label] of [['restart','Restart'],['recreate','Recreate']]){
  t(`${label} asks in the page dialog naming the instance, and Cancel sends nothing`,async()=>{
   const env=mount(); const {host,d}=env;
-  actionButton(host,action).click(); await sleep(10);
+  actionButton(host,action).click(); await idle(env);
   const overlay=dialog(d);
   expect(overlay.open).toBe(true);
   expect(overlay.querySelector('.dialog-modal-title').textContent).toBe(`${label} orders-cache?`);
@@ -54,7 +54,7 @@ for(const [action,label] of [['restart','Restart'],['recreate','Recreate']]){
   expect(text).toContain('7a1b');
   expect(overlay.querySelector('[data-dialog-role="confirm"]').textContent).toBe(label);
   expect(posts(env,action)).toEqual([]);
-  overlay.querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
+  overlay.querySelector('[data-dialog-role="cancel"]').click(); await idle(env);
   expect(posts(env,action)).toEqual([]);
   expect(status(d).textContent).toBe('');
  });
@@ -63,15 +63,15 @@ for(const [action,label] of [['restart','Restart'],['recreate','Recreate']]){
   const env=mount(); const {w,host,d}=env;
   let release;
   w.__routes.unshift([`/b/7a1b/${action}`,()=>new Promise(resolve=>{release=resolve;})]);
-  actionButton(host,action).click(); await sleep(10);
-  dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(10);
+  actionButton(host,action).click(); await idle(env);
+  dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await idle(env);
   expect(posts(env,action).length).toBe(1);
   expect(actionButton(host,'restart').disabled).toBe(true);
   expect(actionButton(host,'recreate').disabled).toBe(true);
   expect(status(d).textContent).toContain(`${label} of orders-cache is starting`);
-  actionButton(host,action).click(); await sleep(10);
+  actionButton(host,action).click(); await idle(env);
   expect(dialog(d).open).toBe(false);
-  release(env.json(202,{instance_id:'7a1b',deployment:'redis-small-7a1b',operation:action,task_id:4321,state:'queued'})); await sleep(10);
+  release(env.json(202,{instance_id:'7a1b',deployment:'redis-small-7a1b',operation:action,task_id:4321,state:'queued'})); await idle(env);
   expect(posts(env,action).length).toBe(1);
   expect(actionButton(host,'restart').disabled).toBe(false);
   const link=status(d).querySelector('a.bosh-task-link');
@@ -88,8 +88,8 @@ for(const [action,label] of [['restart','Restart'],['recreate','Recreate']]){
 t('a refused action shows the reason as text and leaves no task link',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.__routes.unshift(['/b/7a1b/restart',(u,o,json)=>json(409,{success:false,code:'instance_busy',error:'instance 7a1b is busy with certificate rotation'})]);
- actionButton(host,'restart').click(); await sleep(10);
- dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ actionButton(host,'restart').click(); await idle(env);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await idle(env);
  expect(status(d).textContent).toContain('Restart of orders-cache failed');
  expect(status(d).textContent).toContain('instance 7a1b is busy with certificate rotation');
  expect(status(d).dataset.state).toBe('failed');
@@ -100,8 +100,8 @@ t('a refused action shows the reason as text and leaves no task link',async()=>{
 t('the started task stays linked when the VMs table renders again',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.__routes.unshift(['/b/7a1b/recreate',(u,o,json)=>json(202,{task_id:99,state:'queued'})]);
- actionButton(host,'recreate').click(); await sleep(10);
- dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ actionButton(host,'recreate').click(); await idle(env);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await idle(env);
  host.innerHTML=w.__T.formatVMs(vms,'7a1b');
  const link=status(d).querySelector('a.bosh-task-link');
  expect(link.textContent).toBe('BOSH task 99');
@@ -111,16 +111,16 @@ t('the started task stays linked when the VMs table renders again',async()=>{
 t('an instance without a recorded name is named by its ID',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.serviceInstances={};
- actionButton(host,'restart').click(); await sleep(10);
+ actionButton(host,'restart').click(); await idle(env);
  expect(dialog(d).querySelector('.dialog-modal-title').textContent).toBe('Restart 7a1b?');
- dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
+ dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await idle(env);
 });
 
 t('a lost director answer says the action may have started and links the deployment tasks',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.__routes.unshift(['/b/7a1b/restart',(u,o,json)=>json(504,{success:false,code:'outcome_unknown',error:"The director's answer was lost.",instance_id:'7a1b',deployment:'redis-small-7a1b',operation:'restart'})]);
- actionButton(host,'restart').click(); await sleep(10);
- dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ actionButton(host,'restart').click(); await idle(env);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await idle(env);
  const node=status(d);
  expect(node.dataset.state).toBe('unknown');
  expect(node.textContent).toContain('Restart of orders-cache may have started');
@@ -133,17 +133,17 @@ t('a lost director answer says the action may have started and links the deploym
  const keys=[...d.querySelectorAll('[data-keep-key]')].map(n=>n.dataset.keepKey);
  expect(new Set(keys).size).toBe(keys.length);
  // The next attempt warns that the last one may have started.
- actionButton(host,'recreate').click(); await sleep(10);
+ actionButton(host,'recreate').click(); await idle(env);
  expect(dialog(d).textContent).toContain('The last restart of orders-cache may have started');
- dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
+ dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await idle(env);
  expect(posts(env,'recreate')).toEqual([]);
 });
 
 t('a locked deployment names the action and links the running task',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.__routes.unshift(['/b/7a1b/recreate',(u,o,json)=>json(409,{success:false,code:'deployment_locked',error:'The director is running task 812.',instance_id:'7a1b',deployment:'redis-small-7a1b',operation:'recreate',task_id:812})]);
- actionButton(host,'recreate').click(); await sleep(10);
- dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ actionButton(host,'recreate').click(); await idle(env);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await idle(env);
  const node=status(d);
  expect(node.dataset.state).toBe('blocked');
  expect(node.textContent).toBe('Recreate of orders-cache didn\'t start, because BOSH task 812 is running on its deployment.');
@@ -161,10 +161,10 @@ t('the dialog names the org and space when the broker knows them',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.serviceInstances['7a1b'].organization_name='payments';
  w.serviceInstances['7a1b'].space_name='prod';
- actionButton(host,'restart').click(); await sleep(10);
+ actionButton(host,'restart').click(); await idle(env);
  const rows=[...dialog(d).querySelectorAll('.dialog-modal-details li')].map(n=>n.textContent);
  expect(rows).toEqual(['Instance: orders-cache','Instance ID: 7a1b','Organization: payments','Space: prod']);
- dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
+ dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await idle(env);
 });
 
 // When the broker's own answer never reaches the browser, the action may
@@ -181,8 +181,8 @@ const expectUnknown=(d,label)=>{
 t('a fetch that fails shows the unknown outcome',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.__routes.unshift(['/b/7a1b/restart',()=>Promise.reject(new w.TypeError('Failed to fetch'))]);
- actionButton(host,'restart').click(); await sleep(10);
- dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ actionButton(host,'restart').click(); await idle(env);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await idle(env);
  expectUnknown(d,'Restart');
  expect(actionButton(host,'restart').disabled).toBe(false);
 });
@@ -190,16 +190,16 @@ t('a fetch that fails shows the unknown outcome',async()=>{
 t('a gateway error with no broker code shows the unknown outcome',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.__routes.unshift(['/b/7a1b/recreate',()=>Promise.resolve({ok:false,status:504,statusText:'Gateway Timeout',json:()=>Promise.reject(new w.SyntaxError('Unexpected token <')),text:()=>Promise.resolve('<html>Gateway Timeout</html>')})]);
- actionButton(host,'recreate').click(); await sleep(10);
- dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ actionButton(host,'recreate').click(); await idle(env);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await idle(env);
  expectUnknown(d,'Recreate');
 });
 
 t('a broker 5xx that carries its own code still reads as a failure',async()=>{
  const env=mount(); const {w,host,d}=env;
  w.__routes.unshift(['/b/7a1b/restart',(u,o,json)=>json(503,{success:false,code:'tasks_loading',error:'the stored tasks are still loading'})]);
- actionButton(host,'restart').click(); await sleep(10);
- dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ actionButton(host,'restart').click(); await idle(env);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await idle(env);
  expect(status(d).dataset.state).toBe('failed');
  expect(status(d).textContent).toContain('the stored tasks are still loading');
 });

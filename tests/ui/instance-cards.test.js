@@ -1,7 +1,8 @@
 const { test, expect } = require('bun:test');
 const fs = require('fs');
 const path = require('path');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main: { boot, idle, TEST_LIMIT } } = require('./certificates/harness.js');
+const t = (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l);
 
 const UUID = '154a360d-8f56-41e4-98cf-0a30856edd69';
 const instances = {
@@ -19,7 +20,7 @@ const render = (w, d) => {
   return host;
 };
 
-test('a card leads with the name, then service and plan with the status, then the UUID', () => {
+t('a card leads with the name, then service and plan with the status, then the UUID', () => {
   const { w, d } = boot();
   try {
     const card = render(w, d).querySelector(`.service-item[data-instance-id="${UUID}"]`);
@@ -34,7 +35,7 @@ test('a card leads with the name, then service and plan with the status, then th
   } finally { w.close(); }
 });
 
-test('the UUID is a small muted line with its full value in the title', () => {
+t('the UUID is a small muted line with its full value in the title', () => {
   const { w, d } = boot();
   try {
     const card = render(w, d).querySelector(`.service-item[data-instance-id="${UUID}"]`);
@@ -50,7 +51,7 @@ test('the UUID is a small muted line with its full value in the title', () => {
   } finally { w.close(); }
 });
 
-test('a card without a name shows the UUID once, in the heading position', () => {
+t('a card without a name shows the UUID once, in the heading position', () => {
   const { w, d } = boot();
   try {
     const card = render(w, d).querySelector('.service-item[data-instance-id="plain-id"]');
@@ -59,12 +60,12 @@ test('a card without a name shows the UUID once, in the heading position', () =>
   } finally { w.close(); }
 });
 
-test('search still matches the UUID', async () => {
+t('search still matches the UUID', async () => {
   const routes = [['/v2/catalog', (u, o, j) => j(200, { services: [{ id: 'valkey', name: 'valkey', plans: [{ id: 'standalone', name: 'standalone' }] }] })],
     ['/b/status', (u, o, j) => j(200, { env: 'lab', deployment: 'blacksmith', instances, plans: {} })]];
   const { w, d } = boot({ noDialogs: true, routes });
   try {
-    await sleep(80);
+    await idle(w);
     const search = d.getElementById('instance-search');
     search.value = '0a30856e';
     search.dispatchEvent(new w.Event('input'));
@@ -73,13 +74,13 @@ test('search still matches the UUID', async () => {
   } finally { w.close(); }
 });
 
-test('opening an instance scrolls its card into view in the sidebar', async () => {
+t('opening an instance scrolls its card into view in the sidebar', async () => {
   const routes = [['/v2/catalog', (u, o, j) => j(200, { services: [{ id: 'valkey', name: 'valkey', plans: [{ id: 'standalone', name: 'standalone' }] }] })],
     ['/b/status', (u, o, j) => j(200, { env: 'lab', deployment: 'blacksmith', instances, plans: {} })],
     [`/b/${UUID}/details`, (u, o, j) => j(200, { instance_name: 'certmgmt-valkey-solo' })]];
   const { w, d } = boot({ noDialogs: true, routes });
   try {
-    await sleep(80);
+    await idle(w);
     const scrolled = [];
     w.HTMLElement.prototype.scrollIntoView = function (options) { scrolled.push([this.dataset.instanceId, options]); };
     await w.blacksmithViews.activate({ screen: 'services', instance: UUID, section: 'details' }, {});
@@ -88,14 +89,14 @@ test('opening an instance scrolls its card into view in the sidebar', async () =
   } finally { w.close(); }
 });
 
-test('returning to an instance reveals its card on every open path', async () => {
+t('returning to an instance reveals its card on every open path', async () => {
   const routes = [['/v2/catalog', (u, o, j) => j(200, { services: [{ id: 'valkey', name: 'valkey', plans: [{ id: 'standalone', name: 'standalone' }] }] })],
     ['/b/status', (u, o, j) => j(200, { env: 'lab', deployment: 'blacksmith', instances, plans: {} })],
     [`/b/${UUID}/details`, (u, o, j) => j(200, { instance_name: 'certmgmt-valkey-solo' })],
     ['/b/plain-id/details', (u, o, j) => j(200, { instance_name: 'plain' })]];
   const { w, d } = boot({ noDialogs: true, routes });
   try {
-    await sleep(80);
+    await idle(w);
     const scrolled = [];
     w.HTMLElement.prototype.scrollIntoView = function () { scrolled.push(this.dataset.instanceId); };
     await w.navigateToInstance(UUID);

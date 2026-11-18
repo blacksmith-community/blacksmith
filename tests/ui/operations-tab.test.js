@@ -1,10 +1,10 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot}}=require('./certificates/harness.js');
+const {main:{boot,idle,trackTimers,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const envs=[];
 afterEach(()=>{ while(envs.length){ envs.pop().w.close(); } });
@@ -76,9 +76,10 @@ t('the breadcrumb says Operations and the old route still opens',async()=>{
  expect(hash).toContain('operations');
  const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1><div class="tab-content"></div></main>',{url:'http://localhost/'+hash.replace('operations','testing'),runScripts:'outside-only',pretendToBeVisual:true});
  const w=watchUncaught(dom.window);
+ trackTimers(w);
  w.blacksmithViews={activate:async r=>r};
  w.eval(source);
- await new Promise(r=>setTimeout(r,35));
+ await idle(w);
  const crumbs=[...w.document.querySelectorAll('nav[aria-label="Breadcrumb"] li')].map(li=>li.textContent);
  w.blacksmithRouter.destroy(); w.close();
  expect(crumbs.at(-1)).toBe('Operations');

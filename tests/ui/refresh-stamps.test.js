@@ -1,10 +1,11 @@
 const { test, expect } = require('bun:test');
 const fs = require('fs');
 const path = require('path');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main: { boot, idle, TEST_LIMIT } } = require('./certificates/harness.js');
 const { pinZone } = require('./fixed-zone.js');
 
 pinZone('America/New_York');
+const t = (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l);
 
 const OAT = fs.readFileSync(path.resolve(__dirname, '..', '..', 'ui', 'vendor', 'oat', 'oat.min.js'), 'utf8');
 
@@ -23,12 +24,12 @@ const comeBack = (w, content, key) => {
   expect(w.__T.retainView(content, key)).toBe(true);
 };
 
-test('Refresh on instance logs moves the fetched time', async () => {
+t('Refresh on instance logs moves the fetched time', async () => {
   const { w, d } = boot();
   try {
     let now = Date.parse('2026-11-01T10:00:05Z');
     w.Date.now = () => now;
-    await sleep(200);
+    await idle(w);
     const panel = d.getElementById('services');
     panel.classList.add('active');
     const item = d.createElement('div');
@@ -51,7 +52,7 @@ test('Refresh on instance logs moves the fetched time', async () => {
     const button = content.querySelector('[data-instance-log="refresh"]');
     expect(button).not.toBeNull();
     button.click();
-    await sleep(60);
+    await idle(w);
     comeBack(w, content, 'instance-logs');
     expect(fetchedAtOf(content)).toBe('2026-11-01T10:30:00.000Z');
   } finally { w.close(); }
@@ -65,20 +66,20 @@ const startBroker = async (routes) => {
     ...routes] });
   const { w, d } = env;
   w.eval(OAT);
-  await sleep(60);
+  await idle(w);
   const content = d.createElement('div');
   content.className = 'detail-content';
   d.body.appendChild(content);
   content.innerHTML = w.__T.renderBrokerTab();
   await w.__T.initBrokerTab();
-  await sleep(20);
+  await idle(w);
   const manager = w.CFEndpointManager;
   manager.selectedEndpoint = 'lab';
   manager.connectionStates.lab = { connected: true };
   return { ...env, content, manager };
 };
 
-test('Refresh marketplace moves the fetched time', async () => {
+t('Refresh marketplace moves the fetched time', async () => {
   const { w, d, content, manager } = await startBroker([
     ['/b/cf/endpoints/lab/marketplace', (u, o, j) => j(200, { services: [{ name: 'market-service', description: 'd', plans: [{}], available: true }] })]]);
   try {
@@ -86,16 +87,16 @@ test('Refresh marketplace moves the fetched time', async () => {
     w.Date.now = () => now;
     expect(w.__T.retainView(content, 'broker')).toBe(false);
     await manager.loadTabContent('marketplace', 'lab');
-    await sleep(20);
+    await idle(w);
     now = Date.parse('2026-11-01T10:30:00Z');
     clickButton(w, content.querySelector('[data-panel="marketplace"] .refresh-btn-logs'));
-    await sleep(60);
+    await idle(w);
     comeBack(w, content, 'broker');
     expect(fetchedAtOf(content)).toBe('2026-11-01T10:30:00.000Z');
   } finally { w.close(); }
 });
 
-test('Refresh service instances moves the fetched time', async () => {
+t('Refresh service instances moves the fetched time', async () => {
   const { w, d, content, manager } = await startBroker([
     ['/b/cf/endpoints/lab/orgs/org-1/spaces/space-1/services', (u, o, j) => j(200, { services: [{ name: 'a-service', type: 'managed', guid: 'g1', last_operation: { state: 'succeeded' } }] })],
     ['/bindings', (u, o, j) => j(200, { bindings: [] })]]);
@@ -108,10 +109,10 @@ test('Refresh service instances moves the fetched time', async () => {
     d.getElementById('org-selector').value = 'org-1';
     d.getElementById('space-selector').value = 'space-1';
     await manager.loadServiceInstances('lab', 'org-1', 'space-1');
-    await sleep(20);
+    await idle(w);
     now = Date.parse('2026-11-01T10:30:00Z');
     clickButton(w, content.querySelector('#services-results .refresh-btn-logs'));
-    await sleep(60);
+    await idle(w);
     comeBack(w, content, 'broker');
     expect(fetchedAtOf(content)).toBe('2026-11-01T10:30:00.000Z');
   } finally { w.close(); }

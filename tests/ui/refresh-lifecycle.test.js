@@ -1,5 +1,6 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 const cases=[
  ['broker events','blacksmith','events','events-table-container','refreshBlacksmithEvents','/events'],
  ['broker VMs','blacksmith','vms','vms-table-container','refreshBlacksmithVMs','/vms'],
@@ -11,8 +12,8 @@ const cases=[
  ['broker configs','blacksmith','configs','configs-table-container','refreshConfigsTable','/b/configs']
 ];
 for(const [label,owner,section,container,method,path] of cases){
- test(`${label} late refresh cannot overwrite a different section`,async()=>{
-  const {w,d}=boot();await sleep(50);
+ t(`${label} late refresh cannot overwrite a different section`,async()=>{
+  const {w,d}=boot();await idle(w);
   const root=d.getElementById(owner);root.classList.add('active');
   root.innerHTML=`<div class="entity-workspace" data-section="${section}"><div class="detail-content"><div class="${container}"><button id="refresh"><span>Refresh</span></button></div></div></div>`;
   w.currentInstanceInfo={id:'one'};w.blacksmithDeploymentName='test-blacksmith';
@@ -21,14 +22,14 @@ for(const [label,owner,section,container,method,path] of cases){
   const promise=owner==='services'?fn('one',event):fn(event);
   root.querySelector('.entity-workspace').dataset.section='details';
   root.querySelector('.detail-content').innerHTML='<p>Current summary</p>';
-  release();await promise;await sleep(120);
+  release();await promise;await idle(w);
   expect(root.querySelector('.detail-content').textContent).toBe('Current summary');
   w.close();
  });
 }
 
-test('instance log refresh cannot mutate a different instance context',async()=>{
- const {w,d}=boot();await sleep(50);
+t('instance log refresh cannot mutate a different instance context',async()=>{
+ const {w,d}=boot();await idle(w);
  const root=d.getElementById('services');root.classList.add('active');
  root.innerHTML='<button class="service-instance-item active" data-id="one"></button><div class="entity-workspace" data-section="instance-logs"><div class="detail-content"><button id="refresh"></button></div></div>';
  w.currentInstanceInfo={id:'one'};w.instanceLogsData={original:true};
@@ -38,8 +39,8 @@ test('instance log refresh cannot mutate a different instance context',async()=>
  expect(w.instanceLogsData).toEqual({original:true});w.close();
 });
 
-test('failed refresh retains prior results and adds a recoverable inline error',async()=>{
- const {w,d}=boot();await sleep(50);
+t('failed refresh retains prior results and adds a recoverable inline error',async()=>{
+ const {w,d}=boot();await idle(w);
  d.getElementById('blacksmith').innerHTML='<div class="entity-workspace" data-section="events"><div class="detail-content"><div class="events-table-container"><button id="refresh"></button><p>Prior events</p></div></div></div>';
  w.__routes.push(['/events',{ok:false,status:503,statusText:'Unavailable'}]);
  await w.refreshBlacksmithEvents({currentTarget:d.getElementById('refresh')});
@@ -47,8 +48,8 @@ test('failed refresh retains prior results and adds a recoverable inline error',
  expect(d.querySelector('.view-refresh-error')?.textContent).toContain('still shows the last data it loaded');w.close();
 });
 
-test('latest broker log file selection wins over earlier responses',async()=>{
- const {w,d}=boot();await sleep(50);
+t('latest broker log file selection wins over earlier responses',async()=>{
+ const {w,d}=boot();await idle(w);
  d.getElementById('blacksmith').innerHTML='<div class="entity-workspace" data-section="blacksmith-logs"><div class="detail-content"><div id="blacksmith-logs-display"></div></div></div>';
  const releases=[];w.__routes.push(['/b/blacksmith/logs',()=>new Promise(r=>releases.push(r))]);
  const a=w.selectBlacksmithLogFile('a.log');const b=w.selectBlacksmithLogFile('b.log');
