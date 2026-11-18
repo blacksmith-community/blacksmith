@@ -1339,24 +1339,33 @@
     table.setAttribute('data-cards', 'true');
     addCardSort(table);
   };
-  const prepareCardTables = (root = document) => {
+  // done holds the tables already prepared in one pass, so a batch of added
+  // rows that share a table prepares it once and not once for each row.
+  const prepareCardTables = (root = document, done = new Set()) => {
     const found = new Set();
     if (root.matches && root.matches(CARD_TABLE_SELECTOR)) found.add(root);
     if (root.closest) { const own = root.closest(CARD_TABLE_SELECTOR); if (own) found.add(own); }
     if (root.querySelectorAll) root.querySelectorAll(CARD_TABLE_SELECTOR).forEach((table) => found.add(table));
-    found.forEach((table) => { if (table.matches('table')) prepareCardTable(table); });
+    found.forEach((table) => {
+      if (done.has(table) || !table.matches('table')) return;
+      done.add(table);
+      prepareCardTable(table);
+    });
   };
 
   // Set up observer for dynamic content
   const setupTableObserver = () => {
     // Create a MutationObserver to watch for new tables added to the DOM
     const observer = new MutationObserver((mutations) => {
+      // Every record is already applied when the observer runs, so the first
+      // preparation of a table labels every row the batch added to it.
+      const prepared = new Set();
       mutations.forEach((mutation) => {
         if (mutation.type === 'childList') {
           // Check if any added nodes contain tables
           mutation.addedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE) {
-              if (!node.classList.contains('cards-sort')) prepareCardTables(node);
+              if (!node.classList.contains('cards-sort')) prepareCardTables(node, prepared);
               // Check if the node itself is a table or contains tables
               const tables = node.tagName === 'TABLE' ? [node] : node.querySelectorAll('table');
               if (tables.length > 0) {

@@ -1,7 +1,7 @@
 const { test, expect } = require('bun:test');
 const fs = require('fs');
 const path = require('path');
-const { main: { boot, sleep } } = require('./certificates/harness.js');
+const { main: { boot, sleep, idle, until, TEST_LIMIT } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 const t = JSDOM ? test : test.skip;
 
@@ -84,6 +84,34 @@ t('rows added after the first pass get their labels', async () => {
     expect(row.cells[1].getAttribute('data-label')).toBe('State');
   } finally { w.close(); }
 });
+
+// A Load more adds a page of rows at once, and a sort moves every row. Either
+// way the table is labelled once for the whole batch, not once for each row,
+// which made both cost the square of the row count.
+t('a batch of added or moved rows labels its table once', async () => {
+  const { w, d } = boot();
+  try {
+    const many = Array.from({ length: 40 }, (_, i) => ({ ...tasks[i % 2], id: 100 + i }));
+    const table = mount(w, d, w.__T.formatTasks(many)).querySelector('table.tasks-table');
+    await idle(w);
+    let passes = 0;
+    const set = table.setAttribute;
+    table.setAttribute = function (name, value) { if (name === 'data-cards') passes += 1; return set.call(this, name, value); };
+    const body = table.tBodies[0];
+    const row = body.rows[0].cloneNode(true);
+    row.querySelectorAll('[data-label]').forEach((c) => c.removeAttribute('data-label'));
+    body.insertAdjacentHTML('beforeend', row.outerHTML.repeat(30));
+    await until(() => body.rows[body.rows.length - 1].cells[1].getAttribute('data-label') === 'State', 'the added rows to get their labels');
+    await idle(w);
+    expect(Array.from(body.rows).every((r) => r.cells[1].getAttribute('data-label') === 'State')).toBe(true);
+    expect(passes).toBe(1);
+    passes = 0;
+    const id = Array.from(table.tHead.querySelectorAll('th')).find((th) => th.textContent.trim().startsWith('ID'));
+    id.click();
+    await idle(w);
+    expect(passes).toBe(1);
+  } finally { w.close(); }
+}, TEST_LIMIT);
 
 t('a row that spans the table is left unlabelled', () => {
   const { w, d } = boot();
