@@ -98,7 +98,7 @@ t('Load more asks for the next page by offset and the table then holds every row
     w.__routes.unshift(['/b/tasks?', (u, o, json) => {
       const body = serve(history(450))(u);
       if (!u.includes('counts=1')) { delete body.state_counts; delete body.state_counts_capped; }
-      json(200, body);
+      return json(200, body);
     }]);
     const shown = ['done', 'error', 'processing', 'queued', 'cancelled'].map((s) => count(d, s)).join('/');
     more(d).click();
