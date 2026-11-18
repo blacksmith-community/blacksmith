@@ -122,6 +122,7 @@ t('polling stops when the operator leaves the instance', async () => {
 t('a finished operation is not polled', async () => {
   const { env, host, timers } = poll(HISTORY, () => HISTORY);
   env.w.__T.mountOperationHistory(host, ID);
+  await until(() => env.fetches >= 1, 'the first read of the history');
   await idle(env);
   expect(timers.length).toBe(0);
 });
@@ -146,6 +147,7 @@ t('leaving the Summary for another tab of the same instance stops the poll', asy
 t('a tick that fires after the section changed neither fetches nor reschedules', async () => {
   const { env, host, timers, workspace } = poll(RUNNING(), RUNNING);
   env.w.__T.mountOperationHistory(host, ID);
+  await until(() => timers.length === 1, 'the first poll to be queued');
   await idle(env);
   const fetched = env.fetches;
   const tick = timers.shift();
@@ -199,6 +201,7 @@ t('an entry left in progress long ago is not polled at all', async () => {
   const old = [{ timestamp: NOW - 86400, action: 'provision', description: 'Deploying', state: 'in_progress' }];
   const { env, host, timers } = poll(old, () => old);
   env.w.__T.mountOperationHistory(host, ID);
+  await until(() => env.fetches >= 1, 'the first read of the history');
   await idle(env);
   expect(timers.length).toBe(0);
   expect(host.querySelector('.operation-history').textContent).toContain('no longer refreshing');
@@ -284,6 +287,7 @@ t('a retained shell restarts the poll', async () => {
   const clear = w.clearTimeout.bind(w);
   w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); else clear(id); };
   await w.navigateToInstance(UUID);
+  await until(() => timers.length === 1, 'the first poll to be queued');
   await idle(env);
   await w.navigateToInstance('other');
   w.cancelInstanceSection();
