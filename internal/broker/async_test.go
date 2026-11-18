@@ -624,7 +624,7 @@ var _ = Describe("Detached broker work", func() {
 			return nil, errDirectorUnreachable
 		}
 
-		Expect(recordFailedProvisionNaming(ctx, vaultClient, instanceID, deploymentName)).To(Succeed())
+		Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
 
 		started := time.Now()
 
@@ -654,7 +654,7 @@ var _ = Describe("Detached broker work", func() {
 			return nil, errDirectorUnreachable
 		}
 
-		Expect(recordFailedProvisionNaming(ctx, vaultClient, instanceID, deploymentName)).To(Succeed())
+		Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
 
 		// The poll that starts the cleanup returns, and the server cancels its
 		// context, before the cleanup runs.

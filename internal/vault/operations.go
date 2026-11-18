@@ -178,20 +178,26 @@ func (vault *Vault) ClearCleanupPending(ctx context.Context, instanceID, action,
 	})
 }
 
-// NameCleanupDeployment writes deploymentName into the record of the
+// NameCleanupDeployment writes the name MintDeploymentName gives
+// instanceID under planID, together with planID, into the record of the
 // failed operation of action with contextID, which owes its cleanup and
 // names no deployment, as a record written before the name was recorded
-// does, and keeps every other field. It writes only when the record holds
-// that operation, failed, marked, and unnamed, checked under the
-// instance's task record lock, and otherwise writes nothing and returns
-// an error that wraps ErrTaskRecordReplaced. A record that cannot be read
-// stops the write. No history entry is written.
-func (vault *Vault) NameCleanupDeployment(ctx context.Context, instanceID, action, contextID, deploymentName string) error {
+// does, and keeps every other field. The caller has found planID in the
+// request details the provision stored under that name. It writes only
+// when the record holds that operation, failed, marked, and unnamed,
+// checked under the instance's task record lock, and otherwise writes
+// nothing and returns an error that wraps ErrTaskRecordReplaced. An empty
+// planID is refused before anything is read, with an error that wraps
+// ErrEmptyPlanID. A record that cannot be read stops the write. No
+// history entry is written.
+func (vault *Vault) NameCleanupDeployment(ctx context.Context, instanceID, action, contextID, planID string) error {
 	logger := logger.Get().Named("vault name cleanup deployment " + instanceID)
 
-	if deploymentName == "" {
-		return fmt.Errorf("%w: the deployment name to record for instance %s is empty", ErrTaskRecordReplaced, instanceID)
+	if planID == "" {
+		return fmt.Errorf("%w: instance %s, action %s", ErrEmptyPlanID, instanceID, action)
 	}
+
+	deploymentName := vaultPkg.MintDeploymentName(planID, instanceID)
 
 	guard := func(current map[string]interface{}) error {
 		if current == nil {
@@ -215,6 +221,7 @@ func (vault *Vault) NameCleanupDeployment(ctx context.Context, instanceID, actio
 	return vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
 		named := maps.Clone(replaced)
 		named[TaskRecordDeploymentNameKey] = deploymentName
+		named[TaskRecordDeploymentPlanIDKey] = planID
 
 		return named
 	})

@@ -52,6 +52,19 @@ func (b *Broker) noteCleanupAttention(instanceID, deploymentName, reason string)
 	return true
 }
 
+// holdCleanupAttention records that the owed cleanup of instanceID was
+// refused for reason only when no entry is held for it, and reports
+// whether it recorded it. A refusal that may not hold on the next try,
+// such as one because Vault could not be read, goes through it, so it
+// never replaces the refusal an operator is already looking at.
+func (b *Broker) holdCleanupAttention(instanceID, deploymentName, reason string) bool {
+	entry := interfaces.CleanupAttention{InstanceID: instanceID, DeploymentName: deploymentName, Reason: reason, Since: time.Now().UTC()}
+
+	_, loaded := b.cleanupAttention.LoadOrStore(instanceID, entry)
+
+	return !loaded
+}
+
 // forgetCleanupAttention drops the entry of instanceID, once its cleanup
 // may run or it owes none.
 func (b *Broker) forgetCleanupAttention(instanceID string) {

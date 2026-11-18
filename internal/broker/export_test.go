@@ -621,10 +621,17 @@ func SetDeprovisionSettleWait(d time.Duration) func() {
 	return func() { deprovisionSettleWaitOverride.Store(previous) }
 }
 
-// MintedFor exposes the check that deploymentName is the name the broker
-// minted for instanceID, under planID when the record says the plan.
+// MintedFor exposes the check that deploymentName is exactly the name the
+// broker mints for instanceID under planID.
 func MintedFor(deploymentName, instanceID, planID string) bool {
 	return mintedFor(deploymentName, instanceID, planID)
+}
+
+// MintedShape exposes the check that deploymentName has the shape of a
+// name minted for instanceID, which the cleanup makes before it reads the
+// request details stored under that name.
+func MintedShape(deploymentName, instanceID string) bool {
+	return mintedShape(deploymentName, instanceID)
 }
 
 // RecordAcceptedDeprovision exposes the write of an accepted deprovision

@@ -231,6 +231,17 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		return pool
 	}
 
+	// storeDetails stores the provision's request details where an
+	// accepted provision stores them, under its deployment's name.
+	storeDetails := func() {
+		Expect(vaultClient.Put(ctx, instanceID+"/"+deploymentName, map[string]interface{}{
+			detailsKey: map[string]interface{}{
+				serviceIDKey: serviceID, indexPlanIDKey: planID,
+				organizationGUIDKey: orgGUID, spaceGUIDKey: spaceGUID,
+			},
+		})).To(Succeed())
+	}
+
 	// indexInstance indexes the instance as an accepted provision leaves
 	// it, with its provision details stored, and with the extra fields.
 	indexInstance := func(extra map[string]interface{}) {
@@ -246,12 +257,7 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		}
 
 		Expect(vaultClient.Index(ctx, instanceID, entry)).To(Succeed())
-		Expect(vaultClient.Put(ctx, instanceID+"/"+deploymentName, map[string]interface{}{
-			detailsKey: map[string]interface{}{
-				serviceIDKey: serviceID, indexPlanIDKey: planID,
-				organizationGUIDKey: orgGUID, spaceGUIDKey: spaceGUID,
-			},
-		})).To(Succeed())
+		storeDetails()
 	}
 
 	recordProvision := func(taskID int) {
@@ -263,8 +269,11 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 	}
 
 	// recordNamedProvision records a provision as an accepted one leaves
-	// it once its deploy is sent, naming name as its deployment.
+	// it once its deploy is sent, naming name as its deployment, without
+	// the plan, as a record written before the plan was recorded does.
+	// The provision's request details are stored under its own name.
 	recordNamedProvision := func(taskID int, name string) {
+		storeDetails()
 		Expect(vaultClient.TrackProgressWithDeployment(ctx, instanceID, outcomeProvision, "Creating BOSH deployment", contextID, name, 0, nil)).To(Succeed())
 		Expect(vaultClient.TrackProgress(ctx, instanceID, outcomeProvision, fmt.Sprintf("BOSH deployment in progress (task %d)", taskID), taskID, nil)).To(Succeed())
 	}

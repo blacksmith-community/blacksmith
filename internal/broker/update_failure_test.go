@@ -57,6 +57,10 @@ func newUpdateFailure(ctx context.Context, t *testing.T, vaultClient *internalVa
 	err := vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
 		ID: instanceID, ServiceID: valkeyServiceID, PlanID: standalonePlanID, DeploymentName: deploymentName,
 	})
+	if err == nil {
+		err = storeRequestDetails(ctx, vaultClient, instanceID)
+	}
+
 	if err != nil {
 		t.Fatalf("failed to index the instance: %v", err)
 	}

@@ -599,33 +599,68 @@ func owedCleanups(candidates []*readoptCandidate) []owedCleanup {
 	return cleanups
 }
 
-// mintedFor reports whether deploymentName is the name the broker minted
-// for instanceID. planID is the plan the instance's record says the name
-// was minted under. A record that says so owns exactly the name
-// MintDeploymentName gives instanceID under that plan, and nothing else.
+// mintedFor reports whether deploymentName is exactly the name the broker
+// mints for instanceID under planID, the plan the provision asked for.
 // Neither the catalog nor the plan the instance is on now plays a part,
 // because a deployment keeps the name it was created under after its plan
-// leaves the catalog or the instance moves to another plan.
-//
-// A record written before the broker recorded the plan has only the
-// name's shape to go by, so planID is empty. The name must then end in a
-// dash and the instance ID, with something in the form of a plan ID
-// before it. The shape cannot tell a plan ID from one followed by the
-// head of another instance's ID, so for a client that sends free-form IDs
-// it takes plan-x-abc, the deployment of instance x-abc, as minted for
-// abc. The GUIDs Cloud Controller sends never nest that way.
+// leaves the catalog or the instance moves to another plan. With no plan
+// or no instance ID, nothing was minted.
 func mintedFor(deploymentName, instanceID, planID string) bool {
-	if instanceID == "" {
-		return false
-	}
+	return instanceID != "" && planID != "" && deploymentName == vaultPkg.MintDeploymentName(planID, instanceID)
+}
 
-	if planID != "" {
-		return deploymentName == vaultPkg.MintDeploymentName(planID, instanceID)
-	}
-
+// mintedShape reports whether deploymentName has the shape of a name
+// minted for instanceID, which is something in the form of a plan ID, a
+// dash, and the instance ID. The shape alone never makes a deployment the
+// instance's, because it cannot tell a plan ID from one followed by the
+// head of another instance's ID. It keeps the name a Vault path segment
+// before ownedUnder reads the request details stored under it.
+func mintedShape(deploymentName, instanceID string) bool {
 	prefix, minted := strings.CutSuffix(deploymentName, "-"+instanceID)
 
-	return minted && services.ValidName.MatchString(prefix)
+	return instanceID != "" && minted && services.ValidName.MatchString(prefix)
+}
+
+// ownedUnder returns the plan the broker minted deploymentName under for
+// instanceID, for a record that does not say its plan, as one written
+// before the broker recorded it does not. The provision stored its request
+// details at <instanceID>/<deploymentName> before it sent its deploy, so
+// the plan those details hold is the one the provision asked for, and the
+// name must be exactly the one mintedFor gives under it. Otherwise it
+// returns why the broker does not own the deployment. Request details
+// that cannot be read leave ownership unknown, which the refusal says.
+func (b *Broker) ownedUnder(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (string, ownership) {
+	if !mintedShape(deploymentName, instanceID) {
+		return "", ownership{reason: notMintedReason(deploymentName, instanceID, "")}
+	}
+
+	readCtx, cancelRead := recordContext(ctx)
+	defer cancelRead()
+
+	var stored map[string]interface{}
+
+	exists, err := b.Vault.Get(readCtx, instanceID+"/"+deploymentName, &stored)
+	if err != nil {
+		logger.Error("Instance %s: the request details stored for deployment %s could not be read: %s", instanceID, deploymentName, err)
+
+		return "", ownership{
+			reason: fmt.Sprintf("The request details the provision stored for deployment %s could not be read, so the broker deletes nothing until they can", deploymentName),
+			unread: true,
+		}
+	}
+
+	details, _ := stored["details"].(map[string]interface{})
+	planID, _ := details["plan_id"].(string)
+
+	switch {
+	case !exists || planID == "":
+		return "", ownership{reason: fmt.Sprintf("The record does not say which plan deployment %s was named under, and no request details with a plan are stored under that name for this instance, so the broker does not delete it", deploymentName)}
+	case !mintedFor(deploymentName, instanceID, planID):
+		return "", ownership{reason: fmt.Sprintf("The request details stored for deployment %s say plan %s, under which the broker names this instance's deployment %s, so the broker does not delete it",
+			deploymentName, planID, vaultPkg.MintDeploymentName(planID, instanceID))}
+	}
+
+	return planID, ownership{}
 }
 
 // runOwedCleanups runs each owed cleanup in turn, under the service

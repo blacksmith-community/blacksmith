@@ -193,7 +193,8 @@ func clearMarkCases() []guardedWriteCase {
 }
 
 // NameCleanupDeployment names the deployment of a marked failure whose
-// record names none, and writes nothing over any other record.
+// record names none, with the name minted under the plan it is given and
+// that plan, and writes nothing over any other record.
 func TestNameCleanupDeploymentLandsOnlyOnAnUnnamedMarkedFailure(t *testing.T) {
 	t.Parallel()
 
@@ -247,7 +248,7 @@ func TestNameCleanupDeploymentLandsOnlyOnAnUnnamedMarkedFailure(t *testing.T) {
 
 			_, _, before := readRecord(ctx, t, client, instanceID)
 
-			err = client.NameCleanupDeployment(ctx, instanceID, "provision", test.contextID, "standalone-"+instanceID)
+			err = client.NameCleanupDeployment(ctx, instanceID, "provision", test.contextID, "standalone")
 
 			_, _, after := readRecord(ctx, t, client, instanceID)
 
@@ -256,9 +257,10 @@ func TestNameCleanupDeploymentLandsOnlyOnAnUnnamedMarkedFailure(t *testing.T) {
 	}
 }
 
-// requireNaming checks that a naming that lands writes want and keeps the
-// mark and the context ID, and that one refused wraps ErrTaskRecordReplaced
-// and leaves the name as it was.
+// requireNaming checks that a naming that lands writes want with the
+// standalone plan and keeps the mark and the context ID, and that one
+// refused wraps ErrTaskRecordReplaced and leaves the name and the plan as
+// they were.
 func requireNaming(t *testing.T, err error, before, after map[string]interface{}, want string, lands bool) {
 	t.Helper()
 
@@ -267,7 +269,8 @@ func requireNaming(t *testing.T, err error, before, after map[string]interface{}
 			t.Fatalf("naming the deployment: %s", err)
 		}
 
-		if after[vault.TaskRecordDeploymentNameKey] != want || after[vault.TaskRecordCleanupPendingKey] != true || after["context_id"] != failedContextID {
+		if after[vault.TaskRecordDeploymentNameKey] != want || after[vault.TaskRecordDeploymentPlanIDKey] != "standalone" ||
+			after[vault.TaskRecordCleanupPendingKey] != true || after["context_id"] != failedContextID {
 			t.Fatalf("the record after naming is %v", after)
 		}
 
@@ -278,7 +281,42 @@ func requireNaming(t *testing.T, err error, before, after map[string]interface{}
 		t.Fatalf("naming returned %v, want an error wrapping ErrTaskRecordReplaced", err)
 	}
 
-	if after[vault.TaskRecordDeploymentNameKey] != before[vault.TaskRecordDeploymentNameKey] {
-		t.Fatalf("a refused naming changed the name from %v to %v", before[vault.TaskRecordDeploymentNameKey], after[vault.TaskRecordDeploymentNameKey])
+	if after[vault.TaskRecordDeploymentNameKey] != before[vault.TaskRecordDeploymentNameKey] ||
+		after[vault.TaskRecordDeploymentPlanIDKey] != before[vault.TaskRecordDeploymentPlanIDKey] {
+		t.Fatalf("a refused naming changed the record from %v to %v", before, after)
+	}
+}
+
+// NameCleanupDeployment refuses an empty plan before it writes anything,
+// since no name can be minted under it.
+func TestNameCleanupDeploymentRefusesAnEmptyPlan(t *testing.T) {
+	t.Parallel()
+
+	client := newDevVault(t)
+	ctx := context.Background()
+	instanceID := fmt.Sprintf("name-cleanup-empty-plan-%d", time.Now().UnixNano())
+
+	err := recordProvisionTask41(ctx, client, instanceID)
+	if err == nil {
+		err = client.TrackFailedCleanupPending(ctx, instanceID, "provision", "BOSH deployment task 41 is error", failedContextID, 41)
+	}
+
+	if err != nil {
+		t.Fatalf("preparing the record: %s", err)
+	}
+
+	_, _, before := readRecord(ctx, t, client, instanceID)
+
+	err = client.NameCleanupDeployment(ctx, instanceID, "provision", failedContextID, "")
+
+	_, _, after := readRecord(ctx, t, client, instanceID)
+
+	if !errors.Is(err, vault.ErrEmptyPlanID) {
+		t.Fatalf("naming under an empty plan returned %v, want an error wrapping ErrEmptyPlanID", err)
+	}
+
+	if after[vault.TaskRecordDeploymentNameKey] != before[vault.TaskRecordDeploymentNameKey] ||
+		after[vault.TaskRecordDeploymentPlanIDKey] != before[vault.TaskRecordDeploymentPlanIDKey] {
+		t.Fatalf("a naming under an empty plan changed the record from %v to %v", before, after)
 	}
 }
