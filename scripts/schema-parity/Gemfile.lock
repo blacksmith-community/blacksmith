@@ -24,5 +24,8 @@ CHECKSUMS
   json-schema (6.2.1) sha256=c0bf6113d772348bfd159fb096950beeb1e1e25aaeea50b676bd45191d8dbdf3
   public_suffix (7.0.5) sha256=1a8bb08f1bbea19228d3bed6e5ed908d1cb4f7c2726d18bd9cadf60bc676f623
 
+RUBY VERSION
+  ruby 4.0.9
+
 BUNDLED WITH
   4.0.23

@@ -1,7 +1,11 @@
-# The gems Cloud Controller checks a catalog schema with, at the versions
-# in its Gemfile.lock. Bump them with Cloud Controller's, and run
-# `make schema-parity` to check the broker's schema profile against them.
+# The Ruby and the gems Cloud Controller checks a catalog schema with, at
+# the versions in its .ruby-version and Gemfile.lock. Bump them with
+# Cloud Controller's, and run `make schema-parity` to check the broker's
+# schema profile against them.
 source "https://rubygems.org"
+
+# Cloud Controller's .ruby-version.
+ruby "4.0.9"
 
 gem "addressable", "2.9.2"
 gem "bigdecimal", "4.1.3"

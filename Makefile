@@ -96,10 +96,16 @@ schema-parity: ## Check the parameter schema profile against Cloud Controller's 
 	@command -v bundle >/dev/null 2>&1 || { echo "schema-parity needs Bundler, which is not on PATH"; exit 1; }
 	@export BUNDLE_GEMFILE="$(SCHEMA_PARITY_GEMFILE)"; \
 	bundle check >/dev/null 2>&1 || bundle install || { echo "schema-parity could not install the gems in $(SCHEMA_PARITY_GEMFILE)"; exit 1; }
-	@echo "$(GREEN)Checking the schema profile against Cloud Controller's json-schema gem...$(RESET)"
-	@BUNDLE_GEMFILE="$(SCHEMA_PARITY_GEMFILE)" \
+	@echo "$(GREEN)Checking the schema profile against Cloud Controller's json-schema gem, which takes a few minutes...$(RESET)"
+	@log="$$(mktemp)"; \
+	BUNDLE_GEMFILE="$(SCHEMA_PARITY_GEMFILE)" \
 	SCHEMA_PARITY_ORACLE="bundle exec ruby $(CURDIR)/scripts/schema-parity/oracle.rb" \
-	go test -count=1 -run '^TestSchemaParity$$' -v ./internal/services/
+	go test -count=1 -run '^TestSchemaParity$$' -v ./internal/services/ >"$$log" 2>&1; \
+	status=$$?; cat "$$log"; \
+	for marker in '--- PASS: TestSchemaParity ' 'schema-parity: fresh cache compared' 'schema-parity: shared cache compared'; do \
+		grep -qF -- "$$marker" "$$log" || { echo "schema-parity: TestSchemaParity did not run and pass, since its output has no \"$$marker\""; status=1; }; \
+	done; \
+	rm -f "$$log"; exit $$status
 	@echo "$(GREEN)✓ Schema parity check complete$(RESET)"
 
 ##@ Code Quality

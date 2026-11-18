@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -75,45 +76,82 @@ type parityRun struct {
 	random    int
 }
 
-// check compares the gem's verdicts in mode with the profile's.
+// check compares the gem's verdicts in mode with the profile's, and
+// logs the marker `make schema-parity` looks for.
 func (run parityRun) check(t *testing.T, mode string, verdicts []string) {
 	t.Helper()
 
-	faults, gemAccepts, strict, controlRefusals := 0, 0, 0, 0
-	controls := run.corpus + run.random
+	checked := run.corpus + run.random
+	tally := tallyParity(run.published[:checked], verdicts[:checked])
 
-	for index, verdict := range verdicts {
-		accepted := verdict == "accept"
-
-		switch {
-		case index >= controls:
-			if accepted {
-				t.Errorf("%s cache: the oracle accepts a schema Cloud Controller's gem refuses, so it checks nothing: %s",
-					mode, shorten(run.lines[index]))
-			} else {
-				controlRefusals++
-			}
-
-			continue
-		case run.published[index] && !accepted:
-			faults++
-			if faults <= parityShownFaults {
-				t.Errorf("%s cache: the profile publishes a schema the gem refuses (%s): %s", mode, verdict, shorten(run.lines[index]))
-			}
-		case !run.published[index] && accepted:
-			strict++
+	for shown, index := range tally.faults {
+		if shown == parityShownFaults {
+			break
 		}
 
-		if accepted {
-			gemAccepts++
+		t.Errorf("%s cache: the profile publishes a schema the gem refuses (%s): %s", mode, verdicts[index], shorten(run.lines[index]))
+	}
+
+	// The negative control. The gem refuses every control, so had the
+	// profile published them, the comparison fails on each one. When it
+	// doesn't, the oracle or the comparison checks nothing.
+	controls := verdicts[checked:]
+	loose := tallyParity(slices.Repeat([]bool{true}, len(controls)), controls)
+
+	for index, verdict := range controls {
+		if verdict == parityAccept {
+			t.Errorf("%s cache: the oracle accepts a schema Cloud Controller's gem refuses, so it checks nothing: %s",
+				mode, shorten(run.lines[checked+index]))
 		}
 	}
 
-	t.Logf("%s cache: %d schemas (%d from the tests, %d random), the profile publishes %d, the gem accepts %d, "+
-		"the gem refuses %d the profile publishes, and the profile refuses %d the gem accepts. "+
-		"The oracle refuses %d of the %d controls the gem must refuse",
-		mode, controls, run.corpus, run.random, countTrue(run.published[:controls]), gemAccepts, faults, strict,
-		controlRefusals, len(run.lines)-controls)
+	if len(loose.faults) != len(controls) {
+		t.Errorf("%s cache: a profile that published the %d controls would fail the check on only %d of them",
+			mode, len(controls), len(loose.faults))
+	}
+
+	t.Logf("schema-parity: %s cache compared %d schemas (%d from the tests, %d random). The profile publishes %d, "+
+		"the gem accepts %d, the gem refuses %d the profile publishes, and the profile refuses %d the gem accepts. "+
+		"A profile that published the %d controls would fail on %d of them",
+		mode, checked, run.corpus, run.random, countTrue(run.published[:checked]), tally.gemAccepts, len(tally.faults),
+		tally.strict, len(controls), len(loose.faults))
+}
+
+// parityAccept is the oracle's verdict on a schema the gem accepts.
+const parityAccept = "accept"
+
+// parityTally is what one comparison of the gem's verdicts with the
+// profile's found.
+type parityTally struct {
+	// faults are the indexes of the schemas the profile publishes and
+	// the gem refuses.
+	faults []int
+	// gemAccepts counts the schemas the gem accepts.
+	gemAccepts int
+	// strict counts the schemas the gem accepts and the profile refuses.
+	strict int
+}
+
+// tallyParity compares the gem's verdicts with whether the profile
+// publishes each schema.
+func tallyParity(published []bool, verdicts []string) parityTally {
+	var tally parityTally
+
+	for index, verdict := range verdicts {
+		accepted := verdict == parityAccept
+		if accepted {
+			tally.gemAccepts++
+		}
+
+		switch {
+		case published[index] && !accepted:
+			tally.faults = append(tally.faults, index)
+		case !published[index] && accepted:
+			tally.strict++
+		}
+	}
+
+	return tally
 }
 
 // parityControls are schemas Cloud Controller's gem refuses, as served
@@ -121,8 +159,17 @@ func (run parityRun) check(t *testing.T, mode string, verdicts []string) {
 func parityControls(t *testing.T) []string {
 	t.Helper()
 
-	// The gem runs out of a request thread's stack following 800 hops.
-	texts := []string{refChain(800)}
+	texts := []string{
+		// The gem runs out of a request thread's stack following 800 hops.
+		refChain(800),
+		// The draft-04 meta-schema refuses each of these.
+		draft4(`"type": 5`),
+		draft4(`"minLength": -1`),
+		draft4(`"enum": []`),
+		draft4(`"properties": {"a": {"multipleOf": 0}}`),
+		// The oracle's reader refuses a remote schema.
+		draft4(`"$ref": "http://example.com/x.json"`),
+	}
 
 	controls := make([]string, 0, len(texts))
 
