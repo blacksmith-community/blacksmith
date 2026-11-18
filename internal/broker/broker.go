@@ -3704,6 +3704,14 @@ type recordedOperation struct {
 	// of such a failed provision recovers the name from the director's
 	// task with ContextID and writes it here before it deletes anything.
 	DeploymentName string
+	// DeploymentPlanID is the plan the provision minted DeploymentName
+	// under, recorded with the name before its deploy was sent. It is
+	// empty for a record written before the plan was recorded, and for a
+	// name the broker did not mint, such as the one a delete names or one
+	// recovered from the director. A plan change or an update does not
+	// move it, so the cleanup of a failed provision checks the name
+	// against it, never against the catalog or the instance's plan.
+	DeploymentPlanID string
 	// UnknownSince is when the outcome of the operation's director request
 	// became unknown. It is zero unless State is outcome_unknown.
 	UnknownSince time.Time
@@ -3740,6 +3748,7 @@ func parseRecordedOperation(instanceID, state string, taskID int, task map[strin
 	recorded.Description, _ = task["description"].(string)
 	recorded.ContextID, _ = task["context_id"].(string)
 	recorded.DeploymentName, _ = task[internalVault.TaskRecordDeploymentNameKey].(string)
+	recorded.DeploymentPlanID, _ = task[internalVault.TaskRecordDeploymentPlanIDKey].(string)
 	recorded.CleanupPending, _ = task[internalVault.TaskRecordCleanupPendingKey].(bool)
 
 	if since, isString := task[internalVault.TaskRecordUnknownSinceKey].(string); isString && since != "" {
@@ -4446,10 +4455,12 @@ func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentNa
 
 // cleanupOwnsDeployment returns the deployment a cleanup may delete for
 // the instance, and false when it may delete none. The name must be minted
-// for the instance, and it must be the name recorded for the instance,
-// which is the one its record holds, or the one its index entry gives when
-// the record holds none. A cleanup asked with no name takes the recorded
-// one.
+// for the instance, as mintedFor checks it against the plan the record
+// says the name was minted under, or against the name's shape for a
+// record that says none. It must also be the name recorded for the
+// instance, which is the one its record holds, or the one its index entry
+// gives when the record holds none. A cleanup asked with no name takes the
+// recorded one.
 //
 // A record written before deployment names were recorded, whose instance
 // has no index entry, names nothing. Its name is then recovered from the
@@ -4503,8 +4514,8 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 		if unnamed.deployment != "" {
 			deploymentName = unnamed.deployment
 		}
-	case !mintedFor(deploymentName, instanceID):
-		reason = fmt.Sprintf("Deployment %s was not named for this instance, so the broker does not delete it", deploymentName)
+	case !mintedFor(deploymentName, instanceID, recorded.DeploymentPlanID):
+		reason = notMintedReason(deploymentName, instanceID, recorded.DeploymentPlanID)
 	case recordedName != deploymentName:
 		reason = fmt.Sprintf("The cleanup was asked to delete %s, but the deployment recorded for this instance is %s, so the broker deletes neither", deploymentName, recordedName)
 	default:
@@ -4517,6 +4528,19 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 	b.noteCleanupAttention(instanceID, deploymentName, reason)
 
 	return "", false
+}
+
+// notMintedReason is the refusal of a cleanup asked to delete
+// deploymentName, which mintedFor says was not minted for instanceID
+// under planID, the plan the record says, or under any plan when the
+// record says none.
+func notMintedReason(deploymentName, instanceID, planID string) string {
+	if planID == "" {
+		return fmt.Sprintf("Deployment %s was not named for this instance, so the broker does not delete it", deploymentName)
+	}
+
+	return fmt.Sprintf("Deployment %s was not named for this instance, whose record says the broker named its deployment %s under plan %s, so the broker does not delete it",
+		deploymentName, vaultPkg.MintDeploymentName(planID, instanceID), planID)
 }
 
 // nameRecovery is what recoverCleanupDeployment found. name is the
@@ -4554,7 +4578,7 @@ func (b *Broker) recoverCleanupDeployment(ctx context.Context, instanceID string
 		return nameRecovery{refusal: fmt.Sprintf("Neither the record nor an index entry names a deployment for this instance, and the director has no task with context ID %s, so the broker deletes nothing", recorded.ContextID)}
 	}
 
-	if !mintedFor(task.Deployment, instanceID) {
+	if !mintedFor(task.Deployment, instanceID, recorded.DeploymentPlanID) {
 		return nameRecovery{
 			refusal:    fmt.Sprintf("Task %d with context ID %s names deployment %s, which was not named for this instance, so the broker deletes nothing", task.ID, recorded.ContextID, task.Deployment),
 			deployment: task.Deployment,

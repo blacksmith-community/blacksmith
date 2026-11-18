@@ -225,6 +225,24 @@ func (b *Broker) trackProgressWithContextID(ctx context.Context, instanceID, ope
 	return nil
 }
 
+// trackMintedDeployment records the provision's progress with contextID,
+// and the deployment name it mints under planID together with planID,
+// before the deploy that carries contextID is sent. A write that does not
+// land returns an error, and the deploy is then not sent.
+func (b *Broker) trackMintedDeployment(ctx context.Context, instanceID, message, contextID, planID string, params map[string]interface{}, log logger.Logger) error {
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.TrackProgressWithMintedDeployment(recordCtx, instanceID, operationTypeProvision, message, contextID, planID, 0, params)
+	if err != nil {
+		log.Error("failed to track progress (%s) with context ID %s: %s", message, contextID, err)
+
+		return fmt.Errorf("%w: %s of instance %s with context ID %s: %w", ErrContextIDNotRecorded, operationTypeProvision, instanceID, contextID, err)
+	}
+
+	return nil
+}
+
 // failWithTracking tracks a failure.
 func (b *Broker) failWithTracking(ctx context.Context, instanceID, operation, message string, params map[string]interface{}, l logger.Logger) {
 	recordCtx, cancel := recordContext(ctx)
@@ -472,8 +490,11 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 
 	// A deploy whose context ID is not on record could not be looked up
 	// if its answer were lost, so it is not sent. The record also names
-	// the deployment, so a failure's cleanup finds it without the index.
-	err := p.broker.trackProgressWithContextID(ctx, p.instanceID, "provision", "Creating BOSH deployment", p.contextID, deploymentName, p.params, p.logger)
+	// the deployment and the plan its name is minted under, so a
+	// failure's cleanup finds the deployment without the index and knows
+	// the broker minted that name, whatever plan the instance is on and
+	// whatever the catalog holds by then.
+	err := p.broker.trackMintedDeployment(ctx, p.instanceID, "Creating BOSH deployment", p.contextID, plan.ID, p.params, p.logger)
 	if err != nil {
 		p.failStep(ctx, "Deployment creation was not started", err)
 

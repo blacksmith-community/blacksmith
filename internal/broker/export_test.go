@@ -615,6 +615,12 @@ func SetDeprovisionSettleWait(d time.Duration) func() {
 	return func() { deprovisionSettleWaitOverride.Store(previous) }
 }
 
+// MintedFor exposes the check that deploymentName is the name the broker
+// minted for instanceID, under planID when the record says the plan.
+func MintedFor(deploymentName, instanceID, planID string) bool {
+	return mintedFor(deploymentName, instanceID, planID)
+}
+
 // RecordAcceptedDeprovision exposes the write of an accepted deprovision
 // under the settle lock, over a record that held no unknown outcome.
 func (b *Broker) RecordAcceptedDeprovision(ctx context.Context, instanceID string) (bool, error) {

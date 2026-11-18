@@ -127,6 +127,86 @@ var _ = Describe("Task record writes", func() {
 		})
 	})
 
+	// A provision records the plan its deployment's name was minted under
+	// in the same write as the name, so the cleanup of a failed provision
+	// can check the name against the plan, whatever the catalog or the
+	// instance's plan is by then. Every later write of the provision keeps
+	// the two together.
+	Describe("the plan a provision's deployment name is minted under", func() {
+		const (
+			planID    = "redis-standalone"
+			deploying = "Creating BOSH deployment"
+		)
+
+		var contextID string
+
+		minted := func() string { return planID + "-" + instanceID }
+
+		expectMinted := func() {
+			record := readRecord()
+			ExpectWithOffset(1, record).To(HaveKeyWithValue(vault.TaskRecordDeploymentNameKey, minted()))
+			ExpectWithOffset(1, record).To(HaveKeyWithValue(vault.TaskRecordDeploymentPlanIDKey, planID))
+		}
+
+		BeforeEach(func() {
+			contextID = uuid.NewString()
+
+			Expect(client.TrackProgressWithMintedDeployment(ctx, instanceID, provision, deploying, contextID, planID, 0, nil)).To(Succeed())
+		})
+
+		It("is recorded with the name minted under it and the context ID", func() {
+			expectMinted()
+			Expect(readRecord()).To(HaveKeyWithValue("context_id", contextID))
+		})
+
+		It("is kept by later progress of the same action", func() {
+			Expect(client.TrackProgress(ctx, instanceID, provision, "BOSH deployment in progress (task 300)", 300, nil)).To(Succeed())
+
+			expectMinted()
+		})
+
+		It("is kept by the failure that marks the cleanup owed", func() {
+			Expect(client.TrackProgress(ctx, instanceID, provision, "BOSH deployment in progress (task 300)", 300, nil)).To(Succeed())
+			Expect(client.TrackFailedCleanupPending(ctx, instanceID, provision, "BOSH deployment task 300 is error", contextID, 300)).To(Succeed())
+
+			expectMinted()
+		})
+
+		It("is kept by an unknown outcome, by progress over it, and by the failure that settles it", func() {
+			Expect(client.TrackOutcomeUnknown(ctx, instanceID, provision, "The deploy's answer was lost", contextID, time.Now())).To(Succeed())
+			expectMinted()
+
+			Expect(client.TrackProgress(ctx, instanceID, provision, "Waiting for the deploy's outcome", 0, nil)).To(Succeed())
+			Expect(readRecord()).To(HaveKeyWithValue("state", vault.TaskStateOutcomeUnknown))
+			expectMinted()
+
+			Expect(client.SettleOutcomeUnknownCleanupPending(ctx, instanceID, provision, "The deploy failed", contextID)).To(Succeed())
+			expectMinted()
+		})
+
+		It("is dropped with the name by a later write that names another deployment", func() {
+			Expect(client.TrackProgressWithDeployment(ctx, instanceID, provision, deploying, uuid.NewString(), "another-deployment", 0, nil)).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordDeploymentNameKey, "another-deployment"))
+			Expect(readRecord()).ToNot(HaveKey(vault.TaskRecordDeploymentPlanIDKey))
+		})
+
+		It("is not taken by a record for another action", func() {
+			Expect(client.TrackProgress(ctx, instanceID, "update", "Updating the deployment", 0, nil)).To(Succeed())
+
+			Expect(readRecord()).ToNot(HaveKey(vault.TaskRecordDeploymentPlanIDKey))
+		})
+
+		It("is refused when empty, before anything is written", func() {
+			writes := len(proxy.Writes())
+
+			err := client.TrackProgressWithMintedDeployment(ctx, instanceID, provision, deploying, uuid.NewString(), "", 0, nil)
+
+			Expect(err).To(MatchError(vault.ErrEmptyPlanID))
+			Expect(proxy.Writes()).To(HaveLen(writes))
+		})
+	})
+
 	Describe("TrackOutcomeUnknown", func() {
 		const keptParam = "the provision's parameter"
 

@@ -32,6 +32,19 @@ const taskRecordContextIDKey = "context_id"
 // record that holds none.
 const TaskRecordDeploymentNameKey = "deployment_name"
 
+// TaskRecordDeploymentPlanIDKey is the key of the ID of the plan a
+// provision minted the name under TaskRecordDeploymentNameKey from. The
+// provision writes it with the name, in the write before its deploy, and
+// every later write of the same operation keeps the two together, so the
+// record says what the broker minted whatever plan the instance is on by
+// then. A record written before the key existed has none, and neither has
+// one whose name was recovered from the director or written by a delete.
+const TaskRecordDeploymentPlanIDKey = "deployment_plan_id"
+
+// ErrEmptyPlanID is returned when the plan ID to mint a deployment name
+// under is empty.
+var ErrEmptyPlanID = errors.New("the plan ID to mint the deployment name under is empty")
+
 // TaskStateOutcomeUnknown is the state of a task record whose director
 // request was sent and whose answer was lost, so whether the director
 // started a task for it is unknown.
@@ -120,14 +133,14 @@ func (vault *Vault) TrackSucceeded(ctx context.Context, instanceID, action, desc
 // its history entry does not returns an error that wraps
 // ErrHistoryNotAppended.
 func (vault *Vault) TrackFailed(ctx context.Context, instanceID, action, description, contextID string, taskID int) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", -1, nil, false, holdingUnsettled(instanceID, action, contextID, taskID))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", taskDeployment{}, -1, nil, false, holdingUnsettled(instanceID, action, contextID, taskID))
 }
 
 // TrackFailedCleanupPending records the failure as TrackFailed does, and
 // marks the record, in the same write, as owing the delete of the failed
 // deployment.
 func (vault *Vault) TrackFailedCleanupPending(ctx context.Context, instanceID, action, description, contextID string, taskID int) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", -1, nil, true, holdingUnsettled(instanceID, action, contextID, taskID))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", taskDeployment{}, -1, nil, true, holdingUnsettled(instanceID, action, contextID, taskID))
 }
 
 // ClearCleanupPending removes the cleanup mark from the record of the
@@ -232,7 +245,7 @@ func (vault *Vault) TrackFoundTask(ctx context.Context, instanceID, action, desc
 		return nil
 	}
 
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, nil, false, guard)
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", taskDeployment{}, taskID, nil, false, guard)
 }
 
 // holdingUnsettled returns a guard that lets a write through only when the
@@ -463,7 +476,7 @@ func trackedTask(action string, params interface{}) trackedTaskRecord {
 // that record carries are kept, so progress written after the operation
 // recorded them does not drop them.
 func (vault *Vault) TrackProgress(ctx context.Context, instanceID, action, description string, taskID int, params interface{}) error {
-	return vault.trackProgress(ctx, instanceID, action, description, "", "", taskID, params)
+	return vault.trackProgress(ctx, instanceID, action, description, "", taskDeployment{}, taskID, params)
 }
 
 // ErrOutcomeUnknownRecorded is returned when a write would replace a task
@@ -478,7 +491,7 @@ var ErrOutcomeUnknownRecorded = errors.New("the task record holds an operation w
 // ID. The check and the write happen under the instance's task record
 // lock, and a current record that cannot be read stops the write too.
 func (vault *Vault) TrackProgressUnlessOutcomeUnknown(ctx context.Context, instanceID, action, description string, taskID int, params interface{}) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, false, unlessOutcomeUnknown(instanceID, "", ""))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", taskDeployment{}, taskID, params, false, unlessOutcomeUnknown(instanceID, "", ""))
 }
 
 // TrackProgressReplacingOutcomeUnknown stores progress information as
@@ -488,7 +501,7 @@ func (vault *Vault) TrackProgressUnlessOutcomeUnknown(ctx context.Context, insta
 // ErrOutcomeUnknownRecorded. An empty replacedContextID replaces no
 // unknown outcome.
 func (vault *Vault) TrackProgressReplacingOutcomeUnknown(ctx context.Context, instanceID, action, description, replacedAction, replacedContextID string, taskID int, params interface{}) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, false, unlessOutcomeUnknown(instanceID, replacedAction, replacedContextID))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", taskDeployment{}, taskID, params, false, unlessOutcomeUnknown(instanceID, replacedAction, replacedContextID))
 }
 
 // unlessOutcomeUnknown returns a guard that refuses a write over a record
@@ -556,7 +569,7 @@ func (vault *Vault) SettleOutcomeUnknown(ctx context.Context, instanceID, action
 		return fmt.Errorf("%w: instance %s, a write with no task would keep the outcome unknown", ErrOutcomeUnknownSettled, instanceID)
 	}
 
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, "", taskID, nil, false, settlingOutcomeUnknown(instanceID, action, contextID))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, taskDeployment{}, taskID, nil, false, settlingOutcomeUnknown(instanceID, action, contextID))
 }
 
 // SettleOutcomeUnknownCleanupPending records the failure -1 as the outcome
@@ -568,7 +581,7 @@ func (vault *Vault) SettleOutcomeUnknownCleanupPending(ctx context.Context, inst
 		return fmt.Errorf("%w: instance %s, action %s, settled outcome", ErrEmptyContextID, instanceID, action)
 	}
 
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, "", -1, nil, true, settlingOutcomeUnknown(instanceID, action, contextID))
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, taskDeployment{}, -1, nil, true, settlingOutcomeUnknown(instanceID, action, contextID))
 }
 
 // ErrUnknownSinceRecorded is returned when StampUnknownSince finds that the
@@ -654,7 +667,7 @@ func (vault *Vault) TrackProgressWithContextID(ctx context.Context, instanceID, 
 		return fmt.Errorf("%w: instance %s, action %s", ErrEmptyContextID, instanceID, action)
 	}
 
-	return vault.trackProgress(ctx, instanceID, action, description, contextID, "", taskID, params)
+	return vault.trackProgress(ctx, instanceID, action, description, contextID, taskDeployment{}, taskID, params)
 }
 
 // TrackProgressWithDeployment stores progress information for a task as
@@ -668,7 +681,37 @@ func (vault *Vault) TrackProgressWithDeployment(ctx context.Context, instanceID,
 		return fmt.Errorf("%w: instance %s, action %s", ErrEmptyContextID, instanceID, action)
 	}
 
-	return vault.trackProgress(ctx, instanceID, action, description, contextID, deploymentName, taskID, params)
+	return vault.trackProgress(ctx, instanceID, action, description, contextID, taskDeployment{name: deploymentName}, taskID, params)
+}
+
+// TrackProgressWithMintedDeployment stores progress information for a
+// task as TrackProgressWithContextID does, and records the name
+// MintDeploymentName gives instanceID under planID, together with planID,
+// as the deployment the request acts on. A provision calls it before it
+// sends its deploy. It refuses an empty planID or contextID before
+// anything is written.
+func (vault *Vault) TrackProgressWithMintedDeployment(ctx context.Context, instanceID, action, description, contextID, planID string, taskID int, params interface{}) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s", ErrEmptyContextID, instanceID, action)
+	}
+
+	if planID == "" {
+		return fmt.Errorf("%w: instance %s, action %s", ErrEmptyPlanID, instanceID, action)
+	}
+
+	deployment := taskDeployment{name: vaultPkg.MintDeploymentName(planID, instanceID), planID: planID}
+
+	return vault.trackProgress(ctx, instanceID, action, description, contextID, deployment, taskID, params)
+}
+
+// taskDeployment is the deployment a task record's request acts on. name
+// is its name, and planID is the plan the broker minted the name under,
+// or empty for a name it did not mint, such as the one a delete names. A
+// write that names no deployment keeps the pair the replaced record
+// holds, and one that names a deployment replaces both.
+type taskDeployment struct {
+	name   string
+	planID string
 }
 
 // trackProgress writes the task record. An empty contextID or deploymentName
@@ -679,40 +722,46 @@ func (vault *Vault) TrackProgressWithDeployment(ctx context.Context, instanceID,
 // the state outcome_unknown, the unknown-since time, and the absence of a
 // task ID, unless it settles the outcome. A write settles it when it names
 // a task, or the failure -1, or a context ID other than the recorded one.
-func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}) error {
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, deploymentName, taskID, params, false, nil)
+func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, description, contextID string, deployment taskDeployment, taskID int, params interface{}) error {
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, deployment, taskID, params, false, nil)
+}
+
+// progressRecord is the task record a progress write leaves, unless it
+// keeps an unknown outcome.
+type progressRecord struct {
+	Action           string      `json:"action"`
+	Task             int         `json:"task"`
+	State            string      `json:"state"`
+	Description      string      `json:"description"`
+	UpdatedAt        int64       `json:"updated_at"`
+	Params           interface{} `json:"params"`
+	ContextID        string      `json:"context_id,omitempty"`
+	DeploymentName   string      `json:"deployment_name,omitempty"`
+	DeploymentPlanID string      `json:"deployment_plan_id,omitempty"`
+	CleanupPending   bool        `json:"cleanup_pending,omitempty"`
 }
 
 // trackProgressGuarded writes the task record as trackProgress does, and
 // writes nothing when guard returns an error. See writeTaskRecordGuarded.
 // When cleanupPending is true, the record it writes carries the cleanup
 // mark; see TaskRecordCleanupPendingKey.
-func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}, cleanupPending bool, guard func(current map[string]interface{}) error) error {
+func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action, description, contextID string, deployment taskDeployment, taskID int, params interface{}, cleanupPending bool, guard func(current map[string]interface{}) error) error {
 	logger := logger.Get().Named("vault track progress " + instanceID)
 	logger.Debug("tracking progress for '%s': %s (taskID: %d)", action, description, taskID)
 
 	state := progressState(taskID)
 
-	task := struct {
-		Action         string      `json:"action"`
-		Task           int         `json:"task"`
-		State          string      `json:"state"`
-		Description    string      `json:"description"`
-		UpdatedAt      int64       `json:"updated_at"`
-		Params         interface{} `json:"params"`
-		ContextID      string      `json:"context_id,omitempty"`
-		DeploymentName string      `json:"deployment_name,omitempty"`
-		CleanupPending bool        `json:"cleanup_pending,omitempty"`
-	}{
-		Action:         action,
-		Task:           taskID,
-		State:          state,
-		Description:    description,
-		UpdatedAt:      time.Now().Unix(),
-		Params:         copyParams(params),
-		ContextID:      contextID,
-		DeploymentName: deploymentName,
-		CleanupPending: cleanupPending,
+	task := progressRecord{
+		Action:           action,
+		Task:             taskID,
+		State:            state,
+		Description:      description,
+		UpdatedAt:        time.Now().Unix(),
+		Params:           copyParams(params),
+		ContextID:        contextID,
+		DeploymentName:   deployment.name,
+		DeploymentPlanID: deployment.planID,
+		CleanupPending:   cleanupPending,
 	}
 
 	err := vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
@@ -720,8 +769,11 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 			task.ContextID, _ = replaced[taskRecordContextIDKey].(string)
 		}
 
+		// The name and the plan it was minted under go together, so a
+		// write that names no deployment keeps both.
 		if task.DeploymentName == "" {
 			task.DeploymentName, _ = replaced[TaskRecordDeploymentNameKey].(string)
+			task.DeploymentPlanID, _ = replaced[TaskRecordDeploymentPlanIDKey].(string)
 		}
 
 		kept, keeps := keptUnknownOutcome(replaced, task.ContextID, taskID)
@@ -733,6 +785,7 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 			kept.UpdatedAt = task.UpdatedAt
 			kept.Params = task.Params
 			kept.DeploymentName = task.DeploymentName
+			kept.DeploymentPlanID = task.DeploymentPlanID
 
 			return kept
 		}
@@ -803,6 +856,9 @@ type unknownOutcomeRecord struct {
 	ContextID      string      `json:"context_id"`
 	UnknownSince   string      `json:"unknown_since,omitempty"`
 	DeploymentName string      `json:"deployment_name,omitempty"`
+	// DeploymentPlanID is the plan DeploymentName was minted under. See
+	// TaskRecordDeploymentPlanIDKey.
+	DeploymentPlanID string `json:"deployment_plan_id,omitempty"`
 }
 
 // Bounds on the write of an unknown outcome. A lost write leaves the
@@ -851,6 +907,7 @@ func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action,
 			Params:       replaced["params"],
 		}
 		task.DeploymentName, _ = replaced[TaskRecordDeploymentNameKey].(string)
+		task.DeploymentPlanID, _ = replaced[TaskRecordDeploymentPlanIDKey].(string)
 
 		// The same request's outcome recorded again keeps the time it
 		// first became unknown.

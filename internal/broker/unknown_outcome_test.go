@@ -1632,10 +1632,11 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			return operation
 		}
 
-		It("a deploy's record names the deployment before the deploy is sent", func() {
+		It("a deploy's record names the deployment and the plan it is minted under before the deploy is sent", func() {
 			loseDeploy()
 
 			Expect(recorded().DeploymentName).To(Equal(deploymentName), "the provision's record does not name the deployment its deploy creates")
+			Expect(recorded().DeploymentPlanID).To(Equal(planID), "the provision's record does not say which plan its deployment's name was minted under")
 		})
 
 		It("an unknown delete is reported in progress with the context ID", func() {

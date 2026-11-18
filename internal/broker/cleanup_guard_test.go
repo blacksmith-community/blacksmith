@@ -10,8 +10,17 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/broker"
+	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/testutil"
+)
+
+// clusterPlanID is a second plan, which the instance in a guard spec can
+// move to, and recordedDeploymentKey is the key of the name an index
+// entry records.
+const (
+	clusterPlanID         = "cluster"
+	recordedDeploymentKey = "deployment_name"
 )
 
 // cleanupGuardDirector returns a director on which the deployment exists,
@@ -27,6 +36,18 @@ func cleanupGuardDirector() *testutil.ScriptedBOSHDirector {
 	}
 
 	return director
+}
+
+// cleanupGuardBroker returns a broker over director and vaultClient whose
+// catalog holds the given plans. The cleanup's ownership check reads the
+// record and never the catalog, so a guard spec can leave it empty.
+func cleanupGuardBroker(director bosh.Director, vaultClient *internalVault.Vault, planIDs ...string) *broker.Broker {
+	plans := make(map[string]services.Plan, len(planIDs))
+	for _, planID := range planIDs {
+		plans[recordedNameService+"/"+planID] = services.Plan{ID: planID, Name: planID}
+	}
+
+	return &broker.Broker{BOSH: director, Vault: vaultClient, Plans: plans}
 }
 
 // cleanupGuardRecord is a record the cleanup of a failed deployment may
@@ -59,6 +80,44 @@ func recordFailedProvisionNaming(ctx context.Context, vaultClient *internalVault
 
 	if err != nil {
 		return fmt.Errorf("recording the failed provision: %w", err)
+	}
+
+	return nil
+}
+
+// recordFailedMintedProvision records a provision whose deploy minted
+// its deployment's name under planID, failed in task 7, and still owes
+// the delete of that deployment. When deploymentName is not the minted
+// name, it then overwrites the record's name with deploymentName, as a
+// damaged record might hold.
+func recordFailedMintedProvision(ctx context.Context, vaultClient *internalVault.Vault, instanceID, planID, deploymentName string) error {
+	err := vaultClient.TrackProgressWithMintedDeployment(ctx, instanceID, outcomeProvision, "Creating BOSH deployment", "context-7", planID, 0, nil)
+	if err == nil {
+		err = vaultClient.TrackProgress(ctx, instanceID, outcomeProvision, "BOSH deployment in progress (task 7)", 7, nil)
+	}
+
+	if err == nil {
+		err = vaultClient.TrackFailedCleanupPending(ctx, instanceID, outcomeProvision, "BOSH deployment task 7 is error", "context-7", 7)
+	}
+
+	if err != nil {
+		return fmt.Errorf("recording the failed provision: %w", err)
+	}
+
+	if deploymentName == planID+"-"+instanceID {
+		return nil
+	}
+
+	var record map[string]interface{}
+
+	_, err = vaultClient.Get(ctx, instanceID+"/task", &record)
+	if err == nil {
+		record[internalVault.TaskRecordDeploymentNameKey] = deploymentName
+		err = vaultClient.Put(ctx, instanceID+"/task", record)
+	}
+
+	if err != nil {
+		return fmt.Errorf("damaging the record's name: %w", err)
 	}
 
 	return nil
@@ -127,7 +186,7 @@ func TestCleanupFailedDeployment_DecidesFromTheRecord(t *testing.T) {
 
 			director := cleanupGuardDirector()
 
-			(&broker.Broker{BOSH: director, Vault: vaultClient}).CleanupFailedDeployment(ctx, instanceID, deploymentName)
+			cleanupGuardBroker(director, vaultClient).CleanupFailedDeployment(ctx, instanceID, deploymentName)
 
 			deleted := director.Calls(directorDeleteDeployment)
 
@@ -148,7 +207,7 @@ func TestCleanupFailedDeployment_DecidesFromTheRecord(t *testing.T) {
 		director := cleanupGuardDirector()
 		unreachable := internalVault.New("http://127.0.0.1:1", server.RootToken, true)
 
-		(&broker.Broker{BOSH: director, Vault: unreachable}).CleanupFailedDeployment(ctx, "cleanup-guard-unreadable", standalonePlanID+"-cleanup-guard-unreadable")
+		cleanupGuardBroker(director, unreachable).CleanupFailedDeployment(ctx, "cleanup-guard-unreadable", standalonePlanID+"-cleanup-guard-unreadable")
 
 		if calls := director.Calls(directorDeleteDeployment); len(calls) != 0 {
 			t.Errorf("the cleanup over an unreadable record deleted %v", calls)
@@ -210,7 +269,7 @@ func TestCleanupFailedDeployment_ClearsTheMarkOnceTheDeleteIsSent(t *testing.T) 
 
 			director := cleanupGuardDirector()
 			answer.director(director)
-			cleaner := &broker.Broker{BOSH: director, Vault: vaultClient}
+			cleaner := cleanupGuardBroker(director, vaultClient)
 
 			cleaner.CleanupFailedDeployment(ctx, instanceID, standalonePlanID+"-"+instanceID)
 
@@ -259,7 +318,7 @@ func TestCleanupFailedDeployment_ClearsTheMarkAfterASlowDelete(t *testing.T) { /
 		return &bosh.Task{ID: 1}, nil
 	}
 
-	cleaner := &broker.Broker{BOSH: director, Vault: vaultClient}
+	cleaner := cleanupGuardBroker(director, vaultClient)
 	cleaner.CleanupFailedDeployment(ctx, instanceID, standalonePlanID+"-"+instanceID)
 
 	recorded, err := cleaner.RecordedOperation(ctx, instanceID)
@@ -276,18 +335,32 @@ func TestCleanupFailedDeployment_ClearsTheMarkAfterASlowDelete(t *testing.T) { /
 // the instance's record holds, and whether the instance is indexed under
 // the standalone plan.
 type cleanupOwnership struct {
-	name     string
+	name string
+	// plan is the plan the record says its name was minted under, or
+	// empty for a record written before the plan was recorded.
+	plan     string
 	recorded func(instanceID string) string
 	asked    func(instanceID string) string
-	indexed  bool
-	deletes  bool
+	// index is the plan of the instance's index entry, or empty for an
+	// instance with no index entry. indexName is the name that entry
+	// records, or empty for an entry that records none.
+	index     string
+	indexName func(instanceID string) string
+	// catalog holds the plan IDs of the broker's catalog now.
+	catalog []string
+	deletes bool
 }
 
 // The cleanup deletes only the instance's own deployment. The name it is
 // asked to delete must be the one recorded for the instance, which is the
-// record's, or the index entry's when the record holds none, and it must
-// be a name minted for the instance. Otherwise it deletes nothing, asks
-// the director nothing, and leaves the refusal where an operator sees it.
+// record's, or the index entry's when the record holds none. When the
+// record says which plan the broker minted the name under, the name must
+// be exactly that plan's ID, a dash, and the instance ID. A record from
+// before the plan was recorded falls back to the name's shape, which is
+// the instance ID after a dash and a plan ID before it. Neither the
+// catalog nor the instance's plan now plays a part. Otherwise the cleanup
+// deletes nothing, asks the director nothing, and leaves the refusal
+// where an operator sees it.
 func TestCleanupFailedDeployment_DeletesOnlyTheInstancesOwnDeployment(t *testing.T) {
 	t.Parallel()
 
@@ -303,17 +376,41 @@ func TestCleanupFailedDeployment_DeletesOnlyTheInstancesOwnDeployment(t *testing
 
 	own := func(instanceID string) string { return standalonePlanID + "-" + instanceID }
 	other := func(string) string { return standalonePlanID + "-another-instance" }
+	cluster := func(instanceID string) string { return clusterPlanID + "-" + instanceID }
 	otherPlan := func(instanceID string) string { return "other-plan-" + instanceID }
 	none := func(string) string { return "" }
 
+	// A prefixed impostor is the deployment of instance x-<id> under the
+	// standalone plan, and a suffixed one that of instance <id>-x. Both
+	// hold the instance ID and the plan, and neither was minted for it.
+	prefixed := func(instanceID string) string { return standalonePlanID + "-x-" + instanceID }
+	suffixed := func(instanceID string) string { return standalonePlanID + "-" + instanceID + "-x" }
+
+	both := []string{standalonePlanID, clusterPlanID}
+	onlyCluster := []string{clusterPlanID}
+
 	cases := []cleanupOwnership{
-		{"the record names the instance's deployment", own, own, false, true},
-		{"the record names another instance's deployment", other, other, false, false},
-		{"the cleanup is asked for another instance's deployment", own, other, false, false},
-		{"the cleanup is asked for a deployment the record does not name", own, otherPlan, false, false},
-		{"an unnamed record of an indexed instance", none, own, true, true},
-		{"an unnamed record of an indexed instance asked for another name", none, otherPlan, true, false},
-		{"an unnamed record with no index entry", none, own, false, false},
+		{name: "the record names the deployment minted under its plan", plan: standalonePlanID, recorded: own, asked: own, catalog: both, deletes: true},
+		{name: "the record names another instance's deployment", plan: standalonePlanID, recorded: other, asked: other, catalog: both},
+		{name: "the cleanup is asked for another instance's deployment", plan: standalonePlanID, recorded: own, asked: other, catalog: both},
+		{name: "the cleanup is asked for a deployment the record does not name", plan: standalonePlanID, recorded: own, asked: otherPlan, catalog: both},
+		{name: "the record names a prefixed impostor", plan: standalonePlanID, recorded: prefixed, asked: prefixed, catalog: both},
+		{name: "the record names a suffixed impostor", plan: standalonePlanID, recorded: suffixed, asked: suffixed, catalog: both},
+		{name: "the record names the instance under another catalog plan than its own", plan: standalonePlanID, recorded: cluster, asked: cluster, catalog: both},
+		{name: "the plan the name was minted under has left the catalog", plan: standalonePlanID, recorded: own, asked: own, catalog: onlyCluster, deletes: true},
+		{
+			name: "the instance moved to another plan after its name was minted", plan: standalonePlanID, recorded: own, asked: own,
+			index: clusterPlanID, indexName: own, catalog: onlyCluster, deletes: true,
+		},
+		{name: "a record without its plan names the instance's deployment", recorded: own, asked: own, catalog: both, deletes: true},
+		{name: "a record without its plan names another instance's deployment", recorded: other, asked: other, catalog: both},
+		{name: "a record without its plan is asked for a deployment it does not name", recorded: own, asked: otherPlan, catalog: both},
+		{name: "a record without its plan names a suffixed impostor", recorded: suffixed, asked: suffixed, catalog: both},
+		{name: "a record without its plan names a plan that has left the catalog", recorded: otherPlan, asked: otherPlan, catalog: both, deletes: true},
+		{name: "an unnamed record of an indexed instance", recorded: none, asked: own, index: standalonePlanID, catalog: both, deletes: true},
+		{name: "an unnamed record of an indexed instance asked for another name", recorded: none, asked: otherPlan, index: standalonePlanID, catalog: both},
+		{name: "an unnamed record of an indexed instance whose plan has left the catalog", recorded: none, asked: own, index: standalonePlanID, catalog: onlyCluster, deletes: true},
+		{name: "an unnamed record with no index entry", recorded: none, asked: own, catalog: both},
 	}
 
 	for index, entry := range cases {
@@ -322,26 +419,48 @@ func TestCleanupFailedDeployment_DeletesOnlyTheInstancesOwnDeployment(t *testing
 
 			instanceID := "cleanup-owner-" + strconv.Itoa(index)
 
-			err := recordFailedProvisionNaming(ctx, vaultClient, instanceID, entry.recorded(instanceID))
-			if err != nil {
-				t.Fatalf("failed to write the record: %v", err)
-			}
-
-			if entry.indexed {
-				err = vaultClient.Index(ctx, instanceID, map[string]interface{}{recordedPlanKey: standalonePlanID, serviceIDKey: recordedNameService})
-				if err != nil {
-					t.Fatalf("failed to index the instance: %v", err)
-				}
-			}
+			recordCleanupOwnership(ctx, t, vaultClient, instanceID, entry)
 
 			director := cleanupGuardDirector()
-			cleaner := &broker.Broker{BOSH: director, Vault: vaultClient}
+			cleaner := cleanupGuardBroker(director, vaultClient, entry.catalog...)
 			asked := entry.asked(instanceID)
 
 			cleaner.CleanupFailedDeployment(ctx, instanceID, asked)
 
 			requireCleanupOwnership(ctx, t, cleaner, director, instanceID, asked, entry.deletes)
 		})
+	}
+}
+
+// recordCleanupOwnership writes the failed provision and the index entry
+// that entry describes for instanceID.
+func recordCleanupOwnership(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault, instanceID string, entry cleanupOwnership) {
+	t.Helper()
+
+	var err error
+
+	if entry.plan == "" {
+		err = recordFailedProvisionNaming(ctx, vaultClient, instanceID, entry.recorded(instanceID))
+	} else {
+		err = recordFailedMintedProvision(ctx, vaultClient, instanceID, entry.plan, entry.recorded(instanceID))
+	}
+
+	if err != nil {
+		t.Fatalf("failed to write the record: %v", err)
+	}
+
+	if entry.index == "" {
+		return
+	}
+
+	indexEntry := map[string]interface{}{recordedPlanKey: entry.index, serviceIDKey: recordedNameService}
+	if entry.indexName != nil {
+		indexEntry[recordedDeploymentKey] = entry.indexName(instanceID)
+	}
+
+	err = vaultClient.Index(ctx, instanceID, indexEntry)
+	if err != nil {
+		t.Fatalf("failed to index the instance: %v", err)
 	}
 }
 
@@ -441,7 +560,7 @@ func TestCleanupFailedDeployment_RecoversTheNameOfAnUnnamedRecord(t *testing.T) 
 
 			director := cleanupGuardDirector()
 			director.FindTaskByContextIDFn = entry.lookup(instanceID)
-			cleaner := &broker.Broker{BOSH: director, Vault: vaultClient}
+			cleaner := cleanupGuardBroker(director, vaultClient)
 
 			cleaner.CleanupFailedDeployment(ctx, instanceID, entry.asked(instanceID))
 
@@ -548,7 +667,7 @@ func TestCleanupFailedDeployment_KeepsTheRowWhenTheRecordCannotBeRead(t *testing
 	}
 
 	director := cleanupGuardDirector()
-	cleaner := &broker.Broker{BOSH: director, Vault: vaultClient}
+	cleaner := cleanupGuardBroker(director, vaultClient)
 
 	cleaner.CleanupFailedDeployment(ctx, instanceID, other)
 
@@ -614,7 +733,7 @@ func TestFailureWrites_MakeTheInstanceASuspect(t *testing.T) {
 				t.Fatalf("failed to record the provision: %v", err)
 			}
 
-			cleaner := &broker.Broker{BOSH: cleanupGuardDirector(), Vault: vaultClient}
+			cleaner := cleanupGuardBroker(cleanupGuardDirector(), vaultClient)
 
 			recorded, err := cleaner.RecordedOperation(ctx, instanceID)
 			if err != nil {
@@ -631,5 +750,53 @@ func TestFailureWrites_MakeTheInstanceASuspect(t *testing.T) {
 				t.Fatalf("the sweep suspects %v after the failure was recorded, want only %s", suspects, instanceID)
 			}
 		})
+	}
+}
+
+// A record that says which plan its name was minted under owns exactly
+// that plan's ID, a dash, and the instance ID. A record from before the
+// plan was recorded owns a name of that shape under any plan ID, in or
+// out of the catalog. Names that hold the instance ID inside another
+// instance's ID, or another plan's name for a record that says its plan,
+// are impostors.
+func TestMintedFor_ChecksTheRecordedPlanOrTheNamesShape(t *testing.T) {
+	t.Parallel()
+
+	const instanceID = "abc"
+
+	for _, check := range []struct {
+		name   string
+		plan   string
+		minted bool
+	}{
+		{standalonePlanID + "-abc", standalonePlanID, true},
+		{clusterPlanID + "-abc", standalonePlanID, false},
+		{standalonePlanID + "-x-abc", standalonePlanID, false},
+		{"x-" + standalonePlanID + "-abc", standalonePlanID, false},
+		{standalonePlanID + "-abc-x", standalonePlanID, false},
+		{standalonePlanID + "-abcx", standalonePlanID, false},
+		{"abc", standalonePlanID, false},
+		{"", standalonePlanID, false},
+		{standalonePlanID + "-abc", "", true},
+		{clusterPlanID + "-abc", "", true},
+		{"other-abc", "", true},
+		{standalonePlanID + "-abc-x", "", false},
+		{standalonePlanID + "-abcx", "", false},
+		{"-abc", "", false},
+		{".hidden-abc", "", false},
+		{"a/b-abc", "", false},
+		{"a b-abc", "", false},
+		{"abc", "", false},
+		{standalonePlanID + "abc", "", false},
+		{standalonePlanID + "-", "", false},
+		{"", "", false},
+	} {
+		if got := broker.MintedFor(check.name, instanceID, check.plan); got != check.minted {
+			t.Errorf("MintedFor(%q, %q, %q) = %v, want %v", check.name, instanceID, check.plan, got, check.minted)
+		}
+	}
+
+	if broker.MintedFor(standalonePlanID+"-", "", "") || broker.MintedFor(standalonePlanID+"-", "", standalonePlanID) {
+		t.Error("MintedFor took a name as minted for an empty instance ID")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
@@ -598,13 +599,33 @@ func owedCleanups(candidates []*readoptCandidate) []owedCleanup {
 	return cleanups
 }
 
-// mintedFor reports whether deploymentName is one MintDeploymentName gives
-// instanceID under some plan. The instance ID ends the name, so no other
-// instance's deployment has it.
-func mintedFor(deploymentName, instanceID string) bool {
-	planID, minted := strings.CutSuffix(deploymentName, "-"+instanceID)
+// mintedFor reports whether deploymentName is the name the broker minted
+// for instanceID. planID is the plan the instance's record says the name
+// was minted under. A record that says so owns exactly the name
+// MintDeploymentName gives instanceID under that plan, and nothing else.
+// Neither the catalog nor the plan the instance is on now plays a part,
+// because a deployment keeps the name it was created under after its plan
+// leaves the catalog or the instance moves to another plan.
+//
+// A record written before the broker recorded the plan has only the
+// name's shape to go by, so planID is empty. The name must then end in a
+// dash and the instance ID, with something in the form of a plan ID
+// before it. The shape cannot tell a plan ID from one followed by the
+// head of another instance's ID, so for a client that sends free-form IDs
+// it takes plan-x-abc, the deployment of instance x-abc, as minted for
+// abc. The GUIDs Cloud Controller sends never nest that way.
+func mintedFor(deploymentName, instanceID, planID string) bool {
+	if instanceID == "" {
+		return false
+	}
 
-	return minted && planID != ""
+	if planID != "" {
+		return deploymentName == vaultPkg.MintDeploymentName(planID, instanceID)
+	}
+
+	prefix, minted := strings.CutSuffix(deploymentName, "-"+instanceID)
+
+	return minted && services.ValidName.MatchString(prefix)
 }
 
 // runOwedCleanups runs each owed cleanup in turn, under the service
