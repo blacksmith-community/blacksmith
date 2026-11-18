@@ -5,7 +5,7 @@ const { pinZone } = require('../fixed-zone.js');
 pinZone('UTC');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 
 const {boot,openInstanceTab,idle,EVIL,day,now,iso} = H.instance;
 const {until} = H.main;

@@ -3,7 +3,7 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 
 const {boot,idle,EVIL} = H.fleet;
 const bad=(d)=>d.querySelectorAll('#certificates img,#certificates script,#certificates [onerror],#certificates [onclick],.modal-overlay img,.modal-overlay script,#blacksmith-live-region img').length;

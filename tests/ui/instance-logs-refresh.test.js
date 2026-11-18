@@ -1,5 +1,6 @@
 const { test, expect } = require('bun:test');
-const { main:{boot,sleep,idle,TEST_LIMIT} } = require('./certificates/harness.js');
+const { main:{boot,idle,TEST_LIMIT} } = require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 
 const JOB = 'job/0';
 
@@ -29,7 +30,7 @@ const stubLogs = (w, body) => {
 };
 const options = (content) => [...content.querySelectorAll('.log-file-dropdown option')].map((o) => o.value);
 
-test('Refresh keeps the file list and shows the new contents of the selected file', async () => {
+t('Refresh keeps the file list and shows the new contents of the selected file', async () => {
   const { w, d } = boot();
   try {
     const content = await mountLogs(w, d, { 'app.log': 'first app line', 'other.log': 'first other line' });
@@ -47,7 +48,7 @@ test('Refresh keeps the file list and shows the new contents of the selected fil
   } finally { w.close(); }
 });
 
-test('Refresh reads the same wrapped response the first load reads', async () => {
+t('Refresh reads the same wrapped response the first load reads', async () => {
   const { w, d } = boot();
   try {
     const content = await mountLogs(w, d, { 'app.log': 'first app line' });
@@ -59,7 +60,7 @@ test('Refresh reads the same wrapped response the first load reads', async () =>
   } finally { w.close(); }
 });
 
-test('Refresh falls back to the first file when the selected one is gone', async () => {
+t('Refresh falls back to the first file when the selected one is gone', async () => {
   const { w, d } = boot();
   try {
     const content = await mountLogs(w, d, { 'app.log': 'first app line', 'other.log': 'first other line' });

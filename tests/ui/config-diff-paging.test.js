@@ -1,5 +1,6 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
+const t=(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l);
 
 const open=async(ids,opts={})=>{
  const env=boot({oat:true,noDialogs:true,...opts});const {w,d}=env;
@@ -19,7 +20,7 @@ const pick=async(w,d,v)=>{sel(d).value=v;sel(d).dispatchEvent(new w.Event('chang
 const press=async(d,k)=>{btn(d,k).click();await idle(d);};
 const state=d=>['first','prev','next','last'].map(k=>btn(d,k).disabled);
 
-test('the row reads first, previous, select, next, last with names and keys',async()=>{
+t('the row reads first, previous, select, next, last with names and keys',async()=>{
  const {w,d}=await open(['4','3','2','1']);try{
  const row=d.querySelector('.diff-controls');
  const ids=[...row.children].map(n=>n.id);
@@ -35,7 +36,7 @@ test('the row reads first, previous, select, next, last with names and keys',asy
  }finally{w.close()}
 });
 
-test('the visible label is gone and the heading is bold with the new text',async()=>{
+t('the visible label is gone and the heading is bold with the new text',async()=>{
  const {w,d}=await open(['4','3','2','1']);try{
  expect(d.querySelector('label[for="diff-version-selector"]')).toBeNull();
  expect(d.querySelector('#config-diff-content').textContent).not.toContain('Compare versions:');
@@ -46,7 +47,7 @@ test('the visible label is gone and the heading is bold with the new text',async
  }finally{w.close()}
 });
 
-test('first is the oldest pair and last is the newest',async()=>{
+t('first is the oldest pair and last is the newest',async()=>{
  const {w,d}=await open(['4','3','2','1']);try{
  expect([...sel(d).options].map(o=>o.value)).toEqual(['','3|4','2|3','1|2']);
  await press(d,'first');expect(sel(d).value).toBe('1|2');
@@ -54,7 +55,7 @@ test('first is the oldest pair and last is the newest',async()=>{
  }finally{w.close()}
 });
 
-test('previous steps to an older pair and next to a newer one',async()=>{
+t('previous steps to an older pair and next to a newer one',async()=>{
  const {w,d}=await open(['4','3','2','1']);try{
  await pick(w,d,'2|3');
  await press(d,'prev');expect(sel(d).value).toBe('1|2');
@@ -63,7 +64,7 @@ test('previous steps to an older pair and next to a newer one',async()=>{
  }finally{w.close()}
 });
 
-test('buttons disable at each end',async()=>{
+t('buttons disable at each end',async()=>{
  const {w,d}=await open(['4','3','2','1']);try{
  await pick(w,d,'2|3');expect(state(d)).toEqual([false,false,false,false]);
  await pick(w,d,'1|2');expect(state(d)).toEqual([true,true,false,false]);
@@ -71,7 +72,7 @@ test('buttons disable at each end',async()=>{
  }finally{w.close()}
 });
 
-test('a button loads the same diff and state as the select',async()=>{
+t('a button loads the same diff and state as the select',async()=>{
  const a=await open(['4','3','2','1']);const b=await open(['4','3','2','1']);try{
  await pick(a.w,a.d,'2|3');
  await press(b.d,'last');await press(b.d,'prev');await press(b.d,'prev');await press(b.d,'next');
@@ -87,7 +88,7 @@ test('a button loads the same diff and state as the select',async()=>{
  }finally{a.w.close();b.w.close()}
 });
 
-test('focus stays on the button after the diff reloads',async()=>{
+t('focus stays on the button after the diff reloads',async()=>{
  const {w,d}=await open(['5','4','3','2','1']);try{
  await pick(w,d,'3|4');
  btn(d,'next').focus();btn(d,'next').click();await idle(w);
@@ -98,7 +99,7 @@ test('focus stays on the button after the diff reloads',async()=>{
  }finally{w.close()}
 });
 
-test('a button that disables under focus hands focus to the select',async()=>{
+t('a button that disables under focus hands focus to the select',async()=>{
  const {w,d}=await open(['3','2','1']);try{
  await pick(w,d,'2|3');
  btn(d,'first').focus();btn(d,'first').click();await idle(w);
@@ -107,7 +108,7 @@ test('a button that disables under focus hands focus to the select',async()=>{
  }finally{w.close()}
 });
 
-test('a single pair disables all four buttons and no pair leaves them off',async()=>{
+t('a single pair disables all four buttons and no pair leaves them off',async()=>{
  const one=await open(['2','1']);try{
  expect(state(one.d)).toEqual([true,true,true,true]);
  await pick(one.w,one.d,'1|2');expect(state(one.d)).toEqual([true,true,true,true]);
@@ -119,14 +120,14 @@ test('a single pair disables all four buttons and no pair leaves them off',async
  }finally{none.w.close()}
 });
 
-test('before a pair is chosen, previous and next start from the ends',async()=>{
+t('before a pair is chosen, previous and next start from the ends',async()=>{
  const {w,d}=await open(['4','3','2','1']);try{
  expect(sel(d).value).toBe('');expect(state(d)).toEqual([false,false,false,false]);
  await press(d,'next');expect(sel(d).value).toBe('3|4');
  }finally{w.close()}
 });
 
-test('the paging row stays on one line at phone width with tall targets',()=>{
+t('the paging row stays on one line at phone width with tall targets',()=>{
  const fs=require('fs'),path=require('path');
  const css=fs.readFileSync(path.join(__dirname,'..','..','ui','blacksmith.css'),'utf8');
  expect(css).toMatch(/\.diff-controls\s*\{[^}]*flex-wrap:\s*nowrap/);
@@ -134,13 +135,13 @@ test('the paging row stays on one line at phone width with tall targets',()=>{
  expect(css).toMatch(/\.diff-controls \.form-control\s*\{[^}]*min-width:\s*0/);
 });
 
-test('the chevron pair glyphs exist as icons',()=>{
+t('the chevron pair glyphs exist as icons',()=>{
  const {sources}=require('../../ui/icons.js');
  expect(Object.keys(sources)).toContain('chevrons-left');
  expect(Object.keys(sources)).toContain('chevrons-right');
 });
 
-test('the gap above the paging row is 8 to 12px',()=>{
+t('the gap above the paging row is 8 to 12px',()=>{
  const fs=require('fs'),path=require('path');
  const css=fs.readFileSync(path.join(__dirname,'..','..','ui','blacksmith.css'),'utf8');
  const m=/#config-details-modal #diffs-panel\s*\{[^}]*padding-top:\s*(\d+)px/.exec(css);

@@ -2,7 +2,7 @@ const { test, expect, afterEach } = require('bun:test');
 const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
 
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 const { boot, idle, now, day, iso } = H.fleet;
 
 const cert = (id, days, when) => ({
