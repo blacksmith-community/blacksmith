@@ -5,8 +5,8 @@ const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
 const { install } = require('../dom-stubs.js');
 
-const t = JSDOM ? test : test.skip;
-const { boot, sleep } = H.main;
+const { boot, idle, TEST_LIMIT } = H.main;
+const t = JSDOM ? (name, fn) => test(name, fn, TEST_LIMIT) : test.skip;
 const OAT = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'ui', 'vendor', 'oat', 'oat.min.js'), 'utf8');
 
 const envs = [];
@@ -18,6 +18,8 @@ afterEach(() => {
 // script, so the menu behaves the same whether it is hand built or an
 // ot-dropdown. The harness captures the console before boot, and afterEach
 // asserts that nothing reached console.error. The menu counts as open when it is not hidden or its popover shows.
+// Each step waits with idle() for the page to finish what it started, which a
+// loaded machine only makes slower, and settle() does the same after a click or key.
 const start = async () => {
   const env = boot({ noDialogs: true });
   envs.push(env);
@@ -25,18 +27,19 @@ const start = async () => {
   const stubs = install(w);
   // jsdom cannot navigate, so a download link click is cancelled after the page code sees it.
   d.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('a[href]')) e.preventDefault(); });
-  w.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  // A frame runs on the window's own timer, which idle() counts.
+  w.requestAnimationFrame = (fn) => w.setTimeout(fn, 0);
   w.eval(OAT);
   const T = w.__T;
   const mk = (i) => ({ id: 'c' + i, key: '/s/a' + i, variable: 'a' + i, kind: 'leaf', days_left: 3, expiry: 'critical', health: 'ok', owners: [{ kind: 'instance', instance_id: 'i' + i, instance_name: 'n' + i }], rotation: { allowed: true, reasons: [] }, findings: [] });
   w.__routes.push(['/b/config/ssh/ui-terminal-status', (u, o, j) => j(200, {})], ['/b/status', (u, o, j) => j(200, { env: 'test', deployment: 'blacksmith', instances: {}, plans: {} })], ['/v2/catalog', (u, o, j) => j(200, { services: [] })], ['/b/bosh/stemcells', (u, o, j) => j(200, [])], ['/b/bosh/releases', (u, o, j) => j(200, [])], ['/b/upgrade/settings', (u, o, j) => j(200, {})], ['/b/upgrade/tasks', (u, o, j) => j(200, [])],
     [/certificates\/inventory/, (u, o, j) => j(200, { certificates: [mk(1), mk(2)], capabilities: {}, settings: { warning_days: 30, critical_days: 7 }, scan: { state: 'idle' }, summary: { certificates: 2, needs_attention: 0 }, filtered: { certificates: 2 } })]);
   w.serviceInstances = {};
-  await sleep(50);
+  await idle(w);
   w.plansData = { services: [] };
   d.getElementById('certificates').classList.add('active');
   await T.CertsFleet.init();
-  await sleep(200);
+  await idle(w);
   const btn = d.getElementById('cert-export-btn');
   const menu = d.getElementById('cert-export-menu');
   const isOpen = () => (menu.hasAttribute('popover') ? stubs.isOpen(menu) : !menu.hidden);
@@ -49,15 +52,15 @@ const start = async () => {
     st.attention = true; st.health = ['error'];
     const service = T.CertsFleet.view.refs.service;
     service.dispatchEvent(new w.Event('change'));
-    await sleep(300);
+    await idle(w);
   };
   const unblock = async () => {
     const st = T.CertsFleet.state;
     st.attention = false; st.health = [];
     T.CertsFleet.view.refs.service.dispatchEvent(new w.Event('change'));
-    await sleep(300);
+    await idle(w);
   };
-  return { env, w, d, stubs, T, btn, menu, csv, json, note, isOpen, key, block, unblock, settle: () => stubs.settle() };
+  return { env, w, d, stubs, T, btn, menu, csv, json, note, isOpen, key, block, unblock, settle: () => idle(w) };
 };
 
 t('a click opens the menu, marks the button expanded, and focuses the first item', async () => {
