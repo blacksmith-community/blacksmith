@@ -1519,6 +1519,11 @@ func readoptServiceOperations(ctx context.Context, brokerInstance *broker.Broker
 	return nil
 }
 
+// deploymentNameBackfillTimeout bounds the boot backfill. It is twice the
+// director's 60-second request timeout, which leaves the one deployment
+// list and the index write room to finish.
+const deploymentNameBackfillTimeout = 2 * time.Minute
+
 // backfillDeploymentNames records the deployment name of every index entry
 // written before the broker recorded one, once the director confirms the
 // deployment the entry resolves to. It runs before the reconciler and the
@@ -1526,6 +1531,11 @@ func readoptServiceOperations(ctx context.Context, brokerInstance *broker.Broker
 // a warning, and the next boot runs it again, because the backfill skips
 // every entry that records a name already. With no director, nothing can
 // be confirmed, so it is skipped.
+//
+// The service context does not end on a signal, so the backfill runs under
+// a context that also ends on SIGINT or SIGTERM, and after
+// deploymentNameBackfillTimeout. A director that accepts the connection
+// and then stalls can't hold boot, or a stop, for longer than that.
 func backfillDeploymentNames(ctx context.Context, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) {
 	if boshDirector == nil {
 		logger.Warn("No BOSH director is configured, so the deployment names of instances indexed without one are not recorded")
@@ -1533,7 +1543,13 @@ func backfillDeploymentNames(ctx context.Context, brokerInstance *broker.Broker,
 		return
 	}
 
-	result, err := brokerInstance.BackfillDeploymentNames(ctx)
+	signalCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	backfillCtx, cancel := context.WithTimeout(signalCtx, deploymentNameBackfillTimeout)
+	defer cancel()
+
+	result, err := brokerInstance.BackfillDeploymentNames(backfillCtx)
 	if err != nil {
 		logger.Warn("The deployment names of instances indexed without one were not recorded, and the next boot tries again: %s", err)
 
