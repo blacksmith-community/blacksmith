@@ -194,7 +194,16 @@ function install(w, options = {}) {
   const api = {
     isOpen,
     isModal: (dialog) => modals.has(dialog),
-    settle: () => new Promise((resolve) => setTimeout(resolve, 5))
+    // Resolves once every queued toggle and close event has been delivered, and stays quiet for three
+    // turns of the event loop, so the wait follows the stubs and not a fixed time.
+    settle: async () => {
+      const deadline = Date.now() + 15000;
+      for (let quiet = 0; quiet < 3;) {
+        if (Date.now() > deadline) throw new Error('Timed out waiting for queued dialog events');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        quiet = tasks.size === 0 ? quiet + 1 : 0;
+      }
+    }
   };
   w.__domStubs = { api, state };
   return api;
