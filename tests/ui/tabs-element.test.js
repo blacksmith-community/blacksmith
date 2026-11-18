@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -17,9 +17,9 @@ const start=async(markup)=>{
  const env=boot({noDialogs:true,routes:[['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});envs.push(env);
  const {w,d}=env;
  w.eval(OAT);
- await sleep(30);
+ await idle(w);
  d.body.insertAdjacentHTML('beforeend',markup);
- await sleep(10);
+ await idle(w);
  const host=d.getElementById('strip');
  const tabs=[...host.querySelectorAll('[role=tab]')];
  const panels=[...host.querySelectorAll('[role=tabpanel]')];
@@ -113,9 +113,9 @@ t('select picks a tab by name, and the tab list answers blacksmithSelect',async(
 
 t('a tab change after the strip is ready asks the route to update, and the first render does not',async()=>{
  const env=boot({noDialogs:true,routes:[['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});envs.push(env);
- const {w,d}=env; w.eval(OAT); await sleep(60);
+ const {w,d}=env; w.eval(OAT); await idle(w);
  let notified=0; const real=w.blacksmithViews.notify; w.blacksmithViews.notify=(...a)=>{notified++;return real(...a);};
- d.body.insertAdjacentHTML('beforeend',strip()); await sleep(10);
+ d.body.insertAdjacentHTML('beforeend',strip()); await idle(w);
  
  expect(notified).toBe(0);
  d.querySelectorAll("#strip [role=tab]")[1].click();

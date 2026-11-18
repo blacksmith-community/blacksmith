@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -52,7 +52,7 @@ const start=async()=>{
   send(message){this.sent.push(JSON.parse(message));}
   close(code){this.readyState=3;this.closedWith=code;}
  };
- await sleep(60);
+ await idle(w);
  const mgr=w.TerminalManager;
  const open=(instance='node/0')=>mgr.openWithContext('blacksmith','broker',instance,'node','broker');
  const deliver=(socket,msg)=>socket.onmessage({data:JSON.stringify(msg)});
@@ -60,7 +60,7 @@ const start=async()=>{
   socket.readyState=1; socket.onopen();
   deliver(socket,{type:'handshake'});
   if(term && !term.ready) term.resolveInit();
-  await sleep(150);
+  await idle(w);
   deliver(socket,{type:'status',meta:{status:'connected'}});
  };
  const sent=(socket,type)=>socket.sent.filter(m=>m.type===type);
@@ -95,7 +95,7 @@ t('a broker session labels the button and opens the broker VMs view',async()=>{
  expect(btn(d).getAttribute('title')).toBe('Show VMs for node');
  expect(btn(d).disabled).toBe(false);
  btn(d).click();
- await sleep(20);
+ await idle(w);
  expect(calls).toEqual([{screen:'blacksmith',section:'vms'}]);
  expect(d.getElementById('terminal-modal').open).toBe(false);
  expect(mgr.sessions.size).toBe(1);
@@ -109,7 +109,7 @@ t('a service instance session opens that instance VMs view',async()=>{
  const d=w.document;
  expect(btn(d).getAttribute('aria-label')).toBe('Show VMs for certmgmt-valkey-c3');
  btn(d).click();
- await sleep(20);
+ await idle(w);
  expect(calls).toEqual([{screen:'services',instance:SI_ID,section:'vms'}]);
  expect(mgr.sessions.size).toBe(1);
  expect(sockets.every(s=>s.closedWith===undefined)).toBe(true);
@@ -134,7 +134,7 @@ t('an instance that cannot be resolved disables the button and says why',async()
  expect(btn(d).disabled).toBe(true);
  expect(btn(d).getAttribute('title')).toMatch(/no longer exists|cannot be found|not found/i);
  btn(d).click();
- await sleep(20);
+ await idle(w);
  expect(calls).toEqual([]);
  expect(d.getElementById('terminal-modal').open).toBe(true);
 });

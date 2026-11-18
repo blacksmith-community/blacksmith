@@ -1,9 +1,9 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const OAT=fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8');
@@ -52,7 +52,7 @@ const start=async()=>{
   send(message){this.sent.push(JSON.parse(message));}
   close(code){this.readyState=3;this.closedWith=code;}
  };
- await sleep(60);
+ await idle(w);
  const mgr=w.TerminalManager;
  const open=(instance='node/0')=>mgr.openWithContext('blacksmith','broker',instance,'node','broker');
  const deliver=(socket,msg)=>socket.onmessage({data:JSON.stringify(msg)});
@@ -60,7 +60,7 @@ const start=async()=>{
   socket.readyState=1; socket.onopen();
   deliver(socket,{type:'handshake'});
   if(term && !term.ready) term.resolveInit();
-  await sleep(150);
+  await idle(w);
   deliver(socket,{type:'status',meta:{status:'connected'}});
  };
  const sent=(socket,type)=>socket.sent.filter(m=>m.type===type);
@@ -311,7 +311,7 @@ t('a reconnected session also leaves the connected state on the exit notice',asy
 // A session whose terminal could not start is failed. It keeps its failed
 // state, and it offers the same reconnect as a disconnected one, in the
 // dialog and in the minimized bar.
-const failSession=async(env,index=0)=>{ env.terms[index].rejectInit(); await sleep(30); };
+const failSession=async(env,index=0)=>{ env.terms[index].rejectInit(); await idle(env); };
 
 t('a failed session offers reconnect in the dialog tab and the minimized bar',async()=>{
  const env=await start(); const {d,open,mgr}=env;
@@ -353,7 +353,7 @@ t('reconnecting a failed session connects only that tab and makes it active',asy
  terms[termCount].resolveInit();
  const fresh=sockets[sockets.length-1]; fresh.readyState=1; fresh.onopen();
  env.deliver(fresh,{type:'status',meta:{status:'connected'}});
- await sleep(30);
+ await idle(env);
  expect(session.status).toBe('connected');
  expect(session.failed).toBe(false);
  expect(env.sent(fresh,'control').some(m=>m.meta.action==='start')).toBe(true);
@@ -370,7 +370,7 @@ t('a second failure leaves the tab failed with reconnect offered and never retri
  expect(session.failed).toBe(true);
  expect(session.status).toBe('failed');
  sockets[sockets.length-1].onclose({code:1006});
- await sleep(1200);
+ await idle(env);
  expect(sockets.length).toBe(count);
  expect(session.status).toBe('failed');
  expect(session.element.classList.contains('terminal-failed')).toBe(true);
@@ -439,7 +439,7 @@ t('a late close from the old socket after a reconnect does not disturb the new s
  for(const code of [1006,1000]) old.onclose({code});
  expect(mgr.sessions.get(KEY_BK).status).toBe('connecting');
  expect(d.body.textContent).not.toContain('Disconnected:');
- terms[1].resolveInit(); await sleep(30);
+ terms[1].resolveInit(); await idle(env);
  expect(terms[1].written.join('')).not.toContain('[Disconnected]');
  expect(sockets.length).toBe(2);
  mgr.closeAll();

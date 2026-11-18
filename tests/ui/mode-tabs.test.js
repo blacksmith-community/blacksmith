@@ -1,7 +1,8 @@
 const {test,expect}=require('bun:test');
+const {main:{idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {setupRotate,cert}=require('./rotate-flow-support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const certs=[cert('/s/valkey_crt','valkey_crt',10,'inst-a','cache-a'),cert('/s/redis_crt','redis_crt',200,'inst-b','cache-b')];
 const key=(w,el,k)=>el.dispatchEvent(new w.KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true}));
 t('mode tabs follow the ARIA tabs pattern with arrow keys',async()=>{
@@ -36,7 +37,7 @@ t('mode tabs follow the ARIA tabs pattern with arrow keys',async()=>{
  }finally{w.close();}
 });
 t('an unavailable Patch tab stays visible, says why, and cannot be chosen',async()=>{
- const {w,d,T,sleep}=await setupRotate({certs,caps:{rotation:{enabled:true},patch_in_place:{enabled:false,reason:'the switch is off'}}});try{
+ const {w,d,T}=await setupRotate({certs,caps:{rotation:{enabled:true},patch_in_place:{enabled:false,reason:'the switch is off'}}});try{
  const patch=d.getElementById('rotate-mode-patch-tab');
  expect(patch.hidden).toBe(false);expect(patch.disabled).toBe(true);
  const reason=d.getElementById('rotate-mode-patch-reason');
@@ -44,25 +45,25 @@ t('an unavailable Patch tab stays visible, says why, and cannot be chosen',async
  patch.click();expect(T.rotateState.mode).toBe('redeploy');
  key(w,d.getElementById('rotate-mode-redeploy-tab'),'ArrowRight');expect(T.rotateState.mode).toBe('redeploy');
  // a Patch that closes while chosen falls back to Redeploy and says so
- T.rotateState.mode='patch';T.rotateState.converge='pending';T.updateOperationFooter();await sleep(80);
+ T.rotateState.mode='patch';T.rotateState.converge='pending';T.updateOperationFooter();await idle(w);
  expect(T.rotateState.mode).toBe('redeploy');
  expect(d.getElementById('rotate-mode-redeploy-tab').getAttribute('aria-selected')).toBe('true');
  expect(d.getElementById('blacksmith-live-region').textContent).toContain('mode is back to Redeploy');
  }finally{w.close();}
 });
 t('the panels follow the mode when it changes without a click',async()=>{
- const {w,d,T,sleep}=await setupRotate({certs});try{
+ const {w,d,T}=await setupRotate({certs});try{
  const panel=d.getElementById('rotate-mode-redeploy-panel');
  const patchPanel=d.getElementById('rotate-mode-patch-panel');
  const patch=d.getElementById('rotate-mode-patch-tab');
  // the mode is set in code and the footer redraws
- T.rotateState.mode='patch';T.rotateState.converge='pending';T.updateOperationFooter();await sleep(80);
+ T.rotateState.mode='patch';T.rotateState.converge='pending';T.updateOperationFooter();await idle(w);
  expect(patch.getAttribute('aria-selected')).toBe('true');
  expect([panel.hidden,patchPanel.hidden]).toEqual([true,false]);
  expect(d.getElementById('rotate-mode-converge').hidden).toBe(false);
  // Patch closes while chosen
  T.rotateState.capabilities={...T.rotateState.capabilities,patch_in_place:{enabled:false,reason:'the switch is off'}};
- T.updateOperationFooter();await sleep(80);
+ T.updateOperationFooter();await idle(w);
  expect(T.rotateState.mode).toBe('redeploy');
  expect([panel.hidden,patchPanel.hidden]).toEqual([false,true]);
  expect(d.getElementById('rotate-mode-redeploy-tab').getAttribute('aria-selected')).toBe('true');
