@@ -1,7 +1,6 @@
 package bosh_test
 
 import (
-	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -29,6 +28,10 @@ var errDialReachedASilentServer = errors.New("the dial finished against a server
 type silentSSHServer struct {
 	port     string
 	accepted atomic.Int32
+
+	// connected is closed when the first connection has been accepted.
+	connected chan struct{}
+	first     sync.Once
 }
 
 func startSilentSSHServer(t *testing.T) *silentSSHServer {
@@ -44,7 +47,7 @@ func startSilentSSHServer(t *testing.T) *silentSSHServer {
 		t.Fatalf("split %s: %v", listener.Addr(), err)
 	}
 
-	server := &silentSSHServer{port: port}
+	server := &silentSSHServer{port: port, connected: make(chan struct{})}
 
 	var (
 		running sync.WaitGroup
@@ -60,6 +63,7 @@ func startSilentSSHServer(t *testing.T) *silentSSHServer {
 			}
 
 			server.accepted.Add(1)
+			server.first.Do(func() { close(server.connected) })
 
 			connsMu.Lock()
 
@@ -90,8 +94,6 @@ func startSilentSSHServer(t *testing.T) *silentSSHServer {
 // connection and never speaks lets the dial go at the caller's deadline
 // rather than holding SSHCommand.
 func TestSSHClientDialEndsWithItsContext(t *testing.T) {
-	const deadline = 300 * time.Millisecond
-
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -113,27 +115,47 @@ func TestSSHClientDialEndsWithItsContext(t *testing.T) {
 		Signer:     signer,
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), deadline)
-	defer cancel()
+	// The deadline passes once the silent server has accepted the
+	// connection, never before, so a slow host cannot spend it on the
+	// connect and leave the dial with nothing to wait on.
+	expiring, expire := newExpiringContext(t.Context())
+	defer expire()
 
-	began := time.Now()
+	ctx := datedContext{expiringContext: expiring, deadline: time.Now().Add(callBackstop)}
 
-	err = callWithin(t, deadline+time.Second, func() error {
+	done := make(chan error, 1)
+
+	go func() {
 		client, err := bosh.DialSSHSession(ctx, director, session)
 		if err != nil {
-			return err //nolint:wrapcheck // the test asserts on the adapter's own error
+			done <- err //nolint:wrapcheck // the test asserts on the adapter's own error
+
+			return
 		}
 
 		_ = client.Close()
 
-		return errDialReachedASilentServer
-	})
-	if err == nil || errors.Is(err, errDialReachedASilentServer) {
-		t.Fatalf("the dial returned %v, want a failure at the deadline", err)
+		done <- errDialReachedASilentServer
+	}()
+
+	select {
+	case <-silent.connected:
+	case err = <-done:
+		t.Fatalf("the dial returned %v before the silent server had a connection", err)
+	case <-time.After(callBackstop):
+		t.Fatalf("the silent server had no connection %s after the dial started", callBackstop)
 	}
 
-	if elapsed := time.Since(began); elapsed < deadline {
-		t.Errorf("the dial gave up after %v, before its %v deadline: %v", elapsed, deadline, err)
+	expire()
+
+	select {
+	case err = <-done:
+	case <-time.After(callBackstop):
+		t.Fatalf("the dial had not returned %s after its context expired, so it does not end with its context", callBackstop)
+	}
+
+	if err == nil || errors.Is(err, errDialReachedASilentServer) {
+		t.Fatalf("the dial returned %v, want a failure at the deadline", err)
 	}
 
 	if got := silent.accepted.Load(); got != 1 {

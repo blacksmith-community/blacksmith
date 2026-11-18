@@ -818,12 +818,18 @@ func queuedOrCancelled(cancels int32) (string, string) {
 	return taskQueued, ""
 }
 
+// logsHangBackstop is how long a logs test waits for an event that must
+// happen before it gives up on a hang. It is far past the time the event
+// takes on an idle host, and no test checks the clock against it.
+const logsHangBackstop = 30 * time.Second
+
 // The caller's context also bounds the download. A body that stalls
 // midway ends with the context, whose error the fetch reports.
 func TestFetchLogsEndsWithTheContextDuringTheDownload(t *testing.T) {
 	t.Parallel()
 
 	release := make(chan struct{})
+	downloading := make(chan struct{})
 
 	server := newLogsDirector(t, logsConfig{bundle: func(writer http.ResponseWriter, request *http.Request) {
 		bundle := newBundleWriter(t, writer, gzip.DefaultCompression)
@@ -841,6 +847,8 @@ func TestFetchLogsEndsWithTheContextDuringTheDownload(t *testing.T) {
 			flusher.Flush()
 		}
 
+		close(downloading)
+
 		select {
 		case <-request.Context().Done():
 		case <-release:
@@ -850,14 +858,36 @@ func TestFetchLogsEndsWithTheContextDuringTheDownload(t *testing.T) {
 
 	director := newTaskAdapter(t, server.Director)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
-	defer cancel()
+	// The deadline passes once the director has begun the download, never
+	// before, so a slow host cannot spend it on the steps ahead of the
+	// download.
+	ctx, expire := newExpiringContext(t.Context())
+	defer expire()
 
-	err := callWithin(t, 10*time.Second, func() error {
+	done := make(chan error, 1)
+
+	go func() {
 		_, err := director.FetchLogs(ctx, detailsDeployment, logsJob, logsInstance, nil)
+		done <- err
+	}()
 
-		return err //nolint:wrapcheck // the test asserts on the adapter's own error
-	})
+	select {
+	case <-downloading:
+	case err := <-done:
+		t.Fatalf("the fetch ended before the download began: %v", err)
+	case <-time.After(logsHangBackstop):
+		t.Fatalf("the download had not begun %s after the fetch started", logsHangBackstop)
+	}
+
+	expire()
+
+	var err error
+
+	select {
+	case err = <-done:
+	case <-time.After(logsHangBackstop):
+		t.Fatalf("the fetch had not returned %s after its context expired, so it does not end with its context", logsHangBackstop)
+	}
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected an error that wraps context.DeadlineExceeded, got: %v", err)

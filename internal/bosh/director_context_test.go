@@ -13,6 +13,21 @@ import (
 	"blacksmith/internal/bosh"
 )
 
+// callBackstop is how long a test waits for a call that must end before it
+// gives up on a hang. It is far past the time the call takes on an idle
+// host, and no test checks the clock against it.
+const callBackstop = 20 * time.Second
+
+// datedContext is an expiring context that also reports a deadline, so the
+// error of a call under it names the deadline the call had.
+type datedContext struct {
+	*expiringContext
+
+	deadline time.Time
+}
+
+func (c datedContext) Deadline() (time.Time, bool) { return c.deadline, true }
+
 // A director that accepts a request and never answers must not hold the
 // caller past the caller's deadline, and the request itself must be
 // cancelled rather than left open on the wire.
@@ -46,8 +61,13 @@ func TestDirectorCallEndsWithTheCallersContext(t *testing.T) {
 		t.Fatalf("failed to create director adapter: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-	defer cancel()
+	// The deadline passes once the director has the request, never before,
+	// so a slow host cannot spend it ahead of the request, which would leave
+	// the director nothing to hold.
+	expiring, expire := newExpiringContext(t.Context())
+	defer expire()
+
+	ctx := datedContext{expiringContext: expiring, deadline: time.Now().Add(callBackstop)}
 
 	done := make(chan error, 1)
 
@@ -56,14 +76,22 @@ func TestDirectorCallEndsWithTheCallersContext(t *testing.T) {
 		done <- infoErr
 	}()
 
-	<-arrived
+	select {
+	case <-arrived:
+	case infoErr := <-done:
+		t.Fatalf("GetInfo ended before the director had the request: %v", infoErr)
+	case <-time.After(callBackstop):
+		t.Fatalf("the director had no request %s after GetInfo started", callBackstop)
+	}
+
+	expire()
 
 	var infoErr error
 
 	select {
 	case infoErr = <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("GetInfo against a hung director was still waiting 5s after its 200ms deadline, so the call is not bound to its context")
+	case <-time.After(callBackstop):
+		t.Fatalf("GetInfo against a hung director was still waiting %s after its deadline passed, so the call is not bound to its context", callBackstop)
 	}
 
 	if !errors.Is(infoErr, context.DeadlineExceeded) {
@@ -81,7 +109,7 @@ func TestDirectorCallEndsWithTheCallersContext(t *testing.T) {
 
 	select {
 	case <-canceled:
-	case <-time.After(5 * time.Second):
+	case <-time.After(callBackstop):
 		t.Fatal("the director never saw its request cancelled, so the HTTP request outlived the call")
 	}
 }
