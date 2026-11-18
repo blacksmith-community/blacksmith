@@ -1519,6 +1519,37 @@ func readoptServiceOperations(ctx context.Context, brokerInstance *broker.Broker
 	return nil
 }
 
+// backfillDeploymentNames records the deployment name of every index entry
+// written before the broker recorded one, once the director confirms the
+// deployment the entry resolves to. It runs before the reconciler and the
+// servers start. It never stops the broker from starting. A failure leaves
+// a warning, and the next boot runs it again, because the backfill skips
+// every entry that records a name already. With no director, nothing can
+// be confirmed, so it is skipped.
+func backfillDeploymentNames(ctx context.Context, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) {
+	if boshDirector == nil {
+		logger.Warn("No BOSH director is configured, so the deployment names of instances indexed without one are not recorded")
+
+		return
+	}
+
+	result, err := brokerInstance.BackfillDeploymentNames(ctx)
+	if err != nil {
+		logger.Warn("The deployment names of instances indexed without one were not recorded, and the next boot tries again: %s", err)
+
+		return
+	}
+
+	if len(result.Recorded) > 0 {
+		logger.Info("Recorded the deployment name of %d instances indexed without one: %s", len(result.Recorded), strings.Join(result.Recorded, ", "))
+	}
+
+	if len(result.Unconfirmed) > 0 {
+		logger.Warn("%d instances record no deployment name, and the director has no deployment under the name each resolves to, so none was recorded: %s",
+			len(result.Unconfirmed), strings.Join(result.Unconfirmed, ", "))
+	}
+}
+
 // sshCleanupSweepInterval is how often the broker sweeps its SSH cleanup
 // records after the sweep at boot.
 const sshCleanupSweepInterval = 10 * time.Minute
@@ -1632,6 +1663,8 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	if err != nil {
 		return err
 	}
+
+	backfillDeploymentNames(ctx, brokerInstance, boshDirector, logger)
 
 	startSSHCleanupSweeps(ctx, boshDirector, vault, logger)
 
