@@ -40,6 +40,7 @@ type MockDirector struct {
 	delay     time.Duration
 	gate      chan struct{} // when set, CreateDeployment blocks until it is closed
 	entered   chan struct{} // when set, CreateDeployment signals it each time it is called
+	hold      chan struct{} // when set, CreateDeployment blocks until it is closed or the request ends
 	callCount int
 	mu        sync.Mutex
 }
@@ -80,7 +81,7 @@ func (m *MockDirector) GetDeployment(_ context.Context, name string) (*bosh.Depl
 	return &bosh.DeploymentDetail{Name: name}, nil
 }
 
-func (m *MockDirector) CreateDeployment(_ context.Context, manifest string) (*bosh.Task, error) {
+func (m *MockDirector) CreateDeployment(ctx context.Context, manifest string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.entered != nil {
@@ -92,6 +93,14 @@ func (m *MockDirector) CreateDeployment(_ context.Context, manifest string) (*bo
 
 	if m.gate != nil {
 		<-m.gate
+	}
+
+	if m.hold != nil {
+		select {
+		case <-m.hold:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("the request ended while the director held it: %w", ctx.Err())
+		}
 	}
 
 	if m.delay > 0 {
@@ -1307,15 +1316,22 @@ func TestPooledDirector_StressTest(t *testing.T) {
 	validateStressTestResults(t, pooled, successCount, numRequests)
 }
 
+// poolTimeoutBackstop is the longest the timeout test lets the pool take to
+// give up. The mock director holds the first request until the test ends, so
+// a pool that waited for the director would block past this, and a loaded
+// host is far from reaching it.
+const poolTimeoutBackstop = 10 * time.Second
+
 func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 	t.Parallel()
 
 	mockDirector := &MockDirector{
-		delay:   2 * time.Second, // Very slow responses
+		hold:    make(chan struct{}), // The first request never answers
 		entered: make(chan struct{}, 1),
 	}
 	pooled := bosh.NewPooledDirector(mockDirector, 1, 500*time.Millisecond, nil)
 	t.Cleanup(pooled.Stop)
+	t.Cleanup(func() { close(mockDirector.hold) })
 
 	// First request fills the pool
 	// Use CreateDeployment which still uses pooling (read operations don't use pooling)
@@ -1331,9 +1347,13 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 		t.Fatal("the first request had not reached the director 20s after it started, so it never took the slot")
 	}
 
-	// Second request should timeout
+	// Second request should timeout. Its context ends at the backstop, so a
+	// pool that waits for the director fails the test and does not hang it.
+	ctx, cancel := context.WithTimeout(t.Context(), poolTimeoutBackstop)
+	defer cancel()
+
 	start := time.Now()
-	_, err := pooled.DeleteDeployment(t.Context(), "test-deployment")
+	_, err := pooled.DeleteDeployment(ctx, "test-deployment")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -1344,9 +1364,12 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 		t.Errorf("Expected timeout error message, got: %v", err)
 	}
 
-	// Should have waited approximately the timeout duration
-	if elapsed < 400*time.Millisecond || elapsed > 600*time.Millisecond {
-		t.Errorf("Expected timeout after ~500ms, took %v", elapsed)
+	// The pool must not give up early, and it must time out on its own
+	// rather than wait for the director. The first request holds the slot
+	// until the test ends, so a pool that waited for the director would
+	// block until the backstop.
+	if elapsed < 400*time.Millisecond || elapsed > poolTimeoutBackstop {
+		t.Errorf("Expected timeout after 400ms or more and within %v, took %v", poolTimeoutBackstop, elapsed)
 	}
 
 	// Check stats
