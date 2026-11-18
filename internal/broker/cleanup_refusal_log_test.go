@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"blacksmith/internal/bosh"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/testutil"
@@ -119,4 +121,73 @@ func TestCleanupFailedDeployment_LogsARepeatedRefusalBelowError(t *testing.T) {
 	if attention := cleaner.CleanupAttention(); len(attention) != 1 || attention[0].DeploymentName != own {
 		t.Fatalf("the overview holds %+v, want one row for %s", attention, own)
 	}
+}
+
+// A refusal whose reason changes while its deployment stays the same has
+// a new cause, so it is logged at Error again and replaces the reason on
+// the overview's row. Here the director first cannot be asked for the
+// provision's task, and then answers that it has none.
+func TestCleanupFailedDeployment_LogsAChangedReasonAtError(t *testing.T) {
+	t.Parallel()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start Vault: %v", err)
+	}
+
+	t.Cleanup(server.Close)
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+	ctx := context.Background()
+
+	const instanceID = "cleanup-refusal-reason"
+
+	own := standalonePlanID + "-" + instanceID
+
+	err = recordFailedProvisionNaming(ctx, vaultClient, instanceID, "")
+	if err == nil {
+		err = storeRequestDetails(ctx, vaultClient, instanceID)
+	}
+
+	if err != nil {
+		t.Fatalf("failed to write the record: %v", err)
+	}
+
+	var lookups atomic.Int32
+
+	director := cleanupGuardDirector()
+	director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) {
+		if lookups.Add(1) == 1 {
+			return nil, errDirectorUnreachable
+		}
+
+		return nil, nil //nolint:nilnil // no task is a nil task without an error
+	}
+
+	cleaner := cleanupGuardBroker(director, vaultClient)
+	log := newLevelLogger()
+
+	refuse := func(atError int, reason string) {
+		t.Helper()
+
+		cleaner.CleanupFailedDeploymentLogged(ctx, instanceID, own, log)
+
+		if got := log.count("ERROR", "Refusing to delete deployment "); got != atError {
+			t.Fatalf("%d refusals were logged at Error, want %d", got, atError)
+		}
+
+		attention := cleaner.CleanupAttention()
+		if len(attention) != 1 || attention[0].DeploymentName != own || !strings.Contains(attention[0].Reason, reason) {
+			t.Fatalf("the refusal left %+v for an operator, want one row for %s that says %q", attention, own, reason)
+		}
+	}
+
+	refuse(1, "the director could not be asked for the provision's task")
+	refuse(2, "the director has no task with context ID")
+
+	if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+		t.Fatalf("a refused cleanup deleted %v", deleted)
+	}
+
+	requireMarkKept(ctx, t, cleaner, instanceID)
 }
