@@ -220,20 +220,25 @@ func printSecrets(code uint32) func(channel gossh.Channel, stop <-chan struct{})
 	}
 }
 
-// blockAfterSecrets prints the secrets and then runs until the VM stops.
-func blockAfterSecrets(channel gossh.Channel, stop <-chan struct{}) uint32 {
-	_, _ = io.WriteString(channel, secretStdout)
-	_, _ = io.WriteString(channel.Stderr(), secretStderr)
+// blockAfterSecrets is a command that prints the secrets, closes printed,
+// and then runs until the VM stops.
+func blockAfterSecrets(printed chan<- struct{}) func(channel gossh.Channel, stop <-chan struct{}) uint32 {
+	return func(channel gossh.Channel, stop <-chan struct{}) uint32 {
+		_, _ = io.WriteString(channel, secretStdout)
+		_, _ = io.WriteString(channel.Stderr(), secretStderr)
 
-	<-stop
+		close(printed)
 
-	return 0
+		<-stop
+
+		return 0
+	}
 }
 
 // runWithSecrets opens a session through build and runs exec on it with a
 // secret on stdin, and returns what the runner logged along with the
-// result.
-func runWithSecrets(t *testing.T, build func(*sshDirector, *captureLog) func(context.Context, string, string, []int) (PatchSession, error), handle func(gossh.Channel, <-chan struct{}) uint32, timeout time.Duration) (string, string, error) {
+// result. A cancelOn that is not nil cancels the run when it closes.
+func runWithSecrets(t *testing.T, build func(*sshDirector, *captureLog) func(context.Context, string, string, []int) (PatchSession, error), handle func(gossh.Channel, <-chan struct{}) uint32, cancelOn <-chan struct{}) (string, string, error) {
 	t.Helper()
 
 	log := &captureLog{}
@@ -246,13 +251,20 @@ func runWithSecrets(t *testing.T, build func(*sshDirector, *captureLog) func(con
 
 	t.Cleanup(func() { _ = sess.Close() })
 
-	ctx := t.Context()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 
-	if timeout > 0 {
-		var cancel context.CancelFunc
-
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	// A run that is to be cut off is cut off when the test says, once the
+	// command is running, and not after a fixed time that a slow machine
+	// could spend before the command started.
+	if cancelOn != nil {
+		go func() {
+			select {
+			case <-cancelOn:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 	}
 
 	result, runErr := sess.Run(ctx, 0, "exec", []string{runTaskID, "vcap", "30", strings.Repeat("a", 64)}, strings.NewReader(secretStdin))
@@ -284,20 +296,29 @@ func TestNewCommandRunnerLogsNoOutput(t *testing.T) {
 	// run that logged nothing would pass the secret check without
 	// proving anything, so each case has to show its line.
 	cases := map[string]struct {
-		handle  func(gossh.Channel, <-chan struct{}) uint32
-		timeout time.Duration
-		ended   string
+		handle func(gossh.Channel, <-chan struct{}) uint32
+		cancel bool
+		ended  string
 	}{
 		"success": {handle: printSecrets(0), ended: "ended with exit status 0"},
 		"failure": {handle: printSecrets(3), ended: "ended with exit status 3"},
-		"cancel":  {handle: blockAfterSecrets, timeout: 300 * time.Millisecond, ended: "ended without an exit status"},
+		"cut off": {cancel: true, ended: "ended without an exit status"},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			logs, _, _ := runWithSecrets(t, command, tc.handle, tc.timeout)
+			handle := tc.handle
+
+			var printed chan struct{}
+
+			if tc.cancel {
+				printed = make(chan struct{})
+				handle = blockAfterSecrets(printed)
+			}
+
+			logs, _, _ := runWithSecrets(t, command, handle, printed)
 
 			if !strings.Contains(logs, tc.ended) {
 				t.Errorf("the runner did not log %q, so the check proves nothing", tc.ended)
@@ -316,7 +337,7 @@ func TestNewPatchRunnerLogsOutput(t *testing.T) {
 		return NewPatchRunner(director, log)
 	}
 
-	logs, output, err := runWithSecrets(t, patch, printSecrets(3), 0)
+	logs, output, err := runWithSecrets(t, patch, printSecrets(3), nil)
 	if err != nil {
 		t.Fatalf("the run failed: %v", err)
 	}
@@ -338,7 +359,7 @@ func TestNewCommandRunnerReturnsTheOutput(t *testing.T) {
 		return NewCommandRunner(director, log)
 	}
 
-	_, output, err := runWithSecrets(t, command, printSecrets(3), 0)
+	_, output, err := runWithSecrets(t, command, printSecrets(3), nil)
 	if err != nil {
 		t.Fatalf("the run failed: %v", err)
 	}
