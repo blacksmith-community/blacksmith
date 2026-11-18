@@ -1,9 +1,9 @@
 const { test, expect } = require('bun:test');
 const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 
-const { boot, sleep } = H.fleet;
+const { boot, idle } = H.fleet;
 const DAY = 86400000;
 const iso = (ms) => new Date(ms).toISOString();
 
@@ -14,9 +14,9 @@ async function openCert(id, tweak) {
   if (tweak) tweak(cert);
   const copied = [];
   w.navigator.clipboard = { writeText: (text) => { copied.push(text); return Promise.resolve(); } };
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await sleep(80);
-  d.querySelector(`#cert-tbody tr.cert-row[data-cert-id="${id}"]`).click(); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
+  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await idle(w);
+  d.querySelector(`#cert-tbody tr.cert-row[data-cert-id="${id}"]`).click(); await idle(w);
   const dr = d.getElementById('cert-fleet-drawer');
   return { ...env, dr, copied };
 }
@@ -88,7 +88,7 @@ t('CredHub details is a label and value table with copy actions and no secret fi
     labels.forEach((label) => expect(label).not.toMatch(/private|key material|password|secret|value|pem/i));
     expect(table.textContent).not.toMatch(/BEGIN (CERTIFICATE|PRIVATE)/);
     const row = Array.from(table.querySelectorAll('tr')).find((tr) => tr.querySelector('th').textContent === 'Credential name');
-    row.querySelector('.cert-copy-btn').click(); await sleep(10);
+    row.querySelector('.cert-copy-btn').click(); await idle(w);
     expect(copied).toEqual(['/ws-bosh/valkey/var2']);
     expect(d.getElementById('cert-fleet-drawer').querySelectorAll('.cert-drawer-credhub .cert-copy-btn').length).toBeGreaterThan(3);
   } finally { w.close(); }
@@ -109,7 +109,7 @@ t('the probe table has one row per target and copies exactly the locator', async
     expect(Array.from(section.querySelectorAll('thead th')).map((th) => th.textContent)).toEqual(['Endpoint', 'Result', 'Matched', 'Expiry seen', 'Ran']);
     expect(rows[0].querySelector('.cert-field-text').textContent).toBe('valkey/0 10.0.0.5:6379');
     expect(rows[1].textContent).toContain('timed out');
-    rows[1].querySelector('.cert-copy-btn').click(); await sleep(10);
+    rows[1].querySelector('.cert-copy-btn').click(); await idle(w);
     expect(copied).toEqual(['valkey/1 port 6379']);
     expect(dr.querySelector('.cert-obs-list')).toBeNull();
   } finally { w.close(); }
@@ -149,7 +149,7 @@ t('Other sources lists manifest and vault observations after Probe information',
     const spots = order.map((n) => position(dr, n));
     expect(new Set(spots).size).toBe(6);
     expect(spots).toEqual([...spots].sort((a, b) => a - b));
-    rows[0].querySelectorAll('.cert-copy-btn')[1].click(); await sleep(10);
+    rows[0].querySelectorAll('.cert-copy-btn')[1].click(); await idle(w);
     expect(copied).toEqual(['fp-manifest']);
   } finally { w.close(); }
 });
@@ -212,7 +212,7 @@ t('the probe table shows the served fingerprint with a copy action', async () =>
   try {
     const section = dr.querySelector('.cert-drawer-probes');
     expect(Array.from(section.querySelectorAll('thead th')).map((th) => th.textContent)).toContain('SHA-256 fingerprint');
-    section.querySelectorAll('tbody .cert-copy-btn')[1].click(); await sleep(10);
+    section.querySelectorAll('tbody .cert-copy-btn')[1].click(); await idle(w);
     expect(copied).toEqual(['served-fp']);
   } finally { w.close(); }
 });

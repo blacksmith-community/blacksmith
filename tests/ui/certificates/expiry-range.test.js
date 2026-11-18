@@ -3,7 +3,7 @@ const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
 
 const t = JSDOM ? test : test.skip;
-const { boot, sleep, now, day, iso } = H.fleet;
+const { boot, idle, now, day, iso } = H.fleet;
 
 const cert = (id, days, when) => ({
   id, key: `/secret/${id}`, variable: `var_${id}`, kind: 'leaf', common_name: `cn-${id}`, issuer: 'CN=Services CA',
@@ -28,9 +28,9 @@ const open = async () => {
   env.server.certs = spread();
   env.server.caps.credhub = { state: 'configured' };
   await env.w.blacksmithNav.switchTab('certificates');
-  await sleep(150);
+  await idle(env);
   const clear = env.d.querySelector('.cert-clear-btn');
-  if (clear) { clear.click(); await sleep(150); }
+  if (clear) { clear.click(); await idle(env); }
   return env;
 };
 const rows = (d) => Array.from(d.querySelectorAll('tbody tr[data-cert-id]')).map((r) => r.dataset.certId).sort();
@@ -42,7 +42,7 @@ const type = async (env, from, to) => {
     input.value = value;
     input.dispatchEvent(new w.Event('change', { bubbles: true }));
   });
-  await sleep(150);
+  await idle(env);
 };
 
 t('Custom range sits beside the horizon table and opens two labelled date fields', async () => {
@@ -53,7 +53,7 @@ t('Custom range sits beside the horizon table and opens two labelled date fields
   expect(toggle(d).getAttribute('aria-expanded')).toBe('false');
   expect(panel.hidden).toBe(true);
   toggle(d).click();
-  await sleep(50);
+  await idle(env);
   expect(toggle(d).getAttribute('aria-expanded')).toBe('true');
   expect(panel.hidden).toBe(false);
   for (const [id, label] of [['cert-range-from', 'From'], ['cert-range-to', 'To']]) {
@@ -124,7 +124,8 @@ t('a From after To shows a status message, sends no request, and keeps the resul
   expect(d.getElementById('cert-range-from').getAttribute('aria-describedby')).toBe('cert-range-error');
   expect(rows(d)).toEqual(['b10', 'c20', 'd45']);
   expect(log.slice(before).filter((l) => l.includes('inventory') && l.includes('expires_after'))).toEqual([]);
-  await sleep(300);
+  // Nothing the page still has queued may put back the earlier date.
+  await idle(env);
   expect(d.getElementById('cert-range-from').value).toBe(dateOf(100));
   await type(env, dateOf(20), dateOf(45));
   expect(msg.textContent).toBe('');
@@ -143,7 +144,7 @@ t('the range shows as a chip, and removing it or emptying both fields clears it'
   expect(rows(d).length).toBe(7);
   await type(env, dateOf(10), dateOf(45));
   chip()[0].closest('.cert-chip').click();
-  await sleep(150);
+  await idle(env);
   expect(rows(d).length).toBe(7);
   expect(d.getElementById('cert-range-from').value).toBe('');
   expect(d.getElementById('cert-range').hidden).toBe(true);
@@ -156,14 +157,14 @@ t('a fixed horizon and Custom range replace each other, and the horizons keep wo
   await type(env, dateOf(100), dateOf(400));
   expect(rows(d)).toEqual(['e120', 'f300']);
   d.querySelector('button[data-horizon="30"]').click();
-  await sleep(150);
+  await idle(env);
   expect(d.getElementById('cert-range').hidden).toBe(true);
   expect(toggle(d).getAttribute('aria-expanded')).toBe('false');
   expect(rows(d)).toEqual(['a3', 'b10', 'c20']);
   toggle(d).click();
-  await sleep(150);
+  await idle(env);
   expect(d.querySelector('button[data-horizon="30"]').getAttribute('aria-pressed')).toBe('false');
   toggle(d).click();
-  await sleep(150);
+  await idle(env);
   expect(rows(d).length).toBe(7);
 }, 60000);

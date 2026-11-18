@@ -3,9 +3,10 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
-const { boot, sleep } = H.fleet;
+const { boot, idle } = H.fleet;
+const { TEST_LIMIT } = H.main;
 
 // After a patch in place, the CredHub observation describes the latest
 // version while the item's facts and PEM describe the deployed one, so the
@@ -19,11 +20,11 @@ t('the drawer fingerprint belongs to the certificate it shows', async () => {
   c2.observations[0] = Object.assign({}, c2.observations[0], { sha256_fingerprint: LATEST, matches: 'latest', version_id: 'ae5bcf1e' });
   c2.versions = { deployed_version_id: '24528b18', latest_version_id: 'ae5bcf1e' };
   server.itemFacts = { sha256_fingerprint: DEPLOYED };
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await sleep(80);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
+  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await idle(w);
 
   const calls = []; w.inspectCertificate = (x) => { calls.push(x); return true; };
-  d.querySelector('#cert-tbody tr.cert-row[data-cert-id="c2"]').click(); await sleep(100);
+  d.querySelector('#cert-tbody tr.cert-row[data-cert-id="c2"]').click(); await idle(w);
   const dr = d.getElementById('cert-fleet-drawer');
   ok(!dr.hidden, 'drawer opens');
 

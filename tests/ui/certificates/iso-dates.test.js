@@ -4,8 +4,9 @@ const { JSDOM } = require('./support.js');
 const { pinZone } = require('../fixed-zone.js');
 pinZone('UTC');
 
-const t = JSDOM ? test : test.skip;
-const { boot, sleep, now, day, iso } = H.fleet;
+const { TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
+const { boot, idle, now, day, iso } = H.fleet;
 
 const cert = (id, when, extra = {}) => Object.assign({
   id, key: `/secret/${id}`, variable: `var_${id}`, kind: 'leaf', common_name: `cn-${id}`, issuer: 'CN=Services CA',
@@ -36,7 +37,7 @@ const open = async (certs) => {
   env.server.certs = certs;
   env.server.caps.credhub = { state: 'configured' };
   await env.w.blacksmithNav.switchTab('certificates');
-  await sleep(150);
+  await idle(env);
   return env;
 };
 
@@ -69,7 +70,7 @@ t('the probe table sorts same-year dates in both directions', async () => {
   // The page starts the table observer on DOMContentLoaded, which the harness skips.
   d.dispatchEvent(new w.Event('DOMContentLoaded'));
   d.querySelector('#cert-tbody tr.cert-row').click();
-  await sleep(120);
+  await idle(w);
   const table = d.querySelector('#cert-fleet-drawer .cert-drawer-probes table');
   const names = () => [...table.querySelectorAll('tbody tr')].map((r) => r.querySelector('.cert-field-text').textContent).join(',');
   const headers = [...table.querySelectorAll('thead th')];

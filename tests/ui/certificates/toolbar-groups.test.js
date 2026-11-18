@@ -4,8 +4,9 @@ const { JSDOM } = require('./support.js');
 const fs = require('fs');
 const path = require('path');
 
-const t = JSDOM ? test : test.skip;
-const { boot, sleep, now, day, iso } = H.fleet;
+const { TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
+const { boot, idle, now, day, iso } = H.fleet;
 
 const cert = (id, days, extra = {}) => Object.assign({
   id, key: `/secret/${id}`, variable: `var_${id}`, kind: 'leaf', common_name: `cn-${id}`, issuer: 'CN=Services CA',
@@ -19,7 +20,7 @@ const open = async () => {
   const env = await boot();
   env.server.certs = [cert('a', 3, { attention: true }), cert('b', 200)];
   await env.w.blacksmithNav.switchTab('certificates');
-  await sleep(150);
+  await idle(env);
   return env;
 };
 

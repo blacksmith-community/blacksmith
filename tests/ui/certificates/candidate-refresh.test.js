@@ -7,7 +7,7 @@ pinZone('UTC');
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
 
-const { boot, sleep, EVIL } = H.main;
+const { boot, idle, EVIL } = H.main;
 const chk = (name, passed, detail) => ({ name, passed, detail });
 const good = { version_id: 'v-good-1234567890', created_at: '2026-10-21T14:10:00Z', serial: 'BB22' + EVIL, not_after: '2027-10-21T00:00:00Z', valid: true, checks: [chk('signed ' + EVIL, true, '')] };
 const bad = { version_id: 'v-bad-0987654321', created_at: '2026-10-21T14:11:00Z', serial: 'CC33', not_after: '2027-10-21T00:00:00Z', valid: false, checks: [chk('chain', false, 'wrong CA')] };
@@ -34,8 +34,8 @@ t('candidate refresh', async () => {
     [/\/instances\/[^/]+\/reconcile$/, (u, o, j) => j(200, refreshed)],
     [/\/b\/upgrade\/tasks\/[^/]+$/, (u, o, j) => j(200, refreshed)],
     [/\/b\/upgrade\/tasks$/, (u, o, j) => j(200, [])]);
-  w.serviceInstances = {}; await sleep(50); w.plansData = { services: [] };
-  d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(100);
+  w.serviceInstances = {}; await idle(w); w.plansData = { services: [] };
+  d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await idle(w);
   const panel = () => d.querySelector('#upgrade .upgrade-tasks');
   const reconcile = () => panel().querySelector('.cert-decision-panel');
   const btn = (action) => [...panel().querySelectorAll('[data-decision-action]')].find((b) => b.dataset.decisionKey === 'task-1|i-rec' && b.dataset.decisionAction === action);
@@ -60,7 +60,7 @@ t('candidate refresh', async () => {
   // ---- refresh finds a version to adopt
   T.renderTaskDetail(mkTask({}));
   const n0 = candidatePosts().length;
-  btn('candidates').click(); btn('candidates').click(); await sleep(100);
+  btn('candidates').click(); btn('candidates').click(); await idle(w);
   ok(candidatePosts().length === n0 + 1, 'refresh: one POST to the candidates route, even on a double click: ' + (candidatePosts().length - n0));
   ok(!d.querySelector('#dialog-modal[open]'), 'refresh: asks for no confirmation');
   ok(!!btn('adopt:v-good-1234567890') && btn('adopt:v-good-1234567890').textContent === 'Adopt version v-good-1', 'refresh: the valid candidate gets an Adopt button');
@@ -73,13 +73,13 @@ t('candidate refresh', async () => {
   // ---- a refresh that fails shows why on the instance
   resp = { status: 503, body: { success: false, error: 'CredHub did not answer ' + EVIL, code: 'credhub_unavailable' } };
   T.renderTaskDetail(mkTask({}));
-  btn('candidates').click(); await sleep(100);
+  btn('candidates').click(); await idle(w);
   const box = panel().querySelector('[data-decision-error]');
   ok(!!box && box.getAttribute('role') === 'alert' && box.textContent.includes('CredHub did not answer'), 'failure: inline alert shows the message => ' + (box && box.textContent));
   ok(d.activeElement === box && live().includes('CredHub did not answer'), 'failure: focus on the alert, and it is announced');
   ok(panel().querySelectorAll('img,script,iframe').length === 0, 'failure: hostile message renders as text');
   resp = null;
-  T.renderTaskDetail(mkTask({})); btn('candidates').click(); await sleep(100);
+  T.renderTaskDetail(mkTask({})); btn('candidates').click(); await idle(w);
   ok(!panel().querySelector('[data-decision-error]') && !!btn('adopt:v-good-1234567890'), 'a later refresh clears the error');
 
   ok(alerts.length === 0, 'no alert/confirm/prompt: ' + alerts.join('|'));

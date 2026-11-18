@@ -3,9 +3,9 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
-const {boot,sleep,EVIL} = H.main;
+const {boot,idle,until,TEST_LIMIT,EVIL} = H.main;
 const K='/secret/dir/valkey_crt', K2='/secret/dir/redis_cluster_crt', KP='/secret/dir/pg_crt';
 const cert=(key,variable,kind,days,allowed,id,name,more={})=>({key,variable,kind,days_left:days,owners:[{kind:'instance',instance_id:id,instance_name:name}],rotation:{allowed,reasons:allowed?[]:['Deploy is pending.']},findings:[],...more});
 const inv={certificates:[cert(K,'valkey_crt','leaf',10,true,'inst-valkey','orders-cache'),cert(K2,'redis_cluster_crt','leaf',200,true,'inst-valkey','orders-cache'),cert(KP,'pg_crt','leaf',5,false,'inst-pg','billing-db',{findings:[{code:'deploy_pending'}]})],capabilities:{rotation:{enabled:true}},settings:{warning_days:30,critical_days:7}};
@@ -19,19 +19,19 @@ t('rotate preview and create', async () => {
     ['/b/certificates/rotation/preview',(u,o,j)=>J(j,previewAnswer(JSON.parse(o.body)))],
     [/\/b\/upgrade\/tasks$/,(u,o,j)=>{ if(o.method==='POST'){ const a=createAnswers.shift(); return J(j,a?a:{status:201,body:{id:'task-1'}}); } return j(200,[]); }]);
   w.serviceInstances={'inst-valkey':{service_id:'svc1',plan_id:'p1',plan:{id:'p1',name:'small'}},'inst-pg':{service_id:'svc1',plan_id:'p1',plan:{id:'p1',name:'small'}}};
-  await sleep(50);
+  await idle(w);
   w.plansData={services:[{id:'svc1',name:'valkey'}]};
-  d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(100);
+  d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await idle(w);
   const posts=(re)=>calls.filter(c=>c.startsWith('POST')&&re.test(c)).map(c=>JSON.parse(c.slice(c.indexOf(' {')+1)));
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const waitDialog=async()=>{ await idle(w); await until(()=>!!d.querySelector('#dialog-modal[open]'),'the dialog to open'); return true; };
   const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
   const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
   const dlg=()=>d.querySelector('#dialog-modal');
-  const radio=d.getElementById('rotate-op-rotate'); radio.checked=true; radio.dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(120);
+  const radio=d.getElementById('rotate-op-rotate'); radio.checked=true; radio.dispatchEvent(new w.Event('change',{bubbles:true})); await idle(w);
   const sel=w.blacksmithCerts.selection;
   ok(d.getElementById('rotate-mode-redeploy').checked&&d.getElementById('rotate-mode-patch').disabled,'Mode radio: Redeploy checked, Patch disabled');
   ok(d.getElementById('rotate-mode').textContent.includes('Patch in place is not available'),'Patch reason visible as text');
-  sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(30);
+  sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); await idle(w);
   ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K),'valkey leaf selected by the operator');
   const btn=d.getElementById('rotate-preview');
   ok(btn.textContent==='Preview rotation of 1 certificate on 1 instance'&&!btn.disabled,'footer label and enabled: '+btn.textContent);
@@ -63,7 +63,7 @@ t('rotate preview and create', async () => {
   ok(dlg().querySelector('.dialog-modal-icon').classList.contains('dialog-modal-icon--warning')&&!dlg().querySelector('.dialog-modal-icon').classList.contains('warning')&&/rotate-preview-summary/.test(dlg().getAttribute('aria-describedby')),'warning icon, described by the summary');
   ok(!!body.querySelector('ul.rotate-preview-certs[aria-label]'),'certificates are a labelled list');
   ok(!dlg().querySelector('.dialog-modal-ack-input'),'no typed confirmation for 1 instance');
-  confirmBtn().click(); await sleep(80);
+  confirmBtn().click(); await idle(w);
   const cr=posts(/"kind":"certificates"/);
   ok(cr.length===1&&cr[0].preview_id==='pv-1'&&/^00000000-0000-4000-8000-/.test(cr[0].client_request_id)&&cr[0].name==='My job'&&cr[0].reason==='Quarterly'&&cr[0].kind==='certificates','create body: kind, preview_id, client_request_id, name, reason');
   const host=d.getElementById('rotate-result');
@@ -76,22 +76,22 @@ t('rotate preview and create', async () => {
   createAnswers=[{status:200,body:{id:'task-0'}}];
   d.getElementById('rotate-name').value=''; d.getElementById('rotate-name').dispatchEvent(new w.Event('input'));
   d.getElementById('rotate-select-visible').click();
-  d.getElementById('rotate-preview').click(); await waitDialog(); confirmBtn().click(); await sleep(80);
+  d.getElementById('rotate-preview').click(); await waitDialog(); confirmBtn().click(); await idle(w);
   const cr2=posts(/"kind":"certificates"/);
   ok(cr2.length===2&&cr2[1].name==='Rotate 1 certificate on 1 instance','default name when the field is empty: '+cr2[1].name);
   ok(d.getElementById('rotate-result').textContent.includes('already started'),'200 shows already-started title');
   // cancel
   d.getElementById('rotate-select-visible').click();
-  d.getElementById('rotate-preview').click(); await waitDialog(); cancelBtn().click(); await sleep(50);
+  d.getElementById('rotate-preview').click(); await waitDialog(); cancelBtn().click(); await idle(w);
   ok(posts(/"kind":"certificates"/).length===2&&sel.size>0,'cancel creates nothing and keeps selection');
   ok(!d.getElementById('rotate-preview').disabled&&d.getElementById('rotate-preview').textContent.startsWith('Preview rotation'),'button usable after cancel');
 
   // retry reuses client request id
   createAnswers=[{status:503,body:{success:false,error:'Tasks are loading.',code:'tasks_loading'}},{status:201,body:{id:'task-2'}}];
-  d.getElementById('rotate-preview').click(); await waitDialog(); confirmBtn().click(); await sleep(80);
+  d.getElementById('rotate-preview').click(); await waitDialog(); confirmBtn().click(); await idle(w);
   let c=posts(/"kind":"certificates"/);
   ok(c.length===3&&d.getElementById('rotate-result').textContent.includes('Tasks are loading.')&&d.getElementById('rotate-result').textContent.includes('still loading'),'create error shown in panel with message and advice');
-  d.querySelector('#rotate-result .result-panel-retry').click(); await sleep(80);
+  d.querySelector('#rotate-result .result-panel-retry').click(); await idle(w);
   c=posts(/"kind":"certificates"/);
   ok(c.length===4&&c[3].client_request_id===c[2].client_request_id&&c[3].preview_id===c[2].preview_id,'Retry reuses the client_request_id');
   ok(d.getElementById('rotate-result').textContent.includes('task-2'),'retry success shows task');
@@ -103,10 +103,10 @@ t('rotate preview and create', async () => {
   d.getElementById('rotate-select-visible').click();
   const before=posts(/"kind":"certificates"/).length, pb=posts(/rotation\/preview/).length;
   d.getElementById('rotate-preview').click(); await waitDialog(); confirmBtn().click(); 
-  await sleep(80); await waitDialog();
+  await idle(w); await waitDialog();
   ok(dlg().querySelector('.dialog-modal-message').textContent.includes('The state changed since the last preview, so this is a fresh one. Check it again before you confirm.'),'410 reopens preview with the fresh-one message');
   ok(posts(/rotation\/preview/).length===pb+2,'a second preview was requested');
-  confirmBtn().click(); await sleep(80);
+  confirmBtn().click(); await idle(w);
   c=posts(/"kind":"certificates"/);
   ok(c.length===before+2&&c[c.length-1].preview_id!==c[c.length-2].preview_id&&c[c.length-1].client_request_id!==c[c.length-2].client_request_id,'fresh preview gets its own id and request id');
   ok(d.getElementById('rotate-result').textContent.includes('task-3'),'fresh create shows task');
@@ -114,12 +114,12 @@ t('rotate preview and create', async () => {
   // rotation_disabled on preview
   previewAnswer=()=>({status:403,body:{success:false,error:'Certificate rotation is turned off on this broker.',code:'rotation_disabled'}});
   d.getElementById('rotate-select-visible').click();
-  d.getElementById('rotate-preview').click(); await sleep(80);
+  d.getElementById('rotate-preview').click(); await idle(w);
   ok(!d.querySelector('#dialog-modal[open]'),'no dialog on preview failure');
   ok(d.getElementById('rotate-result').textContent.includes('Certificate rotation is turned off on this broker.')&&!!d.querySelector('#rotate-result .result-panel-retry'),'403 rotation_disabled message in panel with Retry');
   // all blocked
   previewAnswer=()=>({status:200,body:{preview_id:'pv-b',instances:[pvInst('inst-valkey',{blocked:{code:'instance_busy',message:'Held by a task.'}})],warnings:[]}});
-  d.getElementById('rotate-preview').click(); await sleep(80);
+  d.getElementById('rotate-preview').click(); await idle(w);
   ok(!d.querySelector('#dialog-modal[open]')&&d.getElementById('rotate-result').textContent.includes('Every selected instance is excluded')&&d.getElementById('rotate-result').textContent.includes('Held by a task.'),'all blocked: reasons in panel, no dialog');
   // >10 instances
   previewAnswer=()=>({status:200,body:{preview_id:'pv-big',instances:Array.from({length:11},(_,i)=>pvInst('inst-'+i)),warnings:[]}});
@@ -127,15 +127,15 @@ t('rotate preview and create', async () => {
   const bigBefore=posts(/"kind":"certificates"/).length;
   d.getElementById('rotate-preview').click(); await waitDialog();
   ok(!!dlg().querySelector('.dialog-modal-ack-input')&&/To continue, type "redeploy" below\./.test(dlg().textContent),'11 instances require typing redeploy');
-  confirmBtn().click(); await sleep(30);
+  confirmBtn().click(); await idle(w);
   ok(dlg().open&&posts(/"kind":"certificates"/).length===bigBefore,'confirm without typing does not proceed');
-  dlg().querySelector('.dialog-modal-ack-input').value='redeploy'; confirmBtn().click(); await sleep(80);
+  dlg().querySelector('.dialog-modal-ack-input').value='redeploy'; confirmBtn().click(); await idle(w);
   ok(posts(/"kind":"certificates"/).length===bigBefore+1,'typing redeploy proceeds');
   // exactly 10 does not
   previewAnswer=()=>({status:200,body:{preview_id:'pv-ten',instances:Array.from({length:10},(_,i)=>pvInst('inst-'+i)),warnings:[]}});
   sel.set('inst-valkey',new Set([K])); d.getElementById('rotate-select-visible').click();
   d.getElementById('rotate-preview').click(); await waitDialog();
-  ok(!dlg().querySelector('.dialog-modal-ack-input'),'10 instances need no typed confirmation'); cancelBtn().click(); await sleep(30);
+  ok(!dlg().querySelector('.dialog-modal-ack-input'),'10 instances need no typed confirmation'); cancelBtn().click(); await idle(w);
 
   // direct calls
   const r0=await w.blacksmithRotate.previewAndCreate({mode:'redeploy',selections:[],origin:'x'});
@@ -156,9 +156,9 @@ t('rotate preview and create', async () => {
   const rh=d.getElementById('rotate-result');
   ok(rh.querySelectorAll('img,script').length===0&&rh.textContent.includes(EVIL)&&rh.querySelector('.result-panel').dataset.origin==='instance','hostile task id inert in the result panel');
   // converge flow from batch
-  d.getElementById('rotate-op-converge').checked=true; d.getElementById('rotate-op-converge').dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(30);
-  if(dlg().open){ confirmBtn().click(); await sleep(80); }
-  sel.clear(); await sleep(10);
+  d.getElementById('rotate-op-converge').checked=true; d.getElementById('rotate-op-converge').dispatchEvent(new w.Event('change',{bubbles:true})); await idle(w);
+  if(dlg().open){ confirmBtn().click(); await idle(w); }
+  sel.clear(); await idle(w);
   ok(d.getElementById('rotate-preview').disabled&&d.getElementById('rotate-preview').title.length>0,'converge button disabled with reason when nothing selected');
   ok(alerts.length===0,'no alerts: '+alerts.join('|'));
   ok(!errors.some(e=>/Reference|TypeError|LOAD/.test(e)),'no script errors: '+errors.join('|'));

@@ -3,9 +3,8 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
-
-const {boot,sleep,EVIL} = H.main;
+const {boot,until,idle,TEST_LIMIT,EVIL} = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 const K='/secret/dir/valkey_crt', K2='/secret/dir/redis_cluster_crt', KP='/secret/dir/pg_crt';
 const cert=(key,variable,days,id,name,modes,reasons,more={})=>({key,variable,kind:'leaf',days_left:days,owners:[{kind:'instance',instance_id:id,instance_name:name}],rotation:{allowed:true,modes,reasons},findings:[],...more});
 let caps={rotation:{enabled:true},patch_in_place:{enabled:true}};
@@ -18,10 +17,10 @@ t('patch in place controls', async () => {
     ['/b/certificates/rotation/preview',(u,o,j)=>j(200,{preview_id:'pv-1',expires_at:'2027-01-01T00:00:00Z',instances:[pvInst('inst-valkey')],warnings:['Temporary repair: BOSH can restore the old certificate until this instance converges.']})],
     [/\/b\/upgrade\/tasks$/,(u,o,j)=>{ if(o.method==='POST') return j(201,{id:'task-1'}); return j(200,[]); }]);
   w.serviceInstances={'inst-valkey':{service_id:'svc1',plan_id:'p1',plan:{id:'p1',name:'small'}},'inst-pg':{service_id:'svc1',plan_id:'p1',plan:{id:'p1',name:'small'}}};
-  await sleep(50); w.plansData={services:[{id:'svc1',name:'valkey'}]};
-  d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(100);
+  await idle(w); w.plansData={services:[{id:'svc1',name:'valkey'}]};
+  d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await idle(w);
   const posts=(re)=>calls.filter(c=>c.startsWith('POST')&&re.test(c)).map(c=>JSON.parse(c.slice(c.indexOf(' {')+1)));
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const waitDialog=async()=>{ await until(()=>!!d.querySelector('#dialog-modal[open]'),'the confirm dialog'); await idle(w); return true; };
   const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
   const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
   const dlg=()=>d.querySelector('#dialog-modal');
@@ -31,23 +30,23 @@ t('patch in place controls', async () => {
   // Converge radio enabled, no reason
   const cv=d.getElementById('rotate-op-converge');
   ok(cv&&!cv.disabled&&!d.getElementById('rotate-op-converge-reason'),'Converge radio enabled with no reason paragraph');
-  pick('rotate-op-rotate'); await sleep(150);
+  pick('rotate-op-rotate'); await idle(w);
   const sel=w.blacksmithCerts.selection;
-  sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(30);
+  sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter(); await idle(w);
   ok(d.getElementById('rotate-mode-patch')&&!d.getElementById('rotate-mode-patch').disabled,'Patch radio enabled when the switch is on and the selection allows it');
   ok(d.getElementById('rotate-mode').textContent.includes('This is a temporary repair, because BOSH can restore the old certificate until you converge.'),'Patch note shown beside the radio');
   ok(d.getElementById('rotate-mode-converge').hidden,'converge choice hidden before Patch');
-  pick('rotate-mode-patch'); await sleep(10);
+  pick('rotate-mode-patch'); await idle(w);
   ok(!d.getElementById('rotate-mode-converge').hidden,'choosing Patch reveals the converge choice');
   const cp=d.getElementById('rotate-mode-converge-pending'), ci=d.getElementById('rotate-mode-converge-immediate');
   ok(cp&&ci&&!cp.checked&&!ci.checked,'neither converge choice is selected');
   const fs=d.getElementById('rotate-mode-converge').textContent;
   ok(/Leave unconverged/.test(fs)&&/Converge right away/.test(fs)&&/stays flagged as unconverged until a converge/.test(fs)&&/every job restarts a second time/i.test(fs),'both choices carry a consequence sentence');
-  sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(30);
+  sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); await idle(w);
   ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K),'valkey leaf selected by the operator');
   const btn=d.getElementById('rotate-preview');
   ok(btn.disabled&&/Leave unconverged or Converge right away/.test(btn.title+d.getElementById('rotate-selection-line').textContent+(btn.getAttribute('aria-description')||'')+(d.getElementById('rotate-footer-hint')?d.getElementById('rotate-footer-hint').textContent:'')),'preview disabled until a converge choice is made: title='+btn.title);
-  pick('rotate-mode-converge-pending'); await sleep(10);
+  pick('rotate-mode-converge-pending'); await idle(w);
   ok(!d.getElementById('rotate-preview').disabled,'preview enabled after a choice');
   d.getElementById('rotate-preview').click();
   ok(await waitDialog(),'confirm dialog opened');
@@ -60,41 +59,41 @@ t('patch in place controls', async () => {
   ok(/Leave unconverged/.test(txt)&&/flagged as unconverged/.test(txt),'chosen converge policy and its consequence');
   ok(confirmBtn().textContent==='Patch in place'&&confirmBtn().classList.contains('dialog-modal-btn-danger'),'patch keeps the danger button');
   const ack=dlg().querySelector('.dialog-modal-ack-input');
-  ok(!!ack,'patch confirm requires typing even for one instance'); confirmBtn().click(); await sleep(40);
+  ok(!!ack,'patch confirm requires typing even for one instance'); confirmBtn().click(); await idle(w);
   ok(posts(/"kind":"certificates"/).length===0&&dlg().open,'confirm without the word creates nothing');
   // Enter on Cancel never submits
   cancelBtn().focus(); ack.value='patch in place'; ack.dispatchEvent(new w.Event('input',{bubbles:true}));
-  cancelBtn().dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})); await sleep(60);
+  cancelBtn().dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})); await idle(w);
   ok(posts(/"kind":"certificates"/).length===0,'Enter on Cancel creates nothing');
-  if(dlg().open) cancelBtn().click(); await sleep(30);
+  if(dlg().open) cancelBtn().click(); await idle(w);
   ok(posts(/"kind":"certificates"/).length===0,'Cancel creates no task');
   // typed confirm
   d.getElementById('rotate-preview').click(); await waitDialog();
   const ack2=dlg().querySelector('.dialog-modal-ack-input'); ack2.value='nope'; ack2.dispatchEvent(new w.Event('input',{bubbles:true}));
-  confirmBtn().click(); await sleep(40); ok(posts(/"kind":"certificates"/).length===0&&dlg().open,'wrong word does not submit');
+  confirmBtn().click(); await idle(w); ok(posts(/"kind":"certificates"/).length===0&&dlg().open,'wrong word does not submit');
   ack2.value='patch in place'; ack2.dispatchEvent(new w.Event('input',{bubbles:true}));
-    confirmBtn().click(); await sleep(100);
+    confirmBtn().click(); await idle(w);
   ok(posts(/"kind":"certificates"/).length===1,'patch create posted after typing');
 
   // switching to Immediate and back to redeploy clears
-  sel.set('inst-valkey',new Set([K])); w.__T.rotateState.mode='patch'; pick('rotate-mode-redeploy'); await sleep(10);
+  sel.set('inst-valkey',new Set([K])); w.__T.rotateState.mode='patch'; pick('rotate-mode-redeploy'); await idle(w);
   ok(d.getElementById('rotate-mode-converge').hidden&&T.rotateState.converge==='','redeploy hides and clears converge');
 
   // gate: select a multi-VM cert without patch mode
-  sel.set('inst-pg',new Set([KP])); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(50);
+  sel.set('inst-pg',new Set([KP])); T.renderRotateInstances(); T.updateOperationFooter(); await idle(w);
   const pg=d.getElementById('rotate-mode-patch');
   ok(pg.disabled&&/No health gate exists/.test(d.getElementById('rotate-mode-patch-reason').textContent)&&!d.getElementById('rotate-mode-patch-reason').hidden,'Patch disabled with the gate reason for a multi-VM instance with no gate: '+d.getElementById('rotate-mode-patch-reason').textContent);
   sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter();
 
   // fallback announces
   { const live=()=>d.getElementById('blacksmith-live-region').textContent;
-    sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); pick('rotate-mode-patch'); pick('rotate-mode-converge-pending'); await sleep(10);
-    sel.set('inst-pg',new Set([KP])); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(150);
+    sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); pick('rotate-mode-patch'); pick('rotate-mode-converge-pending'); await idle(w);
+    sel.set('inst-pg',new Set([KP])); T.renderRotateInstances(); T.updateOperationFooter(); await idle(w);
     ok(d.getElementById('rotate-mode-redeploy').checked&&/mode is back to Redeploy/.test(live()),'Patch falling back to Redeploy is announced');
     sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter(); }
   // Switch off
   caps={rotation:{enabled:true},patch_in_place:{enabled:false,reason:'certificates.patch_in_place.enabled is false'}};
-  await T.loadRotateInventory(true); await sleep(80); pick('rotate-op-converge'); await sleep(20); pick('rotate-op-rotate'); await sleep(60);
+  await T.loadRotateInventory(true); await idle(w); pick('rotate-op-converge'); await idle(w); pick('rotate-op-rotate'); await idle(w);
   ok(d.getElementById('rotate-mode-patch').disabled&&/certificates\.patch_in_place\.enabled is false/.test(d.getElementById('rotate-mode-patch-reason').textContent),'Patch disabled with the server reason when the switch is off');
   caps={rotation:{enabled:true},patch_in_place:{enabled:true}};
 
@@ -120,7 +119,7 @@ t('patch in place controls', async () => {
   dprev.click(); await waitDialog();
   const dpb=posts(/rotation\/preview/).pop();
   ok(dpb.mode==='patch'&&dpb.converge==='immediate'&&dpb.selections[0].variables.join()===K,'dialog: preview body patch and immediate: '+JSON.stringify(dpb));
-  cancelBtn().click(); await sleep(30);
+  cancelBtn().click(); await idle(w);
   // hostile switch-off reason
   const host2=d.createElement('div'); d.body.appendChild(host2);
   w.blacksmithRotate.openInstanceDialog(host2,{instanceId:'i2',certs:dc.slice(0,1),capabilities:{patch_in_place:{enabled:false,reason:EVIL}}});

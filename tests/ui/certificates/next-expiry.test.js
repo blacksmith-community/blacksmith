@@ -3,9 +3,9 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 
-const { boot, sleep, now, day, iso } = H.fleet;
+const { boot, idle, now, day, iso } = H.fleet;
 
 const cert = (id, days, extra = {}) => Object.assign({
   id, key: `/secret/${id}`, variable: `var_${id}`, kind: 'leaf', common_name: `cn-${id}`, issuer: 'CN=Services CA',
@@ -21,7 +21,7 @@ const open = async (certs) => {
   env.server.certs = certs;
   env.server.caps.credhub = { state: 'configured' };
   await env.w.blacksmithNav.switchTab('certificates');
-  await sleep(150);
+  await idle(env);
   return env;
 };
 const pill = (d) => d.getElementById('cert-next-expiry');
@@ -35,7 +35,7 @@ t('next expiry pill and the 90 day section', async () => {
   ok(p === d.querySelector('#cert-strips').lastElementChild && !p.closest('[role="group"]'), 'the next-expiry text sits last, outside the toggle groups');
   ok(p.tagName === 'SPAN' && !p.matches('button, [tabindex], [role=button]') && !p.hasAttribute('aria-pressed'), 'not a button, not focusable, never pressed');
   const before = d.getElementById('cert-fleet-timeline').hidden;
-  p.click(); await sleep(60);
+  p.click(); await idle(d);
   ok(p.textContent === 'Next expiry in 5 days' && d.querySelectorAll('.cert-strip-btn[aria-pressed="true"]').length === 0, 'clicking it toggles nothing');
   ok(before === false && !d.getElementById('cert-fleet-timeline').hidden && !!d.querySelector('#cert-fleet-timeline .cert-tl-btn'), '90 day section is present when something expires within 90 days');
   ok(d.querySelector('#cert-fleet-timeline .cert-timeline-title').textContent === 'Expiring in the next 90 days', 'section heading unchanged');

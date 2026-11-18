@@ -7,7 +7,8 @@ pinZone('UTC');
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
 
-const {boot,openInstanceTab,sleep,EVIL,day,now,iso} = H.instance;
+const {boot,openInstanceTab,idle,EVIL,day,now,iso} = H.instance;
+const {until} = H.main;
 const bad=(d)=>d.querySelectorAll('img,script,[onerror]').length;
 const obs=(o)=>Object.assign({source:'probe',owner:{kind:'instance'},locator:'valkey/0:6379',state:'ok',matches:'deployed',observed_at:iso(now)},o);
 function body(over){
@@ -35,7 +36,7 @@ t('instance certificates tab', async () => {
   const ov=d.getElementById('service-cert-overview-i1');
   ok(/Scanning this instance\.\.\./.test(ov.textContent),'loading text shown first');
   ok(ov.querySelector('.cert-ov-rescan').disabled,'Rescan disabled while scanning');
-  await sleep(30);
+  await idle(w);
   const tabs=[...h.querySelectorAll('#service-cert-tablist-i1 [role=tab]')].map(t=>t.textContent);
   ok(tabs.join(',')==='Overview,Manifest,Trusted,Endpoint','four sub-tabs in order: '+tabs.join(','));
   ok(h.querySelector('[data-tab=overview].active')&&h.querySelector('.manifest-tab-pane.active').dataset.tab==='overview','Overview is the default');
@@ -60,9 +61,9 @@ t('instance certificates tab', async () => {
   key(d.activeElement,'ArrowLeft'); ok(d.activeElement.textContent==='Endpoint','Left wraps back');
   // rescan
   let count=0; w.__routes=[[/certificates\/instances\//,()=>{count++;return json(200,body())}]];
-  ov.querySelector('.cert-ov-rescan').click(); await sleep(30); ok(count===1,'Rescan refetches');
+  ov.querySelector('.cert-ov-rescan').click(); await idle(w); ok(count===1,'Rescan refetches');
   // ---- manifest sub-tab ----
-  d.querySelector('[data-cert-action=fetch-manifest]').click(); await sleep(30);
+  d.querySelector('[data-cert-action=fetch-manifest]').click(); await idle(w);
   const ml=d.getElementById('manifest-certificates-list-i1');
   const items=ml.querySelectorAll('.cert-list-item'); ok(items.length===2,'manifest sub-tab lists manifest observations: '+items.length);
   ok(/Services CA/.test(ml.textContent)&&/options\.ca/.test(ml.textContent),'manifest shows services CA with its manifest path');
@@ -71,40 +72,41 @@ t('instance certificates tab', async () => {
   // ---- hostile everything ----
   // ---- 403 ----
   w.__routes=[[/certificates\/instances\//,()=>json(403,{success:false,error:'Certificate inventory is off on this broker (certificates.inventory.enabled).',code:'inventory_disabled'})]];
-  ov.querySelector('.cert-ov-rescan').click(); await sleep(30);
+  ov.querySelector('.cert-ov-rescan').click(); await idle(w);
   ok(/inventory is off/.test(ov.textContent)&&ov.querySelector('.cert-retry-button'),'403 shows message and Retry');
-  d.querySelector('[data-cert-action=fetch-manifest]').click(); await sleep(30);
+  d.querySelector('[data-cert-action=fetch-manifest]').click(); await idle(w);
   ok(/inventory is off/.test(ml.textContent)&&ml.querySelector('.cert-retry-button'),'403 on manifest shows message and Retry');
   // ---- 404 / 500 / network ----
   w.__routes=[[/certificates\/instances\//,()=>json(404,{success:false,error:'unknown'+EVIL,code:'instance_not_found'})]];
-  ov.querySelector('.cert-retry-button').click(); await sleep(30);
+  ov.querySelector('.cert-retry-button').click(); await idle(w);
   ok(/unknown/.test(ov.textContent)&&bad(d)===0,'404 error text-only');
   w.__routes=[[/certificates\/instances\//,()=>Promise.reject(new Error('net'+EVIL))]];
-  ov.querySelector('.cert-retry-button').click(); await sleep(30);
+  ov.querySelector('.cert-retry-button').click(); await idle(w);
   ok(/could not be reached/.test(ov.textContent)&&bad(d)===0,'network failure handled');
   // ---- first-time failure ----
   w.__routes=[[/certificates\/instances\//,()=>json(200,body({certificates:[],scan:{scanned_at:iso(now),stale:false,error:'director unreachable'+EVIL}}))]];
-  ov.querySelector('.cert-retry-button').click(); await sleep(30);
+  ov.querySelector('.cert-retry-button').click(); await idle(w);
   ok(ov.querySelectorAll('table').length===0&&/director unreachable/.test(ov.textContent)&&ov.querySelector('.cert-retry-button'),'first-time failure: only error and Retry');
   // ---- stale failure with last observations ----
   w.__routes=[[/certificates\/instances\//,()=>json(200,body({scan:{scanned_at:iso(now),last_success_at:iso(now-3600e3),stale:true,error:'scan timed out after 60s'}}))]];
-  ov.querySelector('.cert-retry-button').click(); await sleep(30);
+  ov.querySelector('.cert-retry-button').click(); await idle(w);
   ok(ov.querySelectorAll('table').length===1&&ov.querySelectorAll('.cert-ov-row--stale').length===3&&/marked stale/.test(ov.textContent)&&/timed out/.test(ov.textContent)&&ov.querySelectorAll('.cert-notice .cert-action-btn').length===1,'stale: observations marked stale with time, error, Retry');
   // ---- empty ----
   w.__routes=[[/certificates\/instances\//,()=>json(200,body({certificates:[],scan:{scanned_at:iso(now)}}))]];
-  ov.querySelector('.cert-ov-rescan').click(); await sleep(30);
+  ov.querySelector('.cert-ov-rescan').click(); await idle(w);
   ok(/no certificates in the inventory/.test(ov.textContent),'empty state');
   // zero-time scan
   w.__routes=[[/certificates\/instances\//,()=>json(200,body({scan:{scanned_at:'0001-01-01T00:00:00Z'}}))]];
-  ov.querySelector('.cert-ov-rescan').click(); await sleep(30);
+  ov.querySelector('.cert-ov-rescan').click(); await idle(w);
   ok(!/Scanned 0001/.test(ov.textContent),'zero time not shown');
   // malformed
   w.__routes=[[/certificates\/instances\//,()=>json(200,{certificates:null,scan:null,instance:null})]];
-  ov.querySelector('.cert-ov-rescan').click(); await sleep(30);
+  ov.querySelector('.cert-ov-rescan').click(); await idle(w);
   ok(!!ov.textContent,'null fields do not throw');
   // stale response after instance switch: detach container then resolve
   let resolve; w.__routes=[[/certificates\/instances\//,()=>new Promise(r=>{resolve=()=>r(json(200,body()))})]];
-  ov.querySelector('.cert-ov-rescan').click(); await sleep(5); h.remove(); resolve(); await sleep(20);
+  ov.querySelector('.cert-ov-rescan').click(); await until(()=>typeof resolve==='function','the held rescan request'); h.remove(); resolve(); await idle(w);
+
   ok(true,'detached container: no throw');
   ok(errors.filter(e=>!/Error loading data/.test(e)).length===0,'no unexpected console errors: '+errors.join('|').slice(0,200));
   expect(failures).toEqual([]);

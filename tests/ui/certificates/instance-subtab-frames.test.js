@@ -3,8 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
-const t = JSDOM ? test : test.skip;
-const { boot, openInstanceTab, sleep } = H.instance;
+const { TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
+const { boot, openInstanceTab, idle } = H.instance;
 
 const strip = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 const bodies = (file, selector) => {
@@ -29,7 +30,7 @@ const open = async () => {
     [/certificates\/instances\//, () => json(404, { success: false })]
   ];
   const host = await openInstanceTab(w, d, 'i1');
-  await sleep(30);
+  await idle(w);
   return { ...env, host };
 };
 
@@ -67,7 +68,7 @@ t('the inner result boxes lose their border inside a panel', () => {
 t('trusted certificate files are one table with a Load Certificate action per row', async () => {
   const { w, d, host, calls } = await open();
   host.querySelector('[data-cert-action="fetch-vm"]').click();
-  await sleep(60);
+  await idle(w);
   const table = host.querySelector('#vm-certificates-list-i1 table.cert-files-table');
   expect(table).not.toBeNull();
   expect([...table.querySelectorAll('thead th')].map((x) => x.textContent)).toEqual(['File', 'Path', 'Actions']);
@@ -86,11 +87,11 @@ t('trusted certificate files are one table with a Load Certificate action per ro
 t('a loaded certificate opens in the expansion row of its file', async () => {
   const { w, host } = await open();
   host.querySelector('[data-cert-action="fetch-vm"]').click();
-  await sleep(60);
+  await idle(w);
   const item = host.querySelector('tbody.cert-file-item');
   const button = item.querySelector('button.load-cert-btn');
   button.click();
-  await sleep(60);
+  await idle(w);
   const content = item.querySelector('tr.cert-file-expansion > td > .cert-file-content');
   expect(content).not.toBeNull();
   expect(content.style.display).toBe('block');

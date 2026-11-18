@@ -4,8 +4,9 @@ const { JSDOM } = require('./support.js');
 const { pinZone } = require('../fixed-zone.js');
 pinZone('UTC');
 
-const t = JSDOM ? test : test.skip;
-const { boot, sleep } = H.fleet;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
+const { boot, idle } = H.fleet;
+const { TEST_LIMIT } = H.main;
 const DAY = 86400000;
 const STAMP = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [A-Z]+$/;
 
@@ -13,9 +14,9 @@ async function openCert(tweak) {
   const env = await boot();
   const { w, d, server } = env;
   tweak(server.certs.find((c) => c.id === 'c2'));
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await sleep(80);
-  d.querySelector('#cert-tbody tr.cert-row[data-cert-id="c2"]').click(); await sleep(120);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
+  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await idle(w);
+  d.querySelector('#cert-tbody tr.cert-row[data-cert-id="c2"]').click(); await idle(w);
   return { ...env, dr: d.getElementById('cert-fleet-drawer') };
 }
 
@@ -60,7 +61,7 @@ t('a copy button in the other sources table is named for what it copies, not its
     });
     w.navigator.clipboard = { writeText: () => Promise.resolve() };
     expect(Array.from(dr.querySelectorAll('.cert-probe-table:not(.cert-others-table) .cert-copy-btn')).map((b) => b.getAttribute('aria-label'))).toEqual(['Copy endpoint']);
-    buttons[0].click(); await sleep(150);
+    buttons[0].click(); await idle(w);
     expect(d.getElementById('blacksmith-live-region').textContent).toBe(`Copied ${labels[0].replace(/^Copy /, '')}`);
   } finally { w.close(); }
 });

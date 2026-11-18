@@ -3,9 +3,9 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 
-const { boot, sleep } = H.main;
+const { boot, idle } = H.main;
 const mkTask = (variable) => ({
   id: 'task-1', name: 'Rotate', kind: 'certificates', status: 'running', paused: false,
   certificates: { mode: 'redeploy', preview_id: 'pv' },
@@ -19,7 +19,7 @@ const LONG = '0793a41c0b2d4e6f8091a2b3c4d5e6f708192a3b';
 
 t('serials are padded to whole bytes and compared after normalizing', async () => {
   const env = boot(); const { w, d, alerts } = env; const T = w.__T;
-  await sleep(100);
+  await idle(w);
 
   ok(SHORT.length === 39 && LONG.length === 40, 'fixture lengths');
   ok(T.displaySerial(SHORT) === LONG.toUpperCase(), 'a 39 digit serial gains its leading zero and shows in upper case');

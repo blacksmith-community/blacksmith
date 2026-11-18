@@ -3,9 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 
-const { boot, sleep } = H.fleet;
+const { boot, idle } = H.fleet;
 const css = fs.readFileSync(path.join(__dirname, '../../../ui/blacksmith.css'), 'utf8');
 const helpCss = fs.readFileSync(path.join(__dirname, '../../../ui/action-help.css'), 'utf8');
 
@@ -22,11 +22,11 @@ const token = (name) => {
 async function openCert(id) {
   const env = await boot();
   const { w, d } = env;
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await sleep(80);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
+  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await idle(w);
   const row = d.querySelector(`#cert-tbody tr.cert-row[data-cert-id="${id}"]`);
   row.focus();
-  row.click(); await sleep(120);
+  row.click(); await idle(w);
   return { ...env, row, dr: d.getElementById('cert-fleet-drawer') };
 }
 
@@ -62,7 +62,7 @@ t('the close button, and Escape, close the drawer and return focus to the opener
       expect(dr.hidden).toBe(false);
       if (how === 'click') dr.querySelector('.cert-drawer-close').click();
       else d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-      await sleep(40);
+      await idle(w);
       expect(dr.hidden).toBe(true);
       expect(d.activeElement).toBe(row);
     } finally { w.close(); }

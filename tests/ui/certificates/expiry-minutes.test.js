@@ -5,9 +5,8 @@ const { pinZone } = require('../fixed-zone.js');
 pinZone('UTC');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
-
-const { boot, sleep } = H.main;
+const { boot, idle, TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 const mkTask = (variable) => ({
   id: 'task-1', name: 'Rotate', kind: 'certificates', status: 'running', paused: false,
   certificates: { mode: 'redeploy', preview_id: 'pv' },
@@ -18,7 +17,7 @@ const mkTask = (variable) => ({
 
 t('expiry comparison shows the time only when both days match', async () => {
   const env = boot(); const { w, d, alerts } = env; const T = w.__T;
-  await sleep(100);
+  await idle(w);
   const panel = d.querySelector('#upgrade .upgrade-tasks');
   const expiry = (variable) => {
     T.renderTaskDetail(mkTask(variable));

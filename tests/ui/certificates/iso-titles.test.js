@@ -4,9 +4,10 @@ const { JSDOM } = require('./support.js');
 const { pinZone } = require('../fixed-zone.js');
 pinZone('UTC');
 
-const t = JSDOM ? test : test.skip;
-const { boot: bootFleet, sleep: fleetSleep } = H.fleet;
-const { boot, openInstanceTab, sleep, now, iso } = H.instance;
+const { TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
+const { boot: bootFleet } = H.fleet;
+const { boot, openInstanceTab, idle, now, iso } = H.instance;
 
 t('the certificate detail Valid from and Valid to carry the ISO value in a title', () => {
   const { w } = H.instance.boot();
@@ -40,7 +41,7 @@ t('the failed-scan sentence carries the ISO times in a title', async () => {
     };
     w.__routes = [[/certificates\/instances\//, () => json(200, body)]];
     await openInstanceTab(w, d, 'i1');
-    await sleep(40);
+    await idle(w);
     const text = d.querySelector('#service-cert-overview-i1 .cert-notice-text');
     expect(text).not.toBeNull();
     expect(text.textContent).toContain('failed');
@@ -54,12 +55,12 @@ t('a skeleton summary drops the Scanned title of the screen it replaces', async 
   const env = await bootFleet();
   try {
     await env.w.blacksmithNav.switchTab('certificates');
-    await fleetSleep(150);
+    await idle(env);
     const summary = env.d.getElementById('cert-fleet-summary');
     expect(summary.getAttribute('title')).toMatch(/^Scanned \d{4}-/);
     env.server.mode = 'never';
     await env.w.blacksmithCerts.refresh({ announce: false });
-    await fleetSleep(80);
+    await idle(env);
     expect(summary.textContent).toContain('Scanning 12 of 58');
     expect(summary.hasAttribute('title')).toBe(false);
   } finally { env.w.close(); }

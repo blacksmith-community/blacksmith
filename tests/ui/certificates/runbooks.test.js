@@ -3,22 +3,22 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const { idle, TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const h10 = H.instance; const fh = H.fleet;
-const sleep=h10.sleep;
 t('runbooks', async () => {
   const out={};
   for(const env of ['ws','bad env;rm -rf','']){
     const {w,d,calls,json}=h10.boot(); w.blacksmithData={env};
     w.__routes=[[/certificates\/inventory\?owner/,()=>json(200,{generated_at:'',summary:{},scan:{state:'idle'},capabilities:{},certificates:[]})]];
-    const host=d.createElement('div'); d.body.appendChild(host); host.innerHTML=w.__T.renderCertificatesTab(); w.__T.initializeCertificatesTab(); await sleep(120);
+    const host=d.createElement('div'); d.body.appendChild(host); host.innerHTML=w.__T.renderCertificatesTab(); w.__T.initializeCertificatesTab(); await idle(w);
     const rbs=[...d.querySelectorAll('details.cert-ov-runbook')];
     out['ov:'+env]=rbs.slice(0,2).map(r=>r.textContent);
     const copies=[...rbs[0].querySelectorAll('.cert-copy-btn')];
     if(env==='ws'){
       ok(copies.length===2,'https runbook has one Copy per command');
-      copies[0].click(); await sleep(10); copies[1].click(); await sleep(10);
+      copies[0].click(); await idle(w); copies[1].click(); await idle(w);
       ok(w.__copied[0]==='genesis ws rotate-secrets broker/server'&&w.__copied[1]==='genesis ws deploy','each Copy copies only its own line');
       ok(rbs[0].querySelectorAll('pre').length===2,'one pre per command');
       ok(!/Check the exact command/.test(rbs[0].textContent+rbs[1].textContent),'envNote hidden when env known');
@@ -34,10 +34,10 @@ t('runbooks', async () => {
   }
   // fleet drawer
   const {w,d,server}=await fh.boot();
-  await w.blacksmithNav.switchTab('certificates'); await sleep(150);
-  const clickRow=async(id)=>{ const tr=d.querySelector(`tr[data-cert-id="${id}"]`); if(!tr) return null; tr.click(); await sleep(150); return d.querySelector('.cert-fleet-drawer'); };
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
+  const clickRow=async(id)=>{ const tr=d.querySelector(`tr[data-cert-id="${id}"]`); if(!tr) return null; tr.click(); await idle(w); return d.querySelector('.cert-fleet-drawer'); };
   // make sure all rows show: clear filters
-  const clr=[...d.querySelectorAll('button')].find(b=>/Clear filters/.test(b.textContent)); if(clr){clr.click(); await sleep(150);}
+  const clr=[...d.querySelectorAll('button')].find(b=>/Clear filters/.test(b.textContent)); if(clr){clr.click(); await idle(w);}
   for(const id of ['ca1','unk1']){
     const dr=await clickRow(id);
     if(!dr){ ok(false,'row '+id+' present'); continue; }

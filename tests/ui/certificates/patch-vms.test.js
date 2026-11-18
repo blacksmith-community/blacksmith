@@ -3,9 +3,9 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
-const {boot,sleep,EVIL} = H.main;
+const {boot,idle,until,TEST_LIMIT,EVIL} = H.main;
 const EV2='<img/src=x/onerror=alert(1)>';
 const probe=(locator,matches,state='ok')=>({source:'probe',locator,matches,state});
 const dcert=(over={})=>({id:'c1',key:'/s/a_crt',variable:'a_crt',kind:'leaf',days_left:50,expiry:'ok',health:'ok',owners:[{kind:'instance',instance_id:'inst-a',instance_name:'a'}],rotation:{allowed:true,modes:['redeploy','patch'],reasons:[]},findings:[],observations:[],...over});
@@ -21,17 +21,17 @@ t('partly patched instances', async () => {
     [/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a',name:'a'},scan:{},certificates:certs(),capabilities:{rotation:{enabled:true},patch_in_place:{enabled:true}}})],
     [/rotation\/preview$/,(u,o,j)=>j(200,{preview_id:'pv1',instances:[{instance_id:'inst-a',instance_name:'a',vms:2,gate:'g',selected:[],additional:[],blocked:null,impact:'Deploys.'}],warnings:[]})],
     [/\/b\/upgrade\/tasks$/,(u,o,j)=>o.method==='POST'?j(201,{id:'t-new'}):j(200,[])]);
-  w.serviceInstances={}; await sleep(50); w.plansData={services:[]};
-  d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(80);
+  w.serviceInstances={}; await idle(w); w.plansData={services:[]};
+  d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await idle(w);
   const posts=(re)=>calls.filter(c=>c.startsWith('POST')&&re.test(c)).map(c=>JSON.parse(c.slice(c.indexOf(' {')+1)));
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const waitDialog=async()=>{ await idle(w); await until(()=>!!d.querySelector('#dialog-modal[open]'),'the dialog to open'); return true; };
   const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
   const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
   const panel=()=>d.querySelector('#upgrade .upgrade-tasks');
 
   // banner
   const host=d.createElement('div'); d.body.appendChild(host);
-  await T.CertOverview.mountInstance(host,'inst-a'); await sleep(60);
+  await T.CertOverview.mountInstance(host,'inst-a'); await idle(w);
   const ban=host.querySelector('.cert-ov-divergence');
   ok(!!ban,'banner shown for an unconverged instance');
   const bt=ban.textContent;
@@ -46,39 +46,39 @@ t('partly patched instances', async () => {
   cn.click(); ok(await waitDialog(),'Converge now opens the confirm dialog');
   const pb=posts(/rotation\/preview/).pop();
   ok(JSON.stringify(pb)===JSON.stringify({mode:'converge',selections:[{instance_id:'inst-a',variables:[]}]}),'Converge now previews mode converge: '+JSON.stringify(pb));
-  confirmBtn().click(); await sleep(100);
+  confirmBtn().click(); await idle(w);
   const cr=posts(/"kind":"certificates"/).pop();
   ok(cr&&cr.preview_id==='pv1','Converge now creates after confirm');
   ok(host.querySelector('.cert-ov-rotate-host').textContent.includes('t-new'),'result panel shows in the instance host');
   // no probes fallback
   w.__routes.unshift([/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a'},scan:{},certificates:[dcert({divergence:{state:'reverted',task_id:'t9',since:'2026-10-21T14:00:00Z'}})],capabilities:{rotation:{enabled:true}}})]);
-  await T.CertOverview.mountInstance(host,'inst-a'); await sleep(60);
+  await T.CertOverview.mountInstance(host,'inst-a'); await idle(w);
   const b2=host.querySelector('.cert-ov-divergence');
   ok(b2&&/went back to the old certificate/.test(b2.textContent)&&/could not read which VMs/.test(b2.textContent),'reverted banner with no probes uses the fallback text');
   w.__routes.shift();
   divergent=false;
   w.__routes.unshift([/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a'},scan:{},certificates:certs(),capabilities:{rotation:{enabled:true}}})]);
-  await T.CertOverview.mountInstance(host,'inst-a'); await sleep(60);
+  await T.CertOverview.mountInstance(host,'inst-a'); await idle(w);
   ok(!host.querySelector('.cert-ov-divergence'),'no banner for a converged instance');
   w.__routes.shift();
 
   // banner from the record's vms (preferred over probes)
   w.__routes.unshift([/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a'},scan:{},certificates:[dcert({divergence:{state:'unconverged',task_id:'t9',since:'2026-10-21T14:00:00Z',vms:[{group:'web',index:0,state:'applied'},{group:'web',index:1,state:'old'},{group:'db',index:2,state:'reverted'},{group:'db',index:3,state:'unknown'},{group:EVIL,index:4,state:EVIL}]},observations:[probe('zzz/9 10.0.0.9:1','latest')]})],capabilities:{rotation:{enabled:true}}})]);
-  await T.CertOverview.mountInstance(host,'inst-a'); await sleep(60);
+  await T.CertOverview.mountInstance(host,'inst-a'); await idle(w);
   { const t=host.querySelector('.cert-ov-divergence').textContent;
     ok(/web\/0 holds the patched certificate/.test(t)&&/web\/1 holds the old certificate/.test(t)&&/db\/2 went back to the old certificate/.test(t)&&/db\/3 is not known to hold either/.test(t),'banner lists VMs from the record, by state');
     ok(!/zzz/.test(t)&&host.querySelectorAll('.cert-ov-divergence img,.cert-ov-divergence script').length===0,'record wins over probes; hostile group and state inert'); }
   w.__routes.shift();
   // an unknown state from the API shows no banner at all
   w.__routes.unshift([/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a'},scan:{},certificates:[dcert({divergence:{state:'converging',task_id:'t9',since:'2026-10-21T14:00:00Z'}})],capabilities:{rotation:{enabled:true}}})]);
-  await T.CertOverview.mountInstance(host,'inst-a'); await sleep(60);
+  await T.CertOverview.mountInstance(host,'inst-a'); await idle(w);
   ok(!host.querySelector('.cert-ov-divergence'),'a state the API never sends draws no banner');
   w.__routes.shift();
   // another task holds the instance: Converge now is off, with the holder as visible text
   w.__routes.unshift([/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a'},scan:{},certificates:[dcert({divergence:{state:'unconverged',task_id:'t9',since:'2026-10-21T14:00:00Z'}})],capabilities:{rotation:{enabled:true}}})],
     [/\/b\/upgrade\/tasks$/,(u,o,j)=>j(200,[{id:'tk',name:'Spring',kind:'certificates',status:'running'}])],
     [/\/b\/upgrade\/tasks\/tk$/,(u,o,j)=>j(200,{id:'tk',name:'Spring',kind:'certificates',status:'running',instances:[{instance_id:'inst-a',status:'running'}]})]);
-  await T.CertOverview.mountInstance(host,'inst-a'); await sleep(80);
+  await T.CertOverview.mountInstance(host,'inst-a'); await idle(w);
   { const b=host.querySelector('.cert-ov-divergence'); const c=b&&b.querySelector('.cert-ov-converge'); const why=b&&b.querySelector('.cert-ov-converge-reason');
     ok(c&&c.disabled&&why&&/^Busy: rotation "Spring"/.test(why.textContent)&&c.getAttribute('aria-describedby')===why.id,'Converge now is disabled while a task holds the instance, with the reason shown'); }
   w.__routes.shift(); w.__routes.shift(); w.__routes.shift();

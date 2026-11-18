@@ -3,16 +3,16 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 
-const {boot,sleep} = H.main;
+const {boot,idle} = H.main;
 const HOSTILE='<img src=x>';
 const inst=(id,over={})=>({instance_id:id,instance_name:id,service:'valkey',plan:'small',vms:2,gate:'',selected:[{name:`/b/${id}/valkey_cluster_crt`,days_left:5}],additional:[],blocked:null,impact:'',...over});
 
 t('preview body layout', async () => {
   const env=boot(); const {w,d,errors,alerts}=env; const T=w.__T;
   w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/certificates/inventory',(u,o,j)=>j(200,{certificates:[],capabilities:{rotation:{enabled:true}}})]);
-  await sleep(50);
+  await idle(w);
   const build=(preview,mode,opts)=>T.buildPreviewBody(preview,mode,opts);
 
   // one instance, mixed badges, hostile names

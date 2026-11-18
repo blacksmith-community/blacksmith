@@ -3,14 +3,15 @@ const fs = require('fs');
 const path = require('path');
 const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
-const { boot, sleep } = H.fleet;
+const { boot, idle } = H.fleet;
+const { TEST_LIMIT } = H.main;
 const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'ui', 'blacksmith.css'), 'utf8');
 
 const open = async (d, index) => {
   d.querySelectorAll('#cert-tbody tr.cert-row')[index].click();
-  await sleep(80);
+  await idle(d.defaultView);
 };
 
 t('the drawer takes at least half the viewport, and all of it on a phone', () => {
@@ -23,7 +24,7 @@ t('the drawer closes from its button and Escape, and a second cert replaces the 
   const { w, d } = await boot();
   try {
     await w.blacksmithNav.switchTab('certificates');
-    await sleep(120);
+    await idle(w);
     const drawer = d.getElementById('cert-fleet-drawer');
     const title = d.getElementById('cert-drawer-title');
 

@@ -3,9 +3,9 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
-const {boot,sleep,EVIL} = H.main;
+const {boot,idle,TEST_LIMIT,EVIL} = H.main;
 const K='/secret/dir/valkey_crt', K2='/secret/dir/redis_cluster_crt', KCA='/secret/dir/ca', KP='/secret/dir/pg_crt', KE='/secret/dir/'+EVIL;
 const cert=(key,variable,kind,days,allowed,extra={})=>({key,variable,kind,days_left:days,expiry:'2027-01-01T00:00:00Z',owners:[{kind:'instance',instance_id:extra.id,instance_name:extra.name}],rotation:{allowed,reasons:allowed?[]:['Deploy is pending.']},findings:[],...extra.more});
 function inventory(variant){
@@ -34,11 +34,11 @@ t('rotate selection on Batch Operations', async () => {
     'inst-held':{service_id:'svc1',plan_id:'p1',plan:{id:'p1',name:'small'}},
     [EVIL]:{service_id:EVIL,plan_id:EVIL,plan:{id:EVIL,name:EVIL},stemcell:{os:EVIL,version:EVIL,name:EVIL}}
   };
-  await sleep(50);
+  await idle(w);
   ok(!errors.some(e=>/LOAD ERROR|ReferenceError|TypeError/.test(e)),'loads with no throws');
   tasks=[{id:'t1',name:'Spring',kind:'certificates',status:'running'}];
   detail.t1={id:'t1',name:'Spring',kind:'certificates',status:'running',instances:[{instance_id:'inst-held',status:'running'},{instance_id:'inst-pg',status:'success'}]};
-  w.plansData={services:[{id:'svc1',name:'valkey'},{id:EVIL,name:EVIL}]}; d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(150);
+  w.plansData={services:[{id:'svc1',name:'valkey'},{id:EVIL,name:EVIL}]}; d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await idle(w);
   ok(!!d.getElementById('rotate-operation'),'operation fieldset installed');
   const radios=[...d.querySelectorAll('input[name="upgrade-operation"]')];
   ok(radios.length===4&&radios.map(r=>r.value).join()==='upgrade,rotate,converge,command'&&radios[0].checked,'four radios, upgrade default');
@@ -57,7 +57,7 @@ t('rotate selection on Batch Operations', async () => {
   ok(T.selectedUpgradeInstances.size===0,'deselect all clears');
 
   // enter rotate mode, no selection
-  radios[1].checked=true; radios[1].dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(150);
+  radios[1].checked=true; radios[1].dispatchEvent(new w.Event('change',{bubbles:true})); await idle(w);
   ok(d.getElementById('upgrade').dataset.operation==='rotate','rotate mode active (no confirm needed)');
   ok(!d.querySelector('#dialog-modal[open]'),'no dialog with empty selection');
   const startBtn=d.getElementById('upgrade-start');
@@ -84,7 +84,7 @@ t('rotate selection on Batch Operations', async () => {
   ok(!sel.get('inst-valkey').has(K)&&sel.get('inst-valkey').has(K2),'chip click clears just that chip');
   // clear stays clear across polls
   chipOf('inst-valkey',K2).click();
-  for(let i=0;i<2;i++){ await T.fetchUpgradeTasks(); await T.loadRotateInventory({silent:true}); await sleep(20); }
+  for(let i=0;i<2;i++){ await T.fetchUpgradeTasks(); await T.loadRotateInventory({silent:true}); await idle(w); }
   ok(!sel.has('inst-valkey'),'cleared chips stay clear across two polls and inventory refreshes');
   // row click toggles all
   d.querySelector('[data-instance-id="inst-valkey"] .upgrade-instance-id').click();
@@ -114,17 +114,17 @@ t('rotate selection on Batch Operations', async () => {
   ok(d.getElementById('rotate-preview').id.startsWith('rotate-'),'footer id starts with rotate-');
   // service filter hides
   const sf=d.getElementById('upgrade-service-filter'); sf.value='svc1'; sf.dispatchEvent(new w.Event('change'));
-  await sleep(20);
+  await idle(w);
   ok(sel.get('inst-valkey').size===2&&sel.has(EVIL),'service filter change keeps the shared selection');
   ok(/hidden by the filters/.test(d.getElementById('rotate-selection-line').textContent),'selection line reports pairs hidden by filters');
-  sf.value=''; sf.dispatchEvent(new w.Event('change')); await sleep(20);
+  sf.value=''; sf.dispatchEvent(new w.Event('change')); await idle(w);
   // review
   d.getElementById('rotate-review').click();
   const rv=d.getElementById('rotate-review-list');
   ok(!rv.hidden&&rv.querySelectorAll('li').length===3&&rv.querySelectorAll('img,script').length===0&&rv.textContent.includes(EVIL),'review lists each pair, hostile inert');
   ok(d.getElementById('rotate-review').getAttribute('aria-expanded')==='true','review toggle aria-expanded');
   // become ineligible
-  inv=inventory('ineligible'); await T.loadRotateInventory({silent:true}); await sleep(20);
+  inv=inventory('ineligible'); await T.loadRotateInventory({silent:true}); await idle(w);
   ok(d.getElementById('rotate-review-list').textContent.includes('no longer eligible')&&sel.get('inst-valkey').has(K),'ineligible pair stays in review as no longer eligible');
   ok(/1 no longer eligible/.test(d.getElementById('rotate-selection-line').textContent),'selection line counts stale');
   d.querySelector('#rotate-review-list li.is-stale button').click();
@@ -132,19 +132,19 @@ t('rotate selection on Batch Operations', async () => {
   inv=inventory();
   // inventory failure
   w.__routes.unshift(['/b/certificates/inventory',(u,o,j)=>j(503,{success:false,error:'CredHub is down.',code:'credhub_unavailable'})]);
-  await T.loadRotateInventory({silent:true}); await sleep(20);
+  await T.loadRotateInventory({silent:true}); await idle(w);
   ok(d.getElementById('rotate-notice').textContent.includes('could not be refreshed')&&!!d.getElementById('rotate-retry'),'silent refresh failure keeps list and shows Retry');
   w.__routes.shift();
-  d.getElementById('rotate-retry').click(); await sleep(50);
+  d.getElementById('rotate-retry').click(); await idle(w);
   ok(!d.getElementById('rotate-retry'),'Retry reloads and clears the note');
   // converge
   sel.clear();
-  d.getElementById('rotate-op-converge').checked=true; d.getElementById('rotate-op-converge').dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(80);
+  d.getElementById('rotate-op-converge').checked=true; d.getElementById('rotate-op-converge').dispatchEvent(new w.Event('change',{bubbles:true})); await idle(w);
   ok(d.getElementById('upgrade').dataset.operation==='converge','converge mode');
   const rows=[...d.querySelectorAll('#upgrade .upgrade-instance-item')].map(r=>r.dataset.instanceId);
   ok(rows.join()==='inst-pg','converge lists only the instance waiting for a deploy: '+rows);
   ok(d.querySelectorAll('.rotate-chip').length===0,'converge rows have no chips');
-  d.querySelector('[data-instance-id="inst-pg"] input').click(); await sleep(10);
+  d.querySelector('[data-instance-id="inst-pg"] input').click(); await idle(w);
   ok(d.getElementById('rotate-preview').textContent==='Preview converge of 1 instance','converge footer label: '+d.getElementById('rotate-preview').textContent);
   // Changing operation preserves each selection draft and does not ask to discard it.
   await T.requestOperation('upgrade');

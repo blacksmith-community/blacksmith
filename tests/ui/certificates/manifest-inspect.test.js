@@ -5,8 +5,8 @@ const { pinZone } = require('../fixed-zone.js');
 pinZone('UTC');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
-const { boot, openInstanceTab, sleep, day, now, iso } = H.instance;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
+const { boot, openInstanceTab, idle, day, now, iso } = H.instance;
 
 const manifestCert = {
   id: 'c1', key: '/x/valkey_tls', variable: 'valkey_tls', kind: 'leaf', common_name: 'valkey.internal',
@@ -31,15 +31,15 @@ t('a manifest certificate opens the shared certificate inspection modal', async 
     [/certificates\/items\/c1/, () => json(200, item)]
   ];
   await openInstanceTab(w, d, 'i1');
-  await sleep(30);
+  await idle(w);
   d.querySelector('[data-cert-action=fetch-manifest]').click();
-  await sleep(30);
+  await idle(w);
   const rows = d.getElementById('manifest-certificates-list-i1').querySelectorAll('.cert-list-item');
   ok(rows.length === 1, 'one manifest certificate is listed: ' + rows.length);
   const button = rows[0].querySelector('.cert-inspect-btn');
   ok(!!button, 'the manifest row has an Inspect button');
   button.click();
-  await sleep(30);
+  await idle(w);
   ok(inspected.length === 1, 'inspect ran once through the shared modal: ' + inspected.length);
   const legacy = inspected[0] || {};
   ok(legacy.subject === 'CN=valkey.internal' && /BEGIN CERTIFICATE/.test(legacy.pemEncoded || ''), 'the modal gets the certificate facts and PEM');

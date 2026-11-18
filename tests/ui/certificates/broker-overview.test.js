@@ -3,9 +3,9 @@ const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
 const { ok, failures } = checks();
-const t = JSDOM ? test : test.skip;
-
-const {boot,sleep,EVIL,day,now,iso} = H.instance;
+const {boot,idle,EVIL,day,now,iso} = H.instance;
+const { until, TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 const bad=(d)=>d.querySelectorAll('img,script,[onerror]').length;
 const probeObs=(name,extra)=>Object.assign({source:'probe',owner:{kind:'platform',instance_name:name},locator:name+':443',state:'ok',observed_at:iso(now)},extra);
 function certs(){
@@ -30,7 +30,7 @@ t('broker certificate overview', async () => {
   w.__T.initializeCertificatesTab();
   const ov=d.getElementById('cert-broker-overview');
   ok(/Reading the broker/.test(ov.textContent),'loading shown');
-  await sleep(150);
+  await idle(w);
   expect(ov.querySelector('.cert-ov-rescan').getAttribute('aria-label')).toBe('Rescan broker and platform certificates');
   expect(!!ov.querySelector('.cert-ov-rescan svg[aria-hidden="true"]')).toBe(true);
   const tabs=[...host.querySelectorAll('#cert-main-tablist [role=tab]')].map(t=>t.textContent);
@@ -54,7 +54,7 @@ t('broker certificate overview', async () => {
   ok(t3.indexOf('blacksmith_credhub')<t3.indexOf('Redeploy Blacksmith')&&t3.indexOf('Redeploy Blacksmith')<t3.indexOf('certificates.rotation.enabled'),'runbook 3 order');
   const a=rbs[2].querySelector('a'); ok(a&&/blacksmith-genesis-kit/.test(a.href)&&a.rel.includes('noopener'),'kit manual link');
   const copies=ov.querySelectorAll('.cert-copy-btn'); ok(copies.length===4,'copy buttons: '+copies.length);
-  copies[0].click(); await sleep(10); ok(w.__copied[0]==='genesis ws rotate-secrets broker/server','copy puts ws commands on clipboard: '+JSON.stringify(w.__copied[0]));
+  copies[0].click(); await idle(w); ok(w.__copied[0]==='genesis ws rotate-secrets broker/server','copy puts ws commands on clipboard: '+JSON.stringify(w.__copied[0]));
   ok(!/<env>/.test(rbs[0].textContent),'no placeholder when env known');
   ok(bad(d)===0,'no injected elements');
   // What to do
@@ -73,7 +73,7 @@ t('broker certificate overview', async () => {
   // env missing
   ({w,d,errors,calls,json}=boot());
   w.__routes=[[/certificates\/inventory\?owner/,()=>json(200,inv(certs()))]];
-  let h2=d.createElement('div'); d.body.appendChild(h2); h2.innerHTML=w.__T.renderCertificatesTab(); w.__T.initializeCertificatesTab(); await sleep(150);
+  let h2=d.createElement('div'); d.body.appendChild(h2); h2.innerHTML=w.__T.renderCertificatesTab(); w.__T.initializeCertificatesTab(); await idle(w);
   let o2=d.getElementById('cert-broker-overview');
   ok(/genesis <env> rotate-secrets broker\/server/.test(o2.textContent)&&/check the command form against our Genesis version/.test(o2.textContent),'env missing: placeholder and version note');
   w.blacksmithData={env:'Unknown'}; o2.replaceChildren(); await w.__T.CertOverview.mountBroker(o2);
@@ -86,7 +86,7 @@ t('broker certificate overview', async () => {
   ok(/inventory is off/.test(o2.textContent)&&o2.querySelector('.cert-retry-button')&&o2.querySelectorAll('details').length===3,'403: message, Retry, runbooks still shown');
   // 500
   w.__routes=[[/certificates\/inventory/,()=>json(500,{success:false,error:'boom'+EVIL,code:'internal'})]];
-  o2.querySelector('.cert-retry-button').click(); await sleep(30);
+  o2.querySelector('.cert-retry-button').click(); await idle(w);
   ok(/boom/.test(o2.textContent)&&bad(d)===0,'500 text-only');
   // empty / running
   w.__routes=[[/certificates\/inventory/,()=>json(200,inv([],{scan:{state:'running'}}))]];
@@ -103,13 +103,14 @@ t('broker certificate overview', async () => {
   w.__routes=[[/certificates\/scan/,(u,o,j)=>j(202,{scan_id:'s',state:'running'})],[/summary_only/,()=>json(200,{scan:{state:'idle'}})],[/certificates\/inventory/,()=>json(200,inv(certs()))]];
   const callsBefore=calls.length;
   o2.querySelector('.cert-ov-rescan').click();
-  await sleep(1700); await sleep(100);
+  // The overview polls the scan on a timer longer than idle() counts, then reloads.
+  await until(()=>o2.querySelectorAll('tbody tr').length===6,'the rescan to reload the table'); await idle(w);
   const sc=calls.slice(callsBefore);
   ok(sc.some(c=>c==='POST /b/certificates/scan {"instance_ids":["_broker"]}'),'rescan posts the broker scan: '+sc.join(' | '));
   ok(o2.querySelectorAll('tbody tr').length===6,'rescan reloads the table');
   // rescan refused
   w.__routes=[[/certificates\/scan/,(u,o,j)=>j(403,{success:false,error:'off'+EVIL})],[/certificates\/inventory/,()=>json(200,inv(certs()))]];
-  o2.querySelector('.cert-ov-rescan').click(); await sleep(40);
+  o2.querySelector('.cert-ov-rescan').click(); await idle(w);
   ok(/off/.test(o2.textContent)&&o2.querySelector('.cert-retry-button')&&bad(d)===0,'rescan 403 shows message');
   ok(errors.filter(e=>!/Error loading data/.test(e)).length===0,'no unexpected console errors '+errors.join('|').slice(0,200));
   expect(failures).toEqual([]);

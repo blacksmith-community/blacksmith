@@ -3,8 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
-const t = JSDOM ? test : test.skip;
-const { boot, sleep } = H.fleet;
+const { boot, idle } = H.fleet;
+const { TEST_LIMIT } = H.main;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 const strip = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 const bodies = (file, selector) => {
@@ -21,9 +22,9 @@ async function expand(id, tweak) {
   const env = await boot();
   const { w, d, server } = env;
   tweak(server.certs.find((c) => c.id === id));
-  await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await sleep(80);
-  d.querySelector(`[data-cert-id="${id}"] .cert-expand-btn`).click(); await sleep(30);
+  await w.blacksmithNav.switchTab('certificates'); await idle(w);
+  w.blacksmithCerts.state.attention = false; await w.blacksmithCerts.refresh({ announce: true }); await idle(w);
+  d.querySelector(`[data-cert-id="${id}"] .cert-expand-btn`).click(); await idle(w);
   return { ...env, box: d.querySelector('.cert-expansion') };
 }
 

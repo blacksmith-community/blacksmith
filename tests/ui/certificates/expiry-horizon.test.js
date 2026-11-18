@@ -2,9 +2,9 @@ const { test, expect } = require('bun:test');
 const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
 
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? H.main.TEST_LIMIT : l) : test.skip;
 
-const { boot, sleep, now, day, iso } = H.fleet;
+const { boot, idle, now, day, iso } = H.fleet;
 
 const cert = (id, days, extra = {}) => Object.assign({
   id, key: `/secret/${id}`, variable: `var_${id}`, kind: 'leaf', common_name: `cn-${id}`, issuer: 'CN=Services CA',
@@ -29,7 +29,7 @@ const open = async (certs, credhub = 'configured') => {
   env.server.certs = certs;
   env.server.caps.credhub = { state: credhub };
   await env.w.blacksmithNav.switchTab('certificates');
-  await sleep(150);
+  await idle(env);
   return env;
 };
 
@@ -38,7 +38,7 @@ const counts = (d) => Array.from(table(d).querySelectorAll('tbody td')).map((td)
 const heads = (d) => Array.from(table(d).querySelectorAll('thead th')).map((th) => th.textContent);
 const horizonBtn = (d, days) => d.querySelector(`#cert-fleet-notices button[data-horizon="${days}"]`);
 const rows = (d) => Array.from(d.querySelectorAll('tbody tr[data-cert-id]')).map((r) => r.dataset.certId).sort();
-const press = async (el) => { el.click(); await sleep(150); };
+const press = async (el) => { const doc = el.ownerDocument; el.click(); await idle(doc); };
 
 // The tab opens on the Needs attention view, so tests that count rows start
 // by clearing the filters.
@@ -155,7 +155,7 @@ const openFrozen = async (certs) => {
   env.server.certs = certs;
   env.server.caps.credhub = { state: 'configured' };
   await env.w.blacksmithNav.switchTab('certificates');
-  await sleep(150);
+  await idle(env);
   return { env, clock };
 };
 
@@ -172,7 +172,7 @@ t('the counts follow the clock between polls', async () => {
   ok(counts(d).join(',') === '1,2,3,4,5,6,7,8,1,1', 'at the start: ' + counts(d).join(','));
   clock.at = now + 4 * day;
   await w.blacksmithCerts.refresh({ silent: true });
-  await sleep(150);
+  await idle(env);
   ok(counts(d).join(',') === '2,2,2,3,4,5,6,7,1,1', 'four days later, with no new data, the certificate that ran out has moved to Expired: ' + counts(d).join(','));
   await press(horizonBtn(d, 30));
   const q = lastQuery(env);
@@ -236,7 +236,7 @@ t('a poll with unchanged data leaves the band, its focus, and its status line in
   scroll.focus();
   ok(d.activeElement === scroll, 'the scroll region holds focus');
   await w.blacksmithCerts.refresh({ silent: true });
-  await sleep(150);
+  await idle(env);
   ok(d.querySelector('.cert-horizon-scroll') === scroll && table(d) === tbl && horizonBtn(d, 30) === btn, 'the same nodes after a quiet poll');
   ok(d.querySelector('.cert-horizon-gaps') === gap, 'the status line is not re-inserted');
   ok(d.activeElement === scroll, 'focus stays on the scroll region');
@@ -246,7 +246,7 @@ t('a poll with unchanged data leaves the band, its focus, and its status line in
   btn.focus();
   env.server.certs = [cert('a', 3), cert('b', 20), cert('c', 25), unknown('unk')];
   await w.blacksmithCerts.refresh({ silent: true });
-  await sleep(150);
+  await idle(env);
   ok(counts(d)[3] === '3' && d.querySelector('.cert-horizon-scroll') === scroll, 'a changed count patches the cell and keeps the region: ' + counts(d).join(','));
   ok(d.activeElement === horizonBtn(d, 30), 'focus follows the rebuilt button');
   expect(failures).toEqual([]);
@@ -259,7 +259,7 @@ t('a quiet poll leaves the other notices, their open state, and their focus alon
   env.server.caps.credhub = { state: 'not_configured' };
   env.server.scan = Object.assign({}, env.server.scan, { errors: [{ instance_id: 'i1', error: 'timed out', last_success_at: iso(now - 3600e3) }] });
   await env.w.blacksmithNav.switchTab('certificates');
-  await sleep(150);
+  await idle(env);
   const { d, w } = env;
   const help = d.querySelector('#cert-fleet-notices details');
   const show = Array.from(d.querySelectorAll('#cert-fleet-notices button')).find((b) => /Show them/.test(b.textContent));
@@ -269,7 +269,7 @@ t('a quiet poll leaves the other notices, their open state, and their focus alon
   help.open = true;
   show.focus();
   await w.blacksmithCerts.refresh({ silent: true });
-  await sleep(150);
+  await idle(env);
   ok(d.querySelector('#cert-fleet-notices details') === help && help.open === true, 'the opened help section stays open and is the same node');
   ok(help.closest('.cert-notice') === helpBox && show.closest('.cert-notice') === showBox && d.contains(show), 'the notice elements are the same');
   ok(d.activeElement === show, 'focus stays on Show them');

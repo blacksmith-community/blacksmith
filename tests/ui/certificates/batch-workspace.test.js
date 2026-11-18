@@ -1,7 +1,7 @@
 const { test, expect } = require('bun:test');
-const { main: { boot, sleep } } = require('./harness.js');
+const { main: { boot, idle, TEST_LIMIT } } = require('./harness.js');
 const { JSDOM } = require('./support.js');
-const t = JSDOM ? test : test.skip;
+const t = JSDOM ? (n, f, l) => test(n, f, l === undefined ? TEST_LIMIT : l) : test.skip;
 
 async function fleet() {
   const env = boot();
@@ -13,14 +13,14 @@ async function fleet() {
     ['/b/upgrade/settings', (u,o,j) => j(200, {})],
     ['/b/upgrade/tasks', (u,o,j) => j(200, [])]
   );
-  await sleep(30);
+  await idle(w);
   w.serviceInstances = Object.fromEntries(Array.from({length: 1003}, (_,i) => [
     `instance-${String(i).padStart(4, '0')}`,
     {service_id: 'valkey', plan_id: 'cluster', name: `Cache ${i}`}
   ]));
   d.getElementById('upgrade').classList.add('active');
   await w.__T.initUpgradeTab();
-  await sleep(30);
+  await idle(w);
   w.__T.setBatchStep(2, false);
   return env;
 }
@@ -98,7 +98,7 @@ t('rotation page and matching selection skip unavailable instances', async () =>
       certificates:certs,capabilities:{rotation:{enabled:true}},settings:{warning_days:30,critical_days:7}
     })]);
     w.__T.renderOperation('rotate');
-    await sleep(40);
+    await idle(w);
     const selection = w.blacksmithCerts.selection;
     expect(d.querySelectorAll('.rotate-row')).toHaveLength(50);
     d.getElementById('upgrade-select-all').click();

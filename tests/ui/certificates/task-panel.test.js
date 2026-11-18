@@ -7,10 +7,11 @@ pinZone('UTC');
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
 
-const {boot,sleep,EVIL} = H.main;
+// idle is renamed because the test names a progress element idle.
+const {boot,idle:settle,EVIL} = H.main;
 t('task panel and API errors', async () => {
   const env=boot(); const {w,d,errors,alerts}=env;
-  await sleep(100);
+  await settle(w);
   ok(!errors.some(e=>/LOAD ERROR|ReferenceError|TypeError/.test(e)),'file loads with no throws: '+errors.filter(e=>/LOAD|Reference|Type/.test(e)).join('|'));
   const T=w.__T;
   ok(typeof T.readApiError==='function'&&typeof T.renderTaskDetail==='function'&&typeof T.rerenderTaskPanel==='function','hooks present');
@@ -96,7 +97,7 @@ t('task panel and API errors', async () => {
   w.__routes.push([/\/b\/upgrade\/tasks$/,(u,o,json)=>json(200,listBody)]);
   T._setTasks(listBody); T._setSelectedTask('t1'); T.renderTaskDetail(running);
   const pauseBtn=panel.querySelector('[data-task-action="pause"]'); ok(!!pauseBtn,'pause button rendered with listener hook');
-  pauseBtn.click(); await sleep(30);
+  pauseBtn.click(); await settle(w);
   const fb=d.querySelector('.feedback-panel[data-feedback-context="upgrade-tasks"]');
   ok(fb&&fb.classList.contains('is-error')&&fb.textContent.includes('The task "x" is not running.'),'pause refusal shows message in Feedback panel');
   ok(alerts.length===0,'no window.alert/confirm/prompt used');
@@ -117,7 +118,7 @@ t('task panel and API errors', async () => {
   // network failure
   w.__routes.unshift([/\/b\/upgrade\/tasks\/t1\/cancel$/,()=>Promise.reject(new Error('network down'))]);
   // cancel opens confirm dialog; auto confirm by clicking confirm
-  const cp=w.cancelTask('t1'); await sleep(20); d.querySelector('[data-dialog-role="confirm"]').click(); await cp;
+  const cp=w.cancelTask('t1'); await settle(w); d.querySelector('[data-dialog-role="confirm"]').click(); await cp;
   ok(d.querySelector('.feedback-panel[data-feedback-context="upgrade-tasks"]').textContent.includes('network down'),'cancel network failure reported through Feedback');
 
   // poll status
@@ -131,7 +132,7 @@ t('task panel and API errors', async () => {
   ok(r===false&&!failed.hidden&&failed.textContent.includes('Could not refresh, showing '+stamp)&&!!d.getElementById('upgrade-poll-retry'),'failed poll shows "Could not refresh, showing <time>" with Retry');
   ok(panel.querySelector('.upgrade-task-item'),'list stays on screen after a failed poll');
   w.__routes.shift();
-  d.getElementById('upgrade-poll-retry').click(); await sleep(30);
+  d.getElementById('upgrade-poll-retry').click(); await settle(w);
   ok(d.querySelector('.upgrade-poll-failed').hidden&&/^Updated/.test(d.querySelector('.upgrade-poll-updated').textContent),'Retry recovers and clears the note');
 
   // keep expanded, focus, scroll
@@ -169,10 +170,10 @@ t('task panel and API errors', async () => {
   ok(rbox.querySelectorAll('img,script').length===0&&rbox.textContent.includes(EVIL),'result panel inert with hostile title and id');
   ok(rbox.querySelector('.result-panel-error').hidden,'no error shown at first');
   ok(rbox.querySelector('.result-panel-open').textContent==='View batch job','batch navigation distinguished from BOSH logs');
-  rbox.querySelector('.result-panel-open').click(); await sleep(40);
+  rbox.querySelector('.result-panel-open').click(); await settle(w);
   ok(!rbox.querySelector('.result-panel-error').hidden&&/does not include/.test(rbox.querySelector('.result-panel-error-text').textContent)&&!rbox.querySelector('.result-panel-retry').hidden,'navigation failure shown with Retry');
   listBody=[{...running,id:EVIL}]; w.__routes.unshift([/\/b\/upgrade\/tasks\/.*$/,(u,o,json)=>json(200,{...running,id:EVIL})]);
-  rbox.querySelector('.result-panel-retry').click(); await sleep(60);
+  rbox.querySelector('.result-panel-retry').click(); await settle(w);
   ok(rbox.querySelector('.result-panel-error').hidden&&T._getSelectedTask()===EVIL,'Retry reopens the task');
   ok(d.activeElement===panel.querySelector('.task-detail-header h3'),'job navigation focuses job heading');
   const rp2=w.blacksmithResultPanel(rbox,{title:'Failed',error:'Preview failed',retry:()=>{ w.__retried=true; }});
