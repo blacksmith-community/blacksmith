@@ -163,6 +163,48 @@ func (vault *Vault) ClearCleanupPending(ctx context.Context, instanceID, action,
 	})
 }
 
+// NameCleanupDeployment writes deploymentName into the record of the
+// failed operation of action with contextID, which owes its cleanup and
+// names no deployment, as a record written before the name was recorded
+// does, and keeps every other field. It writes only when the record holds
+// that operation, failed, marked, and unnamed, checked under the
+// instance's task record lock, and otherwise writes nothing and returns
+// an error that wraps ErrTaskRecordReplaced. A record that cannot be read
+// stops the write. No history entry is written.
+func (vault *Vault) NameCleanupDeployment(ctx context.Context, instanceID, action, contextID, deploymentName string) error {
+	logger := logger.Get().Named("vault name cleanup deployment " + instanceID)
+
+	if deploymentName == "" {
+		return fmt.Errorf("%w: the deployment name to record for instance %s is empty", ErrTaskRecordReplaced, instanceID)
+	}
+
+	guard := func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrTaskRecordReplaced, instanceID)
+		}
+
+		recordedAction, _ := current["action"].(string)
+		recordedContextID, _ := current[taskRecordContextIDKey].(string)
+		state, _ := current["state"].(string)
+		marked, _ := current[TaskRecordCleanupPendingKey].(bool)
+		named, _ := current[TaskRecordDeploymentNameKey].(string)
+
+		if recordedAction != action || recordedContextID != contextID || state != eventStateFailed || !marked || named != "" {
+			return fmt.Errorf("%w: instance %s records the %s state of a %s with context ID %q, the cleanup mark %v, and deployment %q, not the unnamed marked failure of the %s with context ID %q",
+				ErrTaskRecordReplaced, instanceID, state, recordedAction, recordedContextID, marked, named, action, contextID)
+		}
+
+		return nil
+	}
+
+	return vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
+		named := maps.Clone(replaced)
+		named[TaskRecordDeploymentNameKey] = deploymentName
+
+		return named
+	})
+}
+
 // TrackFoundTask records taskID, a task the director started for the
 // operation of action, as that operation's task, as TrackProgress does. It
 // writes only when the record still holds action unsettled with no task,

@@ -587,9 +587,11 @@ func owedCleanups(candidates []*readoptCandidate, logger logger.Logger) []owedCl
 		deploymentName := candidate.deploymentName
 
 		if !candidate.indexed {
+			// A record with no name is still handed to the cleanup, which
+			// recovers the name from the provision's task or refuses.
 			deploymentName = recorded.DeploymentName
 
-			if !mintedFor(deploymentName, candidate.instanceID) {
+			if deploymentName != "" && !mintedFor(deploymentName, candidate.instanceID) {
 				logger.Warning("Instance %s has no index entry, and its failed provision owes a cleanup, but its record names no deployment minted for it, so no deployment is deleted", candidate.instanceID)
 
 				continue
@@ -976,22 +978,16 @@ func (b *Broker) settleReadoptedAnswer(ctx context.Context, operation readoptOpe
 // that operation unsettled. A failed provision is recorded with the mark
 // that says the delete of its deployment is owed, as a provision that
 // fails on a poll is, and once that lands the cleanup of deploymentName
-// starts. When no deployment is named, the mark stays and no cleanup
-// starts.
+// starts. When no deployment is named, the cleanup recovers the name from
+// the provision's task, or refuses and leaves the mark.
 func (b *Broker) recordReadoptedFailure(ctx context.Context, instanceID, deploymentName string, current recordedOperation, description string, logger logger.Logger) {
 	if !b.writeReadoptedFailure(ctx, instanceID, current, description, logger) || current.Action != operationTypeProvision {
 		return
 	}
 
-	if deploymentName == "" {
-		logger.Warning("Instance %s: its failed provision owes a cleanup, and no deployment is named for it, so none is deleted", instanceID)
-
-		return
-	}
-
 	// The cleanup waits for the settle lock writeReadoptedFailure has
 	// released, and reads the record again under it.
-	b.track("cleanup of failed deployment "+deploymentName, func() {
+	b.track("cleanup of the failed deployment of instance "+instanceID, func() {
 		b.cleanupFailedDeployment(ctx, instanceID, deploymentName, logger)
 	})
 }

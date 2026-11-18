@@ -384,3 +384,101 @@ func requireMarkKept(ctx context.Context, t *testing.T, cleaner *broker.Broker, 
 		t.Fatal("a refused cleanup took the mark off the record")
 	}
 }
+
+// A record written before deployment names were recorded, whose instance
+// has no index entry, gets its name from the provision's own task, found
+// by the record's context ID, and only when that task names a deployment
+// minted for the instance.
+func TestCleanupFailedDeployment_RecoversTheNameOfAnUnnamedRecord(t *testing.T) {
+	t.Parallel()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start Vault: %v", err)
+	}
+
+	t.Cleanup(server.Close)
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+	ctx := context.Background()
+
+	own := func(instanceID string) string { return standalonePlanID + "-" + instanceID }
+	found := func(name string) func(string) (*bosh.Task, error) {
+		return func(string) (*bosh.Task, error) {
+			return &bosh.Task{ID: 7, State: outcomeTaskError, Deployment: name}, nil
+		}
+	}
+
+	cases := []struct {
+		name    string
+		lookup  func(instanceID string) func(string) (*bosh.Task, error)
+		asked   func(instanceID string) string
+		deletes bool
+	}{
+		{"the task names the instance's deployment", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, own, true},
+		{"the task names it and the cleanup is asked for no name", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, func(string) string { return "" }, true},
+		{"the task names another instance's deployment", func(string) func(string) (*bosh.Task, error) { return found(standalonePlanID + "-another-instance") }, own, false},
+		{"the task is asked for another deployment than it names", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, func(id string) string { return "other-plan-" + id }, false},
+		{"no task has the context ID", func(string) func(string) (*bosh.Task, error) {
+			return func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no task is a nil task without an error
+		}, own, false},
+		{"the lookup fails", func(string) func(string) (*bosh.Task, error) {
+			return func(string) (*bosh.Task, error) { return nil, errDirectorUnreachable }
+		}, own, false},
+	}
+
+	for index, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			instanceID := "cleanup-recover-" + strconv.Itoa(index)
+
+			err := recordFailedProvisionNaming(ctx, vaultClient, instanceID, "")
+			if err != nil {
+				t.Fatalf("failed to write the record: %v", err)
+			}
+
+			director := cleanupGuardDirector()
+			director.FindTaskByContextIDFn = entry.lookup(instanceID)
+			cleaner := &broker.Broker{BOSH: director, Vault: vaultClient}
+
+			cleaner.CleanupFailedDeployment(ctx, instanceID, entry.asked(instanceID))
+
+			requireNameRecovery(ctx, t, cleaner, director, instanceID, own(instanceID), entry.deletes)
+		})
+	}
+}
+
+// requireNameRecovery checks that a cleanup of an unnamed record either
+// deleted want, wrote it into the record, and took the mark off, or, when
+// deletes is false, deleted nothing, left one attention entry naming the
+// instance, and kept the mark.
+func requireNameRecovery(ctx context.Context, t *testing.T, cleaner *broker.Broker, director *testutil.ScriptedBOSHDirector, instanceID, want string, deletes bool) {
+	t.Helper()
+
+	deleted := director.Calls(directorDeleteDeployment)
+	attention := cleaner.CleanupAttention()
+
+	if !deletes {
+		if len(deleted) != 0 || len(attention) != 1 || attention[0].InstanceID != instanceID {
+			t.Fatalf("the cleanup deleted %v and left %+v for an operator, want nothing deleted and one entry", deleted, attention)
+		}
+
+		requireMarkKept(ctx, t, cleaner, instanceID)
+
+		return
+	}
+
+	if len(deleted) != 1 || deleted[0] != want || len(attention) != 0 {
+		t.Fatalf("the cleanup deleted %v and left %+v for an operator, want %s deleted and nothing left", deleted, attention, want)
+	}
+
+	recorded, err := cleaner.RecordedOperation(ctx, instanceID)
+	if err != nil {
+		t.Fatalf("failed to read the record: %v", err)
+	}
+
+	if recorded.DeploymentName != want || recorded.CleanupPending {
+		t.Fatalf("the record names %q with the mark %v, want %s and no mark", recorded.DeploymentName, recorded.CleanupPending, want)
+	}
+}
