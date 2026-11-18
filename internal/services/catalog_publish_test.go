@@ -252,13 +252,14 @@ func TestCatalog_PlanUpdateableNeedsEveryCondition(t *testing.T) {
 	}
 }
 
+// publishedSchemaJSON is the schema.json of the schema publishing test.
+const publishedSchemaJSON = `{"$schema": "http://json-schema.org/draft-04/schema#", "type": "object", "properties": {"maxmemory-policy": {"type": "string"}}, "additionalProperties": false}`
+
 // A plan's parameter schema, from plan.yml or from schema.json, is
 // published for both create and update.
 //
 //nolint:paralleltest // kept serial, as the other catalog tests are
 func TestCatalog_PublishesSchemas(t *testing.T) {
-	const schemaJSON = `{"$schema": "http://json-schema.org/draft-04/schema#", "type": "object", "properties": {"maxmemory-policy": {"type": "string"}}, "additionalProperties": false}`
-
 	dir := writeServiceDir(t, "id: kv\nname: kv\ndescription: a key-value store\nbindable: true\n", map[string]map[string]string{
 		"from-plan-yml": {planFile: `id: from-plan-yml
 schemas:
@@ -270,7 +271,7 @@ schemas:
         type: string
     additionalProperties: false
 `},
-		"from-schema-json": {planFile: "id: from-schema-json\n", schemaFile: schemaJSON},
+		"from-schema-json": {planFile: "id: from-schema-json\n", schemaFile: publishedSchemaJSON},
 		"none":             {planFile: "id: none\n"},
 	})
 
@@ -281,7 +282,7 @@ schemas:
 
 	var want map[string]interface{}
 
-	err = json.Unmarshal([]byte(schemaJSON), &want)
+	err = json.Unmarshal([]byte(publishedSchemaJSON), &want)
 	if err != nil {
 		t.Fatal(err)
 	}

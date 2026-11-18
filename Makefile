@@ -85,6 +85,23 @@ test-all: test coverage test-race ## Run all tests and generate coverage report 
 .PHONY: report
 report: coverage-html ## Alias for coverage-html (backwards compatibility)
 
+# The gems Cloud Controller checks catalog schemas with, pinned to its
+# Gemfile.lock. schema-parity is not part of test or check, because it
+# needs Ruby and Bundler.
+SCHEMA_PARITY_GEMFILE := $(CURDIR)/scripts/schema-parity/Gemfile
+
+.PHONY: schema-parity
+schema-parity: ## Check the parameter schema profile against Cloud Controller's json-schema gem (needs Ruby and Bundler)
+	@command -v ruby >/dev/null 2>&1 || { echo "schema-parity needs Ruby, which is not on PATH"; exit 1; }
+	@command -v bundle >/dev/null 2>&1 || { echo "schema-parity needs Bundler, which is not on PATH"; exit 1; }
+	@export BUNDLE_GEMFILE="$(SCHEMA_PARITY_GEMFILE)"; \
+	bundle check >/dev/null 2>&1 || bundle install || { echo "schema-parity could not install the gems in $(SCHEMA_PARITY_GEMFILE)"; exit 1; }
+	@echo "$(GREEN)Checking the schema profile against Cloud Controller's json-schema gem...$(RESET)"
+	@BUNDLE_GEMFILE="$(SCHEMA_PARITY_GEMFILE)" \
+	SCHEMA_PARITY_ORACLE="bundle exec ruby $(CURDIR)/scripts/schema-parity/oracle.rb" \
+	go test -count=1 -run '^TestSchemaParity$$' -v ./internal/services/
+	@echo "$(GREEN)✓ Schema parity check complete$(RESET)"
+
 ##@ Code Quality
 
 .PHONY: fmt
