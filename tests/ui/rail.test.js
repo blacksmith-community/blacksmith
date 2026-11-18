@@ -124,11 +124,17 @@ t('a modified or middle click is left to the browser',async()=>{
   for(const init of [{ctrlKey:true},{metaKey:true},{shiftKey:true},{button:1}]){
    events.push(click(w,tasks,init));
   }
+  // Every click reached the rail and was left alone, which is the signal that
+  // the rail finished with it. Then each held timer runs while the hold is
+  // still in place, so a timer or frame that a held callback sets is held and
+  // run in its turn, however many hops a navigation is deferred by.
+  expect(events.map(e=>e.defaultPrevented)).toEqual([false,false,false,false]);
+  for(let runs=0;held.length;runs++){
+   if(runs>=1000) throw new Error('The held timers kept scheduling more timers');
+   const fn=held.shift();
+   if(typeof fn==='function')fn();
+  }
  }finally{Object.assign(w,timers);}
- // Every click reached the rail and was left alone, which is the signal that
- // the rail finished with it. Then each held timer runs.
- expect(events.map(e=>e.defaultPrevented)).toEqual([false,false,false,false]);
- held.forEach(fn=>{if(typeof fn==='function')fn();});
  await idle(w);
  w.blacksmithRouter.navigate=navigate;
  expect(navigations).toEqual([]);
