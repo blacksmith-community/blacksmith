@@ -615,6 +615,25 @@ func SetDeprovisionSettleWait(d time.Duration) func() {
 	return func() { deprovisionSettleWaitOverride.Store(previous) }
 }
 
+// RecordAcceptedDeprovision exposes the write of an accepted deprovision
+// under the settle lock, over a record that held no unknown outcome.
+func (b *Broker) RecordAcceptedDeprovision(ctx context.Context, instanceID string) (bool, error) {
+	return b.recordAcceptedDeprovision(ctx, instanceID, recordedOperation{}, logger.Get().Named("broker"))
+}
+
+// SettleLockFree reports whether the settle lock of instanceID can be
+// taken within wait, and releases it again when it was.
+func (b *Broker) SettleLockFree(instanceID string, wait time.Duration) bool {
+	unlock, err := b.lockSettleWithin(context.Background(), instanceID, wait)
+	if err != nil {
+		return false
+	}
+
+	unlock()
+
+	return true
+}
+
 // SweepOwedCleanupsOnce runs one pass of the sweep of owed cleanups, with
 // interval as the interval between passes.
 func (b *Broker) SweepOwedCleanupsOnce(ctx context.Context, interval time.Duration) {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"testing"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -27,7 +28,7 @@ var errDirectorUnreachable = errors.New("connection refused")
 
 // Deprovision arriving while a provision is still running used to report
 // success, orphan the BOSH deployment, and let the finishing provision recreate
-// the vault index entry. These specs pin the corrected behaviour.
+// the vault index entry. These specs pin the corrected behavior.
 var _ = Describe("Deprovision racing an in-flight provision", func() {
 	var (
 		ctx            context.Context
@@ -513,3 +514,30 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		})
 	})
 })
+
+// A deprovision records itself under the settle lock, and a panic while
+// it holds the lock must not leave the instance locked. A broker with no
+// Vault panics on the record read, and the lock is free again afterward.
+func TestRecordAcceptedDeprovision_ReleasesTheSettleLockOnAPanic(t *testing.T) {
+	t.Parallel()
+
+	const instanceID = "deprovision-settle-panic"
+
+	brokerInstance := &broker.Broker{}
+
+	var panicked any
+
+	func() {
+		defer func() { panicked = recover() }()
+
+		_, _ = brokerInstance.RecordAcceptedDeprovision(context.Background(), instanceID)
+	}()
+
+	if panicked == nil {
+		t.Fatal("the record write over a broker with no Vault did not panic, so the spec checks nothing")
+	}
+
+	if !brokerInstance.SettleLockFree(instanceID, 100*time.Millisecond) {
+		t.Fatal("a panic in the record write left the settle lock of the instance held")
+	}
+}

@@ -614,31 +614,13 @@ func (b *Broker) Deprovision(
 	// may have been recorded since rejectIfOperationInProgress read it. The
 	// one exception is the unknown provision that rejectIfOperationInProgress
 	// let this deprovision replace.
-	//
-	// The write runs under the settle lock, which the cleanup of a failed
-	// provision holds across its director calls, so the deprovision is
-	// not recorded while a cleanup may be sending a delete. A cleanup that
-	// takes the lock after the write finds the deprovision on record, or
-	// this claim, and deletes nothing. A cleanup that holds the lock for
-	// longer than the deprovision waits gets the deprovision refused, and
-	// the platform asks again.
-	// The wait is detached from the request, as the write is.
-	unlockSettle, err := b.lockSettleWithin(context.WithoutCancel(ctx), instanceID, settleWaitForDeprovision())
-	if err != nil {
+	followRunning, err := b.recordAcceptedDeprovision(ctx, instanceID, superseded, logger)
+	if errors.Is(err, errSettleHeld) {
 		b.withdrawDeprovisionRequest(ctx, instanceID, withdrawRequest, logger)
 		logger.Warning("Rejecting deprovision of instance %s: another settle of the instance, such as the cleanup of a failed provision, holds its record: %s", instanceID, err)
 
 		return osbapi.DeprovisionResponse{}, false, osbapi.ErrConcurrencyError
 	}
-
-	followRunning := b.replacesFailedProvision(ctx, instanceID, logger)
-
-	trackCtx, cancelTrack := recordContext(ctx)
-	err = b.Vault.TrackProgressReplacingOutcomeUnknown(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted",
-		superseded.Action, superseded.ContextID, 0, nil)
-
-	cancelTrack()
-	unlockSettle()
 
 	if err != nil {
 		// The refused deprovision takes its request back off the index
@@ -1196,6 +1178,41 @@ type TaskWaiters interface {
 // 422 ConcurrencyError, even while the guard holds it for no one.
 func (b *Broker) SetTaskWaiters(waiters TaskWaiters) {
 	b.taskWaiters.Store(&waiters)
+}
+
+// errSettleHeld reports that a deprovision gave up waiting for the settle
+// lock another settle of the instance held.
+var errSettleHeld = errors.New("the settle lock is held")
+
+// recordAcceptedDeprovision records an accepted deprovision as the
+// instance's current operation, under the settle lock, and reports
+// whether the record it replaced holds a failed provision, whose cleanup
+// may have sent a delete the deprovision then follows.
+//
+// The cleanup of a failed provision holds the settle lock across its
+// director calls, so the deprovision is not recorded while a cleanup may
+// be sending a delete. A cleanup that takes the lock after the write
+// finds the deprovision on record, or its claim, and deletes nothing.
+// When the lock is not free within settleWaitForDeprovision, it returns
+// errSettleHeld and writes nothing. The wait is detached from the
+// request, as the write is. The lock is released on every way out, a
+// panic included, so a failed write never leaves the instance locked.
+func (b *Broker) recordAcceptedDeprovision(ctx context.Context, instanceID string, superseded recordedOperation, logger logger.Logger) (bool, error) {
+	unlockSettle, err := b.lockSettleWithin(context.WithoutCancel(ctx), instanceID, settleWaitForDeprovision())
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", errSettleHeld, err)
+	}
+	defer unlockSettle()
+
+	followRunning := b.replacesFailedProvision(ctx, instanceID, logger)
+
+	trackCtx, cancelTrack := recordContext(ctx)
+	defer cancelTrack()
+
+	err = b.Vault.TrackProgressReplacingOutcomeUnknown(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted",
+		superseded.Action, superseded.ContextID, 0, nil)
+
+	return followRunning, err //nolint:wrapcheck // the caller tells the Vault's sentinel errors apart and wraps the rest
 }
 
 // replacesFailedProvision reports whether the record a deprovision is
