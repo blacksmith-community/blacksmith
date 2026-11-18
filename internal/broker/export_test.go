@@ -492,3 +492,41 @@ func (b *Broker) InstanceStillIndexed(ctx context.Context, instanceID string) bo
 
 	return phase.instanceStillIndexed(ctx)
 }
+
+// CredentialReaders exposes, by a name for the test to report, each broker
+// path that reads an instance's credentials from its deployment's VMs:
+// bind, the base credentials of a bind, the credentials a provision
+// stores, the retry of that store, and the admin credentials of a RabbitMQ
+// or Valkey unbind.
+func (b *Broker) CredentialReaders() map[string]func(ctx context.Context, instanceID string, plan services.Plan) error {
+	brokerLogger := logger.Get().Named("broker")
+
+	return map[string]func(ctx context.Context, instanceID string, plan services.Plan) error{
+		"bind": func(ctx context.Context, instanceID string, plan services.Plan) error {
+			_, err := b.getInstanceCredentials(ctx, instanceID, &plan, brokerLogger)
+
+			return err
+		},
+		"base credentials": func(ctx context.Context, instanceID string, plan services.Plan) error {
+			_, err := b.getBaseCredentials(ctx, instanceID, plan, brokerLogger)
+
+			return err
+		},
+		"provision credentials": func(ctx context.Context, instanceID string, plan services.Plan) error {
+			return b.processCredentials(ctx, instanceID, osbapi.ProvisionRequest{ServiceID: plan.Service.ID, PlanID: plan.ID}, brokerLogger)
+		},
+		"credential store retry": func(ctx context.Context, instanceID string, plan services.Plan) error {
+			return b.retryCredentialStorage(ctx, instanceID, &plan, brokerLogger)
+		},
+		"rabbitmq unbind": func(ctx context.Context, instanceID string, plan services.Plan) error {
+			_, err := b.getRabbitMQCredentials(ctx, ctx, instanceID, &plan, brokerLogger)
+
+			return err
+		},
+		"valkey unbind": func(ctx context.Context, instanceID string, plan services.Plan) error {
+			_, err := b.getValkeyCredentials(ctx, ctx, instanceID, &plan, brokerLogger)
+
+			return err
+		},
+	}
+}

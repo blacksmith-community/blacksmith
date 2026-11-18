@@ -817,9 +817,12 @@ func releasePresent(ctx context.Context, director bosh.Director, name, version s
 	return false, nil
 }
 
-func GetCreds(ctx context.Context, instanceID string, plan services.Plan, director bosh.Director, deploymentManifest string, loggerInstance logger.Logger) (interface{}, error) {
-	deployment := plan.ID + "-" + instanceID
-
+// GetCreds reads an instance's credentials from the VMs of deployment,
+// which is the deployment the instance's index entry records. The caller
+// names it, because after a plan change the deployment keeps the name it
+// was created under, and a name built from plan.ID would name a deployment
+// that doesn't exist.
+func GetCreds(ctx context.Context, instanceID, deployment string, plan services.Plan, director bosh.Director, deploymentManifest string, loggerInstance logger.Logger) (interface{}, error) {
 	vms, err := getDeploymentVMs(ctx, director, deployment, loggerInstance)
 	if err != nil {
 		return nil, err

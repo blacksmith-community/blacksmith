@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"blacksmith/internal/manifest"
 	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/services/common"
@@ -376,9 +375,7 @@ func (b *Broker) handleValkeyUnbind(ctx context.Context, instanceID, bindingID s
 func (b *Broker) getValkeyCredentials(ctx context.Context, _ context.Context, instanceID string, plan *services.Plan, logger logger.Logger) (map[string]interface{}, error) {
 	logger.Debug("Retrieving admin credentials for Valkey instance")
 
-	deploymentManifest := b.getDeploymentManifestFromVault(instanceID, logger)
-
-	creds, err := manifest.GetCreds(ctx, instanceID, *plan, b.BOSH, deploymentManifest, logger)
+	creds, err := b.readDeploymentCreds(ctx, instanceID, *plan, logger)
 	if err != nil {
 		logger.Error("Failed to retrieve credentials: %s", err)
 		return nil, fmt.Errorf("failed to get Valkey credentials: %w", err)

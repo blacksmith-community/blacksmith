@@ -75,7 +75,7 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 
 	cp.logger.Infof("Fetching credentials from BOSH for %s (plan: %s)", deploymentInfo.Name, plan.ID)
 
-	creds, err := cp.FetchCredsFromBOSH(instanceID, plan, boshClient)
+	creds, err := cp.FetchCredsFromBOSH(deploymentInfo.Name, boshClient)
 	if err != nil {
 		return fmt.Errorf("failed to fetch credentials from BOSH: %w", err)
 	}
@@ -99,9 +99,11 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 
 // credentialsExist checks if credentials already exist in Vault.
 
-// FetchCredsFromBOSH extracts credentials from the deployed BOSH manifest (exported for use by recovery tools).
-func (cp *CredentialPopulator) FetchCredsFromBOSH(instanceID string, plan Plan, boshClient interface{}) (map[string]interface{}, error) {
-	deploymentName := plan.ID + "-" + instanceID
+// FetchCredsFromBOSH extracts credentials from the manifest of
+// deploymentName on the director (exported for use by recovery tools). The
+// caller names the deployment, because after a plan change it keeps the
+// name it was created under, which a name built from the plan would miss.
+func (cp *CredentialPopulator) FetchCredsFromBOSH(deploymentName string, boshClient interface{}) (map[string]interface{}, error) {
 	cp.logger.Infof("Fetching manifest from BOSH for deployment %s", deploymentName)
 
 	// Get deployment manifest from BOSH
