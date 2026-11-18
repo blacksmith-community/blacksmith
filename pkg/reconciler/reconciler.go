@@ -892,6 +892,14 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 
 	r.recordUnclaimedDeployments(instances)
 
+	// The plan an instance's index entry records is the truth about its
+	// plan, and the plan inferred from the deployment's name is the one
+	// it was created under, which a plan change leaves behind.
+	err = r.keepRecordedPlans(instances)
+	if err != nil {
+		return fmt.Errorf("phase 3 failed: %w", err)
+	}
+
 	// Phase 4: Update Vault with rate limiting
 	updatedInstances, err := r.updateVaultWithRateLimit(ctx, instances)
 	if err != nil {
@@ -1639,6 +1647,59 @@ func (r *ReconcilerManager) createInstanceData(instanceID string, detail Deploym
 			"deployment_name": deploymentName,
 		},
 	}
+}
+
+// indexReader reads the vault index, as the IndexSynchronizer does.
+type indexReader interface {
+	GetVaultIndex() (map[string]interface{}, error)
+}
+
+// keepRecordedPlans gives each instance the plan its index entry records,
+// in place of the plan the matcher inferred from the deployment's name. A
+// deployment keeps the name it was created under for life, so after a plan
+// change the name names the old plan, and writing the inferred plan back
+// would undo the change. An instance whose entry records no plan keeps the
+// inferred one. When the index can't be read, no recorded plan can be
+// kept, so the run stops before it writes anything.
+func (r *ReconcilerManager) keepRecordedPlans(instances []InstanceData) error {
+	reader, ok := r.Synchronizer.(indexReader)
+	if !ok || reader == nil || len(instances) == 0 {
+		return nil
+	}
+
+	idx, err := reader.GetVaultIndex()
+	if err != nil {
+		return fmt.Errorf("could not read the index to keep the plans it records: %w", err)
+	}
+
+	for index := range instances {
+		instance := &instances[index]
+
+		recorded := recordedPlanID(idx[instance.ID])
+		if recorded == "" || recorded == instance.PlanID {
+			continue
+		}
+
+		r.logger.Debugf("Keeping the recorded plan %s of instance %s over the plan %s inferred from deployment %s",
+			recorded, instance.ID, instance.PlanID, instance.Deployment.Name)
+
+		instance.PlanID = recorded
+	}
+
+	return nil
+}
+
+// recordedPlanID returns the plan an index entry records, or an empty
+// string when it records none.
+func recordedPlanID(entry interface{}) string {
+	fields, ok := entry.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	planID, _ := fields["plan_id"].(string)
+
+	return planID
 }
 
 func (r *ReconcilerManager) matchService(detail DeploymentDetail, inst *InstanceData) {

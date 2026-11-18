@@ -404,6 +404,13 @@ func (s *IndexSynchronizer) mergeWithExistingInstance(data map[string]interface{
 			}
 		}
 
+		// The plan an entry records is the truth about the instance's
+		// plan, and a plan inferred from its deployment's name never
+		// replaces it.
+		if planID := recordedPlanID(existingMap); planID != "" {
+			data["plan_id"] = planID
+		}
+
 		// Preserve deleted status if already marked
 		if status, ok := existingMap["status"].(string); ok && status == StatusDeleted {
 			// Don't override deleted status unless explicitly changing it
@@ -686,31 +693,31 @@ func (s *IndexSynchronizer) validateServiceInstance(instanceID string, dataMap m
 	return s.validateDeploymentName(instanceID, dataMap)
 }
 
-// validateDeploymentName validates the deployment name format.
+// validateDeploymentName checks that the deployment name an entry records
+// names the entry's instance. A deployment keeps the name it was created
+// under for life, so after a plan change the name starts with the old
+// plan, and the check never rebuilds a name from the recorded plan. Every
+// name the broker has minted ends with the instance ID, after a hyphen or,
+// in some legacy names, an underscore.
 func (s *IndexSynchronizer) validateDeploymentName(instanceID string, dataMap map[string]interface{}) error {
 	deploymentName, exists := dataMap["deployment_name"].(string)
 	if !exists || deploymentName == "" {
 		return nil
 	}
 
-	// Check deployment name format (should be planID-instanceID)
-	expectedPattern := fmt.Sprintf("%s-%s", dataMap["plan_id"], instanceID)
-	if deploymentName == expectedPattern {
-		return nil
-	}
-
-	// Some flexibility for legacy deployments
-	planID, ok := dataMap["plan_id"].(string)
-	if !ok {
+	if _, ok := dataMap["plan_id"].(string); !ok {
 		return ErrPlanIDMustBeString
 	}
 
-	if !s.IsLegacyDeploymentName(deploymentName, planID, instanceID) {
-		return fmt.Errorf("%w: expected pattern %s, got %s",
-			ErrDeploymentNameMismatch, expectedPattern, deploymentName)
+	for _, separator := range []string{"-", "_"} {
+		prefix, found := strings.CutSuffix(deploymentName, separator+instanceID)
+		if found && prefix != "" {
+			return nil
+		}
 	}
 
-	return nil
+	return fmt.Errorf("%w: deployment %s does not name instance %s",
+		ErrDeploymentNameMismatch, deploymentName, instanceID)
 }
 
 // SyncIndexWithValidation synchronizes the vault index with BOSH deployment validation.
