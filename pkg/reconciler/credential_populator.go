@@ -68,13 +68,15 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 		return nil
 	}
 
-	// Get plan and fetch credentials
+	// The plan only labels the log line. The credentials come from the
+	// deployment itself, so a name the plan can't be read from still has
+	// its credentials read.
 	plan, err := cp.getPlanFromDeployment(deploymentInfo, broker)
-	if err != nil {
-		return fmt.Errorf("failed to determine plan for deployment %s: %w", deploymentInfo.Name, err)
+	if err == nil {
+		cp.logger.Infof("Fetching credentials from BOSH for %s (plan: %s)", deploymentInfo.Name, plan.ID)
+	} else {
+		cp.logger.Infof("Fetching credentials from BOSH for %s (no plan read from its name: %v)", deploymentInfo.Name, err)
 	}
-
-	cp.logger.Infof("Fetching credentials from BOSH for %s (plan: %s)", deploymentInfo.Name, plan.ID)
 
 	creds, err := cp.FetchCredsFromBOSH(ctx, deploymentInfo.Name, boshClient)
 	if err != nil {
