@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
@@ -75,7 +76,7 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 
 	cp.logger.Infof("Fetching credentials from BOSH for %s (plan: %s)", deploymentInfo.Name, plan.ID)
 
-	creds, err := cp.FetchCredsFromBOSH(deploymentInfo.Name, boshClient)
+	creds, err := cp.FetchCredsFromBOSH(ctx, deploymentInfo.Name, boshClient)
 	if err != nil {
 		return fmt.Errorf("failed to fetch credentials from BOSH: %w", err)
 	}
@@ -103,11 +104,11 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 // deploymentName on the director (exported for use by recovery tools). The
 // caller names the deployment, because after a plan change it keeps the
 // name it was created under, which a name built from the plan would miss.
-func (cp *CredentialPopulator) FetchCredsFromBOSH(deploymentName string, boshClient interface{}) (map[string]interface{}, error) {
+func (cp *CredentialPopulator) FetchCredsFromBOSH(ctx context.Context, deploymentName string, boshClient interface{}) (map[string]interface{}, error) {
 	cp.logger.Infof("Fetching manifest from BOSH for deployment %s", deploymentName)
 
 	// Get deployment manifest from BOSH
-	manifest, err := cp.getDeploymentManifest(deploymentName, boshClient)
+	manifest, err := cp.getDeploymentManifest(ctx, deploymentName, boshClient)
 	if err != nil {
 		return nil, err
 	}
@@ -216,22 +217,17 @@ func (cp *CredentialPopulator) updateCredentialMetadata(vault VaultInterface, in
 	return nil
 }
 
-func (cp *CredentialPopulator) getDeploymentManifest(deploymentName string, boshClient interface{}) (map[string]interface{}, error) {
-	type DeploymentDetail struct {
-		Name     string `json:"name"`
-		Manifest string `json:"manifest"`
+func (cp *CredentialPopulator) getDeploymentManifest(ctx context.Context, deploymentName string, boshClient interface{}) (map[string]interface{}, error) {
+	type deploymentGetter interface {
+		GetDeployment(ctx context.Context, name string) (*bosh.DeploymentDetail, error)
 	}
 
-	type BOSHDirector interface {
-		GetDeployment(name string) (*DeploymentDetail, error)
-	}
-
-	director, ok := boshClient.(BOSHDirector)
+	director, ok := boshClient.(deploymentGetter)
 	if !ok {
 		return nil, ErrBoshClientNoGetDeployment
 	}
 
-	deployment, err := director.GetDeployment(deploymentName)
+	deployment, err := director.GetDeployment(ctx, deploymentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get deployment from BOSH: %w", err)
 	}

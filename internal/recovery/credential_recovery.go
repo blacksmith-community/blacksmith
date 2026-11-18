@@ -470,7 +470,7 @@ func (cr *CredentialRecovery) recoverFromBOSH(ctx context.Context, instanceID st
 		return false, err
 	}
 
-	creds, err := cr.extractCredentialsFromBOSH(instance.DeploymentNameFor(instanceID))
+	creds, err := cr.extractCredentialsFromBOSH(ctx, instance.DeploymentNameFor(instanceID))
 	if err != nil {
 		return false, err
 	}
@@ -514,12 +514,12 @@ func (cr *CredentialRecovery) getInstanceAndPlan(ctx context.Context, instanceID
 // deploymentName, which is the deployment the instance's index entry
 // records. After a plan change the deployment keeps the name it was
 // created under, so the name is never rebuilt from the current plan.
-func (cr *CredentialRecovery) extractCredentialsFromBOSH(deploymentName string) (map[string]interface{}, error) {
+func (cr *CredentialRecovery) extractCredentialsFromBOSH(ctx context.Context, deploymentName string) (map[string]interface{}, error) {
 	cr.logger.Info("Attempting to extract credentials from BOSH manifest for deployment %s", deploymentName)
 
 	populator := reconciler.NewCredentialPopulator(nil, &credRecoveryLoggerWrapper{logger: cr.logger})
 
-	creds, err := populator.FetchCredsFromBOSH(deploymentName, cr.broker.BOSH)
+	creds, err := populator.FetchCredsFromBOSH(ctx, deploymentName, cr.broker.BOSH)
 	if err != nil {
 		cr.logger.Error("Failed to extract credentials from BOSH manifest: %s", err)
 
