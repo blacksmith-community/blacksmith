@@ -3681,9 +3681,11 @@ type recordedOperation struct {
 	// operation recorded before the broker chose context IDs.
 	ContextID string
 	// DeploymentName is the name of the deployment the operation's
-	// director request acts on, recorded with ContextID. It is empty for
-	// an operation that records none, such as a provision, or one recorded
-	// before the broker recorded deployment names.
+	// director request acts on, recorded with ContextID by a provision's
+	// deploy and a deprovision's delete. It is empty for an operation
+	// recorded before the broker recorded deployment names. The cleanup
+	// of such a failed provision recovers the name from the director's
+	// task with ContextID and writes it here before it deletes anything.
 	DeploymentName string
 	// UnknownSince is when the outcome of the operation's director request
 	// became unknown. It is zero unless State is outcome_unknown.

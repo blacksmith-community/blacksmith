@@ -26,8 +26,10 @@ var ErrEmptyContextID = errors.New("the context ID to record is empty")
 const taskRecordContextIDKey = "context_id"
 
 // TaskRecordDeploymentNameKey is the key of the name of the deployment a
-// task record's director request acts on. A deprovision records it with
-// the context ID of its delete.
+// task record's director request acts on. A provision records it with the
+// context ID of its deploy, and a deprovision with the context ID of its
+// delete. NameCleanupDeployment writes it into an older failed provision's
+// record that holds none.
 const TaskRecordDeploymentNameKey = "deployment_name"
 
 // TaskStateOutcomeUnknown is the state of a task record whose director

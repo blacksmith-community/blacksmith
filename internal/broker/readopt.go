@@ -569,10 +569,12 @@ func sortReadoptCandidates(candidates []*readoptCandidate, logger logger.Logger)
 
 // owedCleanups returns the failed provisions whose records still owe the
 // delete of their deployments. An indexed instance's deployment is the one
-// its index entry names. An instance whose index entry is gone is cleaned
-// up only when its record names a deployment minted for it, and is
-// otherwise left alone, because nothing then proves the broker owns the
-// deployment.
+// its index entry names. An instance whose index entry is gone goes to the
+// cleanup with the name its record holds when that name was minted for
+// it, and with no name when the record holds none, so the cleanup can
+// recover the name from the provision's task or refuse. A record whose
+// name was not minted for the instance is left alone, because nothing
+// then proves the broker owns the deployment.
 func owedCleanups(candidates []*readoptCandidate, logger logger.Logger) []owedCleanup {
 	var cleanups []owedCleanup
 
