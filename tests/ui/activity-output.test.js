@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const SECRET='echo SECRET-COMMAND-TEXT-9921';
 const OUTPUT='SECRET-OUTPUT-TEXT-4417';
@@ -27,15 +27,15 @@ async function setup(detail,answer){
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
   [OUT_URL,(u,o,j)=>j(200,answer)],[DETAIL_URL,(u,o,j)=>j(200,detail)],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
  w.plansData={services:[]};
- await sleep(30);
- await w.__T.initUpgradeTab();await sleep(10);
- await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await idle(w);
+ await w.__T.initUpgradeTab();await idle(w);
+ await w.__T.selectUpgradeTask(TASK);await idle(w);
  return {...env,copied};
 }
 const details=(d)=>d.querySelector('#upgrade .command-output-block');
 const toggleOf=(d)=>d.querySelector('#upgrade .command-output-toggle');
 const outCopy=(d)=>d.querySelector('#upgrade button.command-output-copy');
-const openOut=async(d)=>{toggleOf(d).click();await sleep(40);};
+const openOut=async(d)=>{toggleOf(d).click();await idle(d);};
 
 t('the command sits in a block below the table with an icon-only copy button',async()=>{
  const {d,copied}=await setup(task(),merged());
@@ -49,7 +49,7 @@ t('the command sits in a block below the table with an icon-only copy button',as
  expect(button.querySelector('svg')).not.toBeNull();
  expect(button.dataset.keepKey).toBe('command-copy');
  expect([...button.attributes].some((a)=>a.value.includes('SECRET'))).toBe(false);
- button.click();await sleep(10);
+ button.click();await idle(button.ownerDocument);
  expect(copied).toEqual([SECRET]);
  expect(button.classList.contains('copied')).toBe(true);
 });
@@ -70,7 +70,7 @@ t('the Output copy button sits outside the summary, shows once output loads, and
  expect(button.textContent.trim()).toBe('');
  expect(button.dataset.keepKey).toMatch(/^output-copy:/);
  expect([...d.querySelectorAll('*')].some((e)=>e.id!=='x'&&[...e.attributes].some((a)=>a.value.includes(OUTPUT)))).toBe(false);
- button.click();await sleep(10);
+ button.click();await idle(d);
  expect(copied).toEqual([`${OUTPUT}\n`]);
  expect(toggleOf(d).getAttribute('aria-expanded')).toBe('true');
 });
@@ -96,7 +96,7 @@ t('an older record shows stdout, a captioned stderr, and the ordering note',asyn
  expect(body.textContent).toContain('This run stored stdout and stderr separately, so their original order is unknown.');
  const pres=[...body.querySelectorAll('pre')].map((p)=>p.textContent);
  expect(pres).toEqual(['hello out\n','oops err\n']);
- outCopy(d).click();await sleep(10);
+ outCopy(d).click();await idle(d);
  expect(copied).toEqual(['hello out\noops err\n']);
 });
 
@@ -163,10 +163,10 @@ t('the Output panel is a disclosure button with a matching body, driven by Enter
   toggle.focus();
   toggle.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true}));
   toggle.dispatchEvent(new w.KeyboardEvent('keyup',{key,bubbles:true}));
-  toggle.click();await sleep(30);
+  toggle.click();await idle(w);
   expect(toggle.getAttribute('aria-expanded')).toBe('true');
   expect(body.hidden).toBe(false);
-  toggle.click();await sleep(10);
+  toggle.click();await idle(w);
   expect(toggle.getAttribute('aria-expanded')).toBe('false');
   expect(body.hidden).toBe(true);
  }
@@ -176,7 +176,7 @@ t('a poll re-render keeps the panel open and the toggle focused without reading 
  const {w,d}=await setup(task(),merged());
  await openOut(d);
  const before=toggleOf(d);before.focus();
- w.__T.renderTaskDetail(task({status:'running'}));await sleep(30);
+ w.__T.renderTaskDetail(task({status:'running'}));await idle(w);
  const after=toggleOf(d);
  expect(after).not.toBe(before);
  expect(after.getAttribute('aria-expanded')).toBe('true');

@@ -1,7 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,sleep,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const TASK='33333333-3333-4333-8333-333333333333';
 const OUT_URL=`/b/upgrade/tasks/${TASK}/output`;
@@ -29,9 +29,9 @@ async function setup(detail,answer){
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
   [OUT_URL,(u,o,j)=>j(200,answer)],[DETAIL_URL,(u,o,j)=>j(200,detail)],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
  w.plansData={services:[]};
- await sleep(30);
- await w.__T.initUpgradeTab();await sleep(10);
- await w.__T.selectUpgradeTask(TASK);await sleep(80);
+ await idle(w);
+ await w.__T.initUpgradeTab();await idle(w);
+ await w.__T.selectUpgradeTask(TASK);await idle(w);
  return env;
 }
 const explain=(d)=>d.querySelector('#upgrade .command-node-explain');
@@ -112,7 +112,7 @@ t('the matching lines are tinted in the output and the copy text stays plain',as
  const marks=env.d.querySelectorAll('#upgrade .command-output-body .command-output-error-line');
  expect(marks.length).toBe(9);
  expect(env.d.querySelector('#upgrade .command-output-body pre').textContent).toBe(`start\n${nine()}done\n`);
- env.d.querySelector('#upgrade button.command-output-copy').click();await sleep(10);
+ env.d.querySelector('#upgrade button.command-output-copy').click();await idle(env);
  expect(copied).toEqual([`start\n${nine()}done\n`]);
 });
 
