@@ -1025,6 +1025,35 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Expect(director.Calls(directorDeleteDeployment)).To(BeEmpty(), "it deletes another instance's deployment")
 	})
 
+	It("a sweep pass that cannot parse a record keeps its Attention row", func() {
+		Expect(recordFailedProvisionNaming(ctx, vaultClient, instanceID, planID+"-another-instance")).To(Succeed())
+
+		brokerInstance := newBroker(director)
+		brokerInstance.CleanupFailedDeployment(ctx, instanceID, planID+"-another-instance")
+		Expect(brokerInstance.CleanupAttention()).To(HaveLen(1))
+
+		var record map[string]interface{}
+
+		_, err := vaultClient.Get(ctx, instanceID+"/task", &record)
+		Expect(err).ToNot(HaveOccurred())
+
+		record["unknown_since"] = "not a time"
+		Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+		now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+
+		brokerInstance.SetSweepClock(func() time.Time { return now })
+
+		for range 2 {
+			brokerInstance.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+			now = now.Add(time.Minute)
+
+			Expect(brokerInstance.CleanupAttention()).To(HaveLen(1), "a record the sweep could not parse took the row off the overview")
+			Expect(brokerInstance.OwedCleanupSuspects()).To(ContainElement(instanceID))
+		}
+	})
+
 	It("the cleanup sweep retries a delete the director timed out on, and deletes the deployment once", func() {
 		restore = append(restore, broker.SetCleanupRetryInterval(50*time.Millisecond))
 

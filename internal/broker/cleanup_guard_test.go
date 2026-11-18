@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -409,22 +410,22 @@ func TestCleanupFailedDeployment_RecoversTheNameOfAnUnnamedRecord(t *testing.T) 
 		}
 	}
 
-	cases := []struct {
-		name    string
-		lookup  func(instanceID string) func(string) (*bosh.Task, error)
-		asked   func(instanceID string) string
-		deletes bool
-	}{
-		{"the task names the instance's deployment", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, own, true},
-		{"the task names it and the cleanup is asked for no name", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, func(string) string { return "" }, true},
-		{"the task names another instance's deployment", func(string) func(string) (*bosh.Task, error) { return found(standalonePlanID + "-another-instance") }, own, false},
-		{"the task is asked for another deployment than it names", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, func(id string) string { return "other-plan-" + id }, false},
+	// Each refusal names its own cause on the overview, and the row of a
+	// task that points at another deployment names that deployment.
+	cases := []nameRecoveryCase{
+		{"the task names the instance's deployment", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, own, true, nil},
+		{"the task names it and the cleanup is asked for no name", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, func(string) string { return "" }, true, nil},
+		{"the task names another instance's deployment", func(string) func(string) (*bosh.Task, error) { return found(standalonePlanID + "-another-instance") }, own, false, &nameRefusal{
+			deployment: func(string) string { return standalonePlanID + "-another-instance" },
+			reason:     "Task 7 with context ID context-7 names deployment " + standalonePlanID + "-another-instance, which was not named for this instance",
+		}},
+		{"the task is asked for another deployment than it names", func(id string) func(string) (*bosh.Task, error) { return found(own(id)) }, func(id string) string { return "other-plan-" + id }, false, nil},
 		{"no task has the context ID", func(string) func(string) (*bosh.Task, error) {
 			return func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no task is a nil task without an error
-		}, own, false},
+		}, own, false, &nameRefusal{deployment: own, reason: "the director has no task with context ID context-7"}},
 		{"the lookup fails", func(string) func(string) (*bosh.Task, error) {
 			return func(string) (*bosh.Task, error) { return nil, errDirectorUnreachable }
-		}, own, false},
+		}, own, false, &nameRefusal{deployment: own, reason: "the director could not be asked for the provision's task with context ID context-7"}},
 	}
 
 	for index, entry := range cases {
@@ -445,7 +446,47 @@ func TestCleanupFailedDeployment_RecoversTheNameOfAnUnnamedRecord(t *testing.T) 
 			cleaner.CleanupFailedDeployment(ctx, instanceID, entry.asked(instanceID))
 
 			requireNameRecovery(ctx, t, cleaner, director, instanceID, own(instanceID), entry.deletes)
+			requireNameRefusal(t, cleaner, instanceID, entry.refusal)
 		})
+	}
+}
+
+// nameRecoveryCase is how the director answers the lookup of an unnamed
+// record's task, the deployment the cleanup is asked for, whether it
+// deletes, and the row a refusal leaves when the case checks it.
+type nameRecoveryCase struct {
+	name    string
+	lookup  func(instanceID string) func(string) (*bosh.Task, error)
+	asked   func(instanceID string) string
+	deletes bool
+	refusal *nameRefusal
+}
+
+// nameRefusal is the deployment a refusal's row names, and a part of its
+// reason.
+type nameRefusal struct {
+	deployment func(instanceID string) string
+	reason     string
+}
+
+// requireNameRefusal checks that the one row the refusal left names the
+// deployment want gives, with a reason that holds want's reason.
+func requireNameRefusal(t *testing.T, cleaner *broker.Broker, instanceID string, want *nameRefusal) {
+	t.Helper()
+
+	if want == nil {
+		return
+	}
+
+	attention := cleaner.CleanupAttention()
+
+	switch {
+	case len(attention) != 1:
+		t.Fatalf("the refusal left %+v for an operator, want one entry", attention)
+	case attention[0].DeploymentName != want.deployment(instanceID):
+		t.Errorf("the row names deployment %q, want %q", attention[0].DeploymentName, want.deployment(instanceID))
+	case !strings.Contains(attention[0].Reason, want.reason):
+		t.Errorf("the row's reason is %q, want it to say %q", attention[0].Reason, want.reason)
 	}
 }
 
@@ -480,5 +521,51 @@ func requireNameRecovery(ctx context.Context, t *testing.T, cleaner *broker.Brok
 
 	if recorded.DeploymentName != want || recorded.CleanupPending {
 		t.Fatalf("the record names %q with the mark %v, want %s and no mark", recorded.DeploymentName, recorded.CleanupPending, want)
+	}
+}
+
+// A cleanup that cannot read the record knows nothing about the refusal
+// already on the overview, so the row stays. Only a record read and found
+// to owe nothing takes it off.
+func TestCleanupFailedDeployment_KeepsTheRowWhenTheRecordCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start Vault: %v", err)
+	}
+
+	t.Cleanup(server.Close)
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+	ctx := context.Background()
+	instanceID := "cleanup-row-unreadable"
+	other := standalonePlanID + "-another-instance"
+
+	err = recordFailedProvisionNaming(ctx, vaultClient, instanceID, other)
+	if err != nil {
+		t.Fatalf("failed to write the record: %v", err)
+	}
+
+	director := cleanupGuardDirector()
+	cleaner := &broker.Broker{BOSH: director, Vault: vaultClient}
+
+	cleaner.CleanupFailedDeployment(ctx, instanceID, other)
+
+	before := cleaner.CleanupAttention()
+	if len(before) != 1 {
+		t.Fatalf("the refusal left %+v for an operator, want one entry", before)
+	}
+
+	cleaner.Vault = internalVault.New("http://127.0.0.1:1", server.RootToken, true)
+	cleaner.CleanupFailedDeployment(ctx, instanceID, other)
+
+	after := cleaner.CleanupAttention()
+	if len(after) != 1 || after[0] != before[0] {
+		t.Fatalf("a cleanup that could not read the record left %+v, want the row %+v kept as it was", after, before[0])
+	}
+
+	if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+		t.Fatalf("the cleanup deleted %v", deleted)
 	}
 }

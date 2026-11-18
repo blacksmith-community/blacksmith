@@ -381,15 +381,23 @@ func (b *Broker) adoptStalledProvision(instanceID string, recorded recordedOpera
 // forgetSettledSuspects drops the suspects, the retries, and the
 // overview's attention entries of every instance the pass read that no
 // longer owes a cleanup. A full scan read every instance, so it also
-// drops those of an instance it did not find.
+// drops those of an instance it did not find. A record the pass found
+// but could not parse says nothing about the cleanup, so it settles
+// nothing.
 func (b *Broker) forgetSettledSuspects(candidates []*readoptCandidate, owed map[string]bool, notes map[string]uint64, full bool) {
 	read := make(map[string]bool, len(candidates))
+	unparsed := map[string]bool{}
+
 	for _, candidate := range candidates {
 		read[candidate.instanceID] = true
+
+		if candidate.exists && !candidate.parsed {
+			unparsed[candidate.instanceID] = true
+		}
 	}
 
 	settled := func(instanceID string) bool {
-		return !owed[instanceID] && (full || read[instanceID])
+		return !owed[instanceID] && !unparsed[instanceID] && (full || read[instanceID])
 	}
 
 	for instanceID, note := range notes {

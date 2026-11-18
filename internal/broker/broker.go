@@ -4358,7 +4358,16 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploy
 		return
 	}
 
-	recorded, owed := b.recordOwesCleanup(cleanupCtx, instanceID, deploymentName, logger)
+	// A record that could not be read says nothing about the refusal an
+	// operator may be looking at, so its row stays. Only a record read
+	// and found to owe no cleanup takes the row off the overview.
+	recorded, owed, err := b.recordOwesCleanup(cleanupCtx, instanceID, deploymentName, logger)
+	if err != nil {
+		logger.Error("Refusing to delete deployment %s: %s", deploymentName, err)
+
+		return
+	}
+
 	if !owed {
 		b.forgetCleanupAttention(instanceID)
 
@@ -4390,33 +4399,32 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploy
 // recordOwesCleanup reads the instance's record, under the settle lock its
 // caller holds, and reports whether it holds a provision recorded as
 // failed that still owes its cleanup, which is the only record a failed
-// deployment may be deleted for. Every other answer is logged as a
-// refusal to delete deploymentName.
-func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (recordedOperation, bool) {
+// deployment may be deleted for. Every other record it read is logged as
+// a refusal to delete deploymentName. A record it could not read returns
+// the error, because whether the cleanup is owed is then unknown.
+func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (recordedOperation, bool, error) {
 	readCtx, cancelRead := recordContext(ctx)
 	defer cancelRead()
 
 	recorded, err := b.readRecordedOperation(readCtx, instanceID)
 	if err != nil {
-		logger.Error("Refusing to delete deployment %s: %s", deploymentName, err)
-
-		return recordedOperation{}, false
+		return recordedOperation{}, false, err
 	}
 
 	if recorded.Action != operationTypeProvision || recorded.State != recordedStateFailed {
 		logger.Error("Refusing to delete deployment %s: the record of instance %s holds a %q %s, and only a failed provision's deployment is deleted",
 			deploymentName, instanceID, recorded.Action, recorded.State)
 
-		return recordedOperation{}, false
+		return recordedOperation{}, false, nil
 	}
 
 	if !recorded.CleanupPending {
 		logger.Debug("Deployment %s is not deleted: the failed provision of instance %s owes no cleanup, because one already ran", deploymentName, instanceID)
 
-		return recordedOperation{}, false
+		return recordedOperation{}, false, nil
 	}
 
-	return recorded, true
+	return recorded, true, nil
 }
 
 // cleanupOwnsDeployment returns the deployment a cleanup may delete for
@@ -4439,6 +4447,10 @@ func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentNa
 func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (string, bool) {
 	recordedName := recorded.DeploymentName
 
+	// unnamed holds why the record's name could not be recovered, when it
+	// could not.
+	unnamed := nameRecovery{refusal: "Neither the record nor an index entry names a deployment for this instance, so the broker deletes nothing"}
+
 	if recordedName == "" {
 		readCtx, cancelRead := recordContext(ctx)
 		instance, indexed, err := b.Vault.FindInstance(readCtx, instanceID)
@@ -4454,7 +4466,8 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 		if indexed && instance != nil {
 			recordedName = instance.DeploymentNameFor(instanceID)
 		} else {
-			recordedName = b.recoverCleanupDeployment(ctx, instanceID, recorded, logger)
+			unnamed = b.recoverCleanupDeployment(ctx, instanceID, recorded, logger)
+			recordedName = unnamed.name
 		}
 	}
 
@@ -4466,7 +4479,13 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 
 	switch {
 	case recordedName == "":
-		reason = "Neither the record, an index entry, nor the director's task for the provision names a deployment for this instance, so the broker deletes nothing"
+		reason = unnamed.refusal
+
+		// The row names the deployment the provision's task points at,
+		// when it points at one, since that is the one an operator checks.
+		if unnamed.deployment != "" {
+			deploymentName = unnamed.deployment
+		}
 	case !mintedFor(deploymentName, instanceID):
 		reason = fmt.Sprintf("Deployment %s was not named for this instance, so the broker does not delete it", deploymentName)
 	case recordedName != deploymentName:
@@ -4483,26 +4502,46 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 	return "", false
 }
 
+// nameRecovery is what recoverCleanupDeployment found. name is the
+// recovered deployment name. When it is empty, refusal says why for the
+// overview, and deployment is the one the provision's task names, when
+// the task was found and names one.
+type nameRecovery struct {
+	name       string
+	refusal    string
+	deployment string
+}
+
 // recoverCleanupDeployment recovers the deployment name of a failed
 // provision whose record names none and whose instance has no index entry,
 // from the director's task with the record's context ID, and writes it
-// into the record. It returns the empty name when no task is found, the
-// task's deployment was not minted for the instance, or the write did not
-// land.
-func (b *Broker) recoverCleanupDeployment(ctx context.Context, instanceID string, recorded recordedOperation, logger logger.Logger) string {
+// into the record. It recovers no name when the record holds no context
+// ID, the director could not be asked, it has no task with the context
+// ID, the task's deployment was not minted for the instance, or the write
+// did not land, and each of these gives the refusal its own reason. A
+// reason holds no error text, so a refusal that repeats keeps the time
+// its row was first noted.
+func (b *Broker) recoverCleanupDeployment(ctx context.Context, instanceID string, recorded recordedOperation, logger logger.Logger) nameRecovery {
 	if recorded.ContextID == "" {
-		return ""
+		return nameRecovery{refusal: "Neither the record nor an index entry names a deployment for this instance, and the record holds no context ID to find the provision's task by, so the broker deletes nothing"}
 	}
 
 	task, err := b.BOSH.FindTaskByContextID(ctx, recorded.ContextID)
 	if err != nil {
 		logger.Warning("Instance %s: its record names no deployment, and the director's task with context ID %s could not be looked up: %s", instanceID, recorded.ContextID, err)
 
-		return ""
+		return nameRecovery{refusal: fmt.Sprintf("Neither the record nor an index entry names a deployment for this instance, and the director could not be asked for the provision's task with context ID %s, so the broker deletes nothing until it can", recorded.ContextID)}
 	}
 
-	if task == nil || !mintedFor(task.Deployment, instanceID) {
-		return ""
+	if task == nil {
+		return nameRecovery{refusal: fmt.Sprintf("Neither the record nor an index entry names a deployment for this instance, and the director has no task with context ID %s, so the broker deletes nothing", recorded.ContextID)}
+	}
+
+	if !mintedFor(task.Deployment, instanceID) {
+		return nameRecovery{
+			refusal:    fmt.Sprintf("Task %d with context ID %s names deployment %s, which was not named for this instance, so the broker deletes nothing", task.ID, recorded.ContextID, task.Deployment),
+			deployment: task.Deployment,
+		}
 	}
 
 	writeCtx, cancelWrite := recordContext(ctx)
@@ -4513,12 +4552,15 @@ func (b *Broker) recoverCleanupDeployment(ctx context.Context, instanceID string
 		logger.Error("Instance %s: task %d with context ID %s names deployment %s, which was not written into the record, so nothing is deleted yet: %s",
 			instanceID, task.ID, recorded.ContextID, task.Deployment, err)
 
-		return ""
+		return nameRecovery{
+			refusal:    fmt.Sprintf("Task %d with context ID %s names deployment %s, and the name could not be written into the record, so the broker deletes nothing until it is", task.ID, recorded.ContextID, task.Deployment),
+			deployment: task.Deployment,
+		}
 	}
 
 	logger.Info("Instance %s: its record named no deployment, so the name %s was recovered from task %d with context ID %s", instanceID, task.Deployment, task.ID, recorded.ContextID)
 
-	return task.Deployment
+	return nameRecovery{name: task.Deployment}
 }
 
 // deleteFailedDeployment sends the delete of a failed deployment when the
