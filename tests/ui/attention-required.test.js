@@ -139,3 +139,37 @@ t('page load makes one attention request and the instances screen shares it',asy
   expect(column.sort()).toEqual(['0','0','1']);
  }finally{w.close();}
 });
+
+// A plan whose parameter schema Cloud Controller would refuse is published
+// without it, and the box names the plan and the reason, so the schema's
+// absence is never silent. The row holds off the all-clear.
+const refusedPlans=(reason)=>({...quiet(),plans:{
+ p1:{name:'small',service:{name:'Redis'},schema_refused:reason},
+ p2:{name:'large',service:{name:'Redis'}}}});
+
+test('a plan published without its schema is listed with the reason, and nothing is called clear',async()=>{
+ const {w,d}=boot({routes:[inventory([]),...settled]});
+ try{
+  const reason='the parameter schema refers to a schema outside itself: $ref "https://example.com/a.json"';
+  const host=mount(w,d,refusedPlans(reason));
+  await w.__T.refreshAttentionRequired(host,refusedPlans(reason));
+  const plans=section(host).querySelector('[data-attention="plan-schemas"]');
+  expect(plans).not.toBeNull();
+  expect(plans.getAttribute('data-tone')).toBe('warning');
+  expect(plans.textContent).toContain('1 plan published without its parameter schema');
+  expect(plans.textContent).toContain('Redis small');
+  expect(plans.textContent).toContain(reason);
+  expect(plans.textContent).not.toContain('large');
+  expect(section(host).textContent).not.toContain('Nothing needs attention');
+ }finally{w.close();}
+});
+
+test('a refused schema reason and plan name are escaped in the box',()=>{
+ const {w,d}=boot();try{
+  const evil='"><img src=x onerror=alert(1)>';
+  const input=refusedPlans(evil); input.plans.p1.name=evil;
+  const host=mount(w,d,input);
+  expect(section(host).querySelector('img')).toBeNull();
+  expect(section(host).querySelector('[data-attention="plan-schemas"]').textContent).toContain(evil);
+ }finally{w.close();}
+});

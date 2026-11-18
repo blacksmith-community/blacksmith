@@ -220,10 +220,13 @@ func requirePlan(t *testing.T, got, want services.Plan) {
 //nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestReadPlanDecodesEveryField(t *testing.T) {
 	// The nested plan's manifest is never decoded, and a plan's service
-	// is the one service.yml gives it.
+	// is the one service.yml gives it. SchemaRefused is never read from
+	// plan.yml, since the catalog sets it when it refuses a schema.
 	skip := map[string]bool{
-		"Plan.Service.Plans[].Manifest": true,
-		"Plan.Service.Plans[].Service":  true,
+		"Plan.Service.Plans[].Manifest":      true,
+		"Plan.Service.Plans[].Service":       true,
+		"Plan.SchemaRefused":                 true,
+		"Plan.Service.Plans[].SchemaRefused": true,
 	}
 
 	t.Run("without credentials.yml", func(t *testing.T) {

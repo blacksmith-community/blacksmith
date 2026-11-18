@@ -101,6 +101,15 @@ func TestCatalog_PublishesOnlyValidDraft4Schemas(t *testing.T) {
 			t.Errorf("no error line names forge %s and plan %s", schemaForge, name)
 		}
 	}
+
+	// The plan keeps the reason its schema was refused, which /b/status
+	// reports for the Attention required box.
+	for _, plan := range service.Plans {
+		refused := plan.SchemaRefused != ""
+		if want := !schemaPlans()[plan.Name].published; refused != want {
+			t.Errorf("plan %s records a refused schema: %v (%q), want %v", plan.Name, refused, plan.SchemaRefused, want)
+		}
+	}
 }
 
 // hasErrorNaming reports whether an error line names the forge and plan.

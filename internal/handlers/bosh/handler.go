@@ -330,6 +330,10 @@ func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Reques
 				"releases":    planReleaseNames(plan),
 			}
 
+			if plan.SchemaRefused != "" {
+				planSummary["schema_refused"] = plan.SchemaRefused
+			}
+
 			if plan.Service != nil {
 				planSummary["service"] = map[string]interface{}{
 					"id":          plan.Service.ID,

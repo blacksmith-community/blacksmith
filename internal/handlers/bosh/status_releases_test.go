@@ -83,9 +83,11 @@ type statusConfig struct {
 
 func (statusConfig) GetEnvironment() string { return "test" }
 
-// planBroker serves one plan whose manifest declares the releases given.
+// planBroker serves one plan whose manifest declares the releases given,
+// and whose parameter schema was refused for the reason given, if any.
 type planBroker struct {
 	releases []string
+	refused  string
 }
 
 func (planBroker) IsBroker() bool { return true }
@@ -102,6 +104,8 @@ func (b planBroker) GetPlans() map[string]services.Plan {
 		ID:       redisPlan,
 		Name:     "standalone",
 		Manifest: map[string]interface{}{"releases": releases},
+
+		SchemaRefused: b.refused,
 	}}
 }
 

@@ -115,6 +115,7 @@ $.Plans[0].Free	*bool	null
 $.Plans[0].PlanUpdateable	*bool	null
 $.Plans[0].UpdateTo	[]string	null
 $.Plans[0].Schemas	*services.Schemas	null
+$.Plans[0].SchemaRefused	string	""
 $.Plans[0].EphemeralUpdateOK	bool	false
 $.Plans[0].MaintenanceInfo	*services.MaintenanceInfo	null
 $.Plans[1].ID	string	"valkey-standalone"
@@ -218,6 +219,7 @@ $.Plans[1].Free	*bool	null
 $.Plans[1].PlanUpdateable	*bool	null
 $.Plans[1].UpdateTo	[]string	null
 $.Plans[1].Schemas	*services.Schemas	null
+$.Plans[1].SchemaRefused	string	""
 $.Plans[1].EphemeralUpdateOK	bool	false
 $.Plans[1].MaintenanceInfo	*services.MaintenanceInfo	null
 $.PlanUpdateable	bool	true

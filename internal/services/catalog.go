@@ -75,6 +75,11 @@ type Plan struct {
 	// from the schemas block of plan.yml or from schema.json beside it.
 	Schemas *Schemas `json:"schemas,omitempty" yaml:"schemas"`
 
+	// SchemaRefused says why the plan's parameter schema was left out of
+	// the catalog, and is empty when it was not. /b/status reports it,
+	// and the Attention required box lists the plan.
+	SchemaRefused string `json:"-" yaml:"-"`
+
 	// EphemeralUpdateOK lets a plan whose instance groups keep no
 	// persistent disk take part in a plan change.
 	EphemeralUpdateOK bool `json:"ephemeral_update_ok,omitempty" yaml:"ephemeral_update_ok"`
@@ -489,7 +494,8 @@ func ReadPlans(dir string, service Service) ([]Plan, error) {
 // when it is not a schema Cloud Controller accepts. Cloud Controller
 // refuses the whole catalog over one bad schema, which would block every
 // service the broker offers, so the plan is still published without its
-// schema, and the error names the forge and the plan.
+// schema, the error names the forge and the plan, and the plan keeps the
+// reason so an operator sees it beyond the log.
 func dropInvalidSchema(plan *Plan, service Service, log logger.Logger) {
 	if plan.Schemas == nil || plan.Schemas.Parameters == nil {
 		return
@@ -500,6 +506,7 @@ func dropInvalidSchema(plan *Plan, service Service, log logger.Logger) {
 		log.Error("forge %s plan %s publishes no parameter schema, because its schema is refused: %s", service.Name, plan.Name, err)
 
 		plan.Schemas = nil
+		plan.SchemaRefused = err.Error()
 	}
 }
 
