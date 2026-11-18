@@ -21,11 +21,14 @@ func TestUpdateLogsEachPlanUnderItsOwnLabel(t *testing.T) {
 	logger.Set(capture)
 	t.Cleanup(func() { logger.Set(previous) })
 
-	_, _, _ = (&broker.Broker{}).Update(t.Context(), "instance-1", osbapi.UpdateRequest{
+	_, _, err := (&broker.Broker{}).Update(t.Context(), "instance-1", osbapi.UpdateRequest{
 		ServiceID:      "service-1",
 		PlanID:         "plan-requested",
 		PreviousValues: &osbapi.PreviousValues{PlanID: "plan-before"},
 	}, true)
+	if err == nil {
+		t.Error("expected the update stub to refuse the request")
+	}
 
 	output := capture.output()
 

@@ -625,6 +625,7 @@ var _ = Describe("Detached broker work", func() {
 		}
 
 		started := time.Now()
+
 		brokerInstance.CleanupFailedDeployment(ctx, "provision", deploymentName)
 
 		mu.Lock()
@@ -657,6 +658,7 @@ var _ = Describe("Detached broker work", func() {
 		cancel()
 
 		started := time.Now()
+
 		brokerInstance.CleanupFailedDeployment(callerCtx, "provision", deploymentName)
 
 		mu.Lock()

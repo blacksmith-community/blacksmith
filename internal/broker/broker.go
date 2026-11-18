@@ -898,6 +898,7 @@ func (b *Broker) Update(
 	if details.PreviousValues != nil {
 		prevPlanID = details.PreviousValues.PlanID
 	}
+
 	logger.Debug("Update request - InstanceID: %s, ServiceID: %s, NewPlanID: %s, PreviousPlanID: %s",
 		instanceID, details.ServiceID, details.PlanID, prevPlanID)
 

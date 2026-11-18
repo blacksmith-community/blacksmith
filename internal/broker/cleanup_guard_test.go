@@ -17,7 +17,7 @@ func TestCleanupFailedDeployment_RefusesNonProvision(t *testing.T) {
 
 	const deploymentName = "redis-standalone-cleanup-guard"
 
-	for _, action := range []string{"update", "deprovision", "", "unknown"} {
+	for _, action := range []string{"update", outcomeDeprovision, "", "unknown"} {
 		t.Run("refuses "+action, func(t *testing.T) {
 			t.Parallel()
 
