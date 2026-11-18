@@ -292,7 +292,7 @@ func readoptListOnce(ctx context.Context, store readoptStore) ([]*readoptCandida
 			instanceID:     instanceID,
 			indexed:        true,
 			entry:          entry,
-			deploymentName: indexEntryDeploymentName(instanceID, entry),
+			deploymentName: vaultPkg.EntryDeploymentName(instanceID, entry),
 		})
 	}
 

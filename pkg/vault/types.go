@@ -51,12 +51,36 @@ func isTombstone(status string, deleted bool) bool {
 }
 
 // DeploymentNameFor returns the deployment name the instance's entry
-// records, and builds it from the plan ID and instanceID only when the entry
+// records, and mints it from the plan ID and instanceID only when the entry
 // records none, as an entry indexed before the field existed does.
 func (instance *Instance) DeploymentNameFor(instanceID string) string {
 	if instance.DeploymentName != "" {
 		return instance.DeploymentName
 	}
 
-	return instance.PlanID + "-" + instanceID
+	return MintDeploymentName(instance.PlanID, instanceID)
+}
+
+// EntryDeploymentName returns the deployment name a raw index entry
+// records, and mints it from the entry's plan ID and instanceID only when
+// the entry records none, by the same rule as Instance.DeploymentNameFor.
+func EntryDeploymentName(instanceID string, entry map[string]interface{}) string {
+	if name, _ := entry["deployment_name"].(string); name != "" {
+		return name
+	}
+
+	planID, _ := entry["plan_id"].(string)
+
+	return MintDeploymentName(planID, instanceID)
+}
+
+// MintDeploymentName names the deployment a provision of instanceID under
+// planID creates. A deployment keeps the name it was created under for
+// life, and BOSH can't rename one, so after a plan change the name still
+// starts with the old plan. Anything that looks an existing deployment up
+// reads the name the instance's index entry records, and mints one only
+// for an entry that records none or for an instance the index doesn't
+// have, where the plan is the only thing that can name it.
+func MintDeploymentName(planID, instanceID string) string {
+	return planID + "-" + instanceID
 }

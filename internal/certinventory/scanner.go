@@ -20,6 +20,7 @@ import (
 	"blacksmith/internal/credhub"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/upgrade/certscripts"
+	vaultPkg "blacksmith/pkg/vault"
 )
 
 // Deadlines for one scan. The instance deadline comes from the settings;
@@ -246,7 +247,7 @@ func deploymentOf(ref InstanceRef) string {
 		return ref.Deployment
 	}
 
-	return ref.PlanID + "-" + ref.ID
+	return vaultPkg.MintDeploymentName(ref.PlanID, ref.ID)
 }
 
 func (s *Scanner) scanInstance(ctx context.Context, ref InstanceRef, st Settings) (InstanceScan, error) {

@@ -19,6 +19,7 @@ import (
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/config"
 	"blacksmith/internal/ownership"
+	vaultPkg "blacksmith/pkg/vault"
 )
 
 const (
@@ -348,7 +349,7 @@ func (m *Manager) previewCommandInstance(ctx context.Context, instanceID string)
 	inst.Plan, _ = record["plan_id"].(string)
 
 	if inst.Deployment == "" && inst.Plan != "" {
-		inst.Deployment = inst.Plan + "-" + instanceID
+		inst.Deployment = vaultPkg.MintDeploymentName(inst.Plan, instanceID)
 	}
 
 	if inst.Deployment == "" {

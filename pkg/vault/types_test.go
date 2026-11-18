@@ -49,6 +49,50 @@ func TestDeploymentNameForPrefersTheRecordedName(t *testing.T) {
 	}
 }
 
+// A provision mints its deployment's name from the plan and the instance.
+func TestMintDeploymentNameJoinsPlanAndInstance(t *testing.T) {
+	t.Parallel()
+
+	if got := vault.MintDeploymentName("redis-standalone", "instance-1"); got != "redis-standalone-instance-1" {
+		t.Errorf("MintDeploymentName = %q, want redis-standalone-instance-1", got)
+	}
+}
+
+// A raw index entry names its deployment by the same rule as a decoded one.
+func TestEntryDeploymentNameMatchesTheDecodedRule(t *testing.T) {
+	t.Parallel()
+
+	const (
+		instanceID = "instance-1"
+		planID     = "large"
+		mintedName = planID + "-" + instanceID
+		nameKey    = "deployment_name"
+		planKey    = "plan_id"
+	)
+
+	cases := map[string]struct {
+		entry map[string]interface{}
+		want  string
+	}{
+		"a recorded name":  {map[string]interface{}{planKey: planID, nameKey: "small-instance-1"}, "small-instance-1"},
+		"no recorded name": {map[string]interface{}{planKey: planID}, mintedName},
+		"an empty name":    {map[string]interface{}{planKey: planID, nameKey: ""}, mintedName},
+		"a name not text":  {map[string]interface{}{planKey: planID, nameKey: 7}, mintedName},
+		"nothing recorded": {map[string]interface{}{}, "-instance-1"},
+		"a nil entry":      {nil, "-instance-1"},
+	}
+
+	for name, entryCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := vault.EntryDeploymentName(instanceID, entryCase.entry); got != entryCase.want {
+				t.Errorf("EntryDeploymentName = %q, want %q", got, entryCase.want)
+			}
+		})
+	}
+}
+
 // An index entry the reconciler marked deleted is a tombstone, by either of
 // the two marks it writes, and every other entry is live.
 func TestInstanceIsATombstoneWhenMarkedDeleted(t *testing.T) {

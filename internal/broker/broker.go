@@ -457,7 +457,7 @@ func (b *Broker) Provision(
 	// provision must not run alongside a deprovision of the same ID.
 	claim := &operationClaim{operation: operationTypeProvision, request: copyProvisionRequest(details), claimed: time.Now()}
 
-	held, claimed, err := b.claimOperation(instanceID, details.PlanID+"-"+instanceID, claim)
+	held, claimed, err := b.claimOperation(instanceID, vaultPkg.MintDeploymentName(details.PlanID, instanceID), claim)
 	if err != nil {
 		return osbapi.ProvisionResponse{}, false, guardBusyAnswer(instanceID, operationTypeProvision, err, logger)
 	}
@@ -1180,7 +1180,7 @@ func (b *Broker) SetTaskWaiters(waiters TaskWaiters) {
 // ConcurrencyError, which the platform retries, rather than reserve a
 // deployment the delete may not name.
 func (b *Broker) deprovisionDeployment(ctx context.Context, instanceID, planID string, logger logger.Logger) (string, error) {
-	fallback := planID + "-" + instanceID
+	fallback := vaultPkg.MintDeploymentName(planID, instanceID)
 
 	if b.Guard == nil || b.Vault == nil {
 		return fallback, nil
@@ -1197,7 +1197,7 @@ func (b *Broker) deprovisionDeployment(ctx context.Context, instanceID, planID s
 		return fallback, nil
 	}
 
-	return deploymentNameForInstance(instanceID, instance), nil
+	return instance.DeploymentNameFor(instanceID), nil
 }
 
 // storedTaskWaiting reports the stored task that waits to reserve the
@@ -1477,7 +1477,7 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 // beside a second deployment. An entry with neither a name nor a plan ID
 // names no deployment of its own.
 func (b *Broker) refuseProvisionOverDeployments(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, entry map[string]interface{}, logger logger.Logger) error {
-	requested := details.PlanID + "-" + instanceID
+	requested := vaultPkg.MintDeploymentName(details.PlanID, instanceID)
 
 	err := b.refuseProvisionOverDeployment(ctx, instanceID, requested, logger)
 	if err != nil {
@@ -1491,7 +1491,7 @@ func (b *Broker) refuseProvisionOverDeployments(ctx context.Context, instanceID 
 		return nil
 	}
 
-	entryDeployment := indexEntryDeploymentName(instanceID, entry)
+	entryDeployment := vaultPkg.EntryDeploymentName(instanceID, entry)
 	if entryDeployment == requested {
 		return nil
 	}
@@ -1562,10 +1562,9 @@ func (b *Broker) provisionDifference(ctx context.Context, instanceID string, ent
 		}
 	}
 
-	deploymentName, _ := entry["deployment_name"].(string)
-	if deploymentName == "" {
-		deploymentName = details.PlanID + "-" + instanceID
-	}
+	// The entry's plan matches the request's here, so an entry that records
+	// no name names the deployment the request's plan does.
+	deploymentName := vaultPkg.EntryDeploymentName(instanceID, entry)
 
 	var record map[string]interface{}
 
@@ -2042,7 +2041,7 @@ func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, 
 		return instance, nil
 	}
 
-	deploymentName := details.PlanID + "-" + instanceID
+	deploymentName := vaultPkg.MintDeploymentName(details.PlanID, instanceID)
 
 	err = b.deploymentGone(recordCtx, instanceID, deploymentName, logger)
 	if err != nil {
@@ -2087,7 +2086,7 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 		return nil
 	}
 
-	deploymentName := details.PlanID + "-" + instanceID
+	deploymentName := vaultPkg.MintDeploymentName(details.PlanID, instanceID)
 
 	err = b.deploymentGone(readCtx, instanceID, deploymentName, logger)
 	if err != nil {
@@ -2197,13 +2196,13 @@ func (b *Broker) rejectIfOperationInProgress(ctx context.Context, instanceID, pl
 
 		deploymentName := superseded.DeploymentName
 		if deploymentName == "" {
-			deploymentName = planID + "-" + instanceID
+			deploymentName = vaultPkg.MintDeploymentName(planID, instanceID)
 		}
 
 		return superseded, b.rejectIfDeploymentBusy(ctx, instanceID, deploymentName, logger)
 	}
 
-	return superseded, b.rejectIfDeploymentBusy(ctx, instanceID, deploymentNameForInstance(instanceID, instance), logger)
+	return superseded, b.rejectIfDeploymentBusy(ctx, instanceID, instance.DeploymentNameFor(instanceID), logger)
 }
 
 // rejectIfDeploymentBusy returns the OSB concurrency error when BOSH still
@@ -2224,17 +2223,6 @@ func (b *Broker) rejectIfDeploymentBusy(ctx context.Context, instanceID, deploym
 	}
 
 	return nil
-}
-
-// deploymentNameForInstance prefers the deployment name recorded at provision
-// time. Deriving it from PlanID is only a fallback for instances indexed before
-// that field existed, because the reconciler can rewrite PlanID afterwards.
-func deploymentNameForInstance(instanceID string, instance *vaultPkg.Instance) string {
-	if instance.DeploymentName != "" {
-		return instance.DeploymentName
-	}
-
-	return instance.PlanID + "-" + instanceID
 }
 
 // storeProvisionRequestedTimestamp writes provision_requested_at into the
@@ -2707,7 +2695,7 @@ func (b *Broker) unknownOutcomeWithoutIndexEntry(ctx context.Context, instanceID
 		}, nil
 	}
 
-	deploymentName := deploymentNameForInstance(instanceID, &vaultPkg.Instance{PlanID: details.PlanID, DeploymentName: recorded.DeploymentName})
+	deploymentName := (&vaultPkg.Instance{PlanID: details.PlanID, DeploymentName: recorded.DeploymentName}).DeploymentNameFor(instanceID)
 
 	return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
 }
@@ -2772,7 +2760,7 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 		}, nil
 	}
 
-	deploymentName := deploymentNameForInstance(instanceID, &vaultPkg.Instance{PlanID: planID, DeploymentName: recorded.DeploymentName})
+	deploymentName := (&vaultPkg.Instance{PlanID: planID, DeploymentName: recorded.DeploymentName}).DeploymentNameFor(instanceID)
 
 	err := b.deploymentGone(ctx, instanceID, deploymentName, logger)
 
@@ -2821,26 +2809,10 @@ func (b *Broker) validateAndGetDeploymentName(instanceID string, serviceInstance
 
 	logger.Debug("Instance %s - plan_id: %s", instanceID, plan)
 
-	deploymentName := indexEntryDeploymentName(instanceID, serviceData)
+	deploymentName := vaultPkg.EntryDeploymentName(instanceID, serviceData)
 	logger.Debug("Looking for deployment: %s", deploymentName)
 
 	return deploymentName, nil
-}
-
-// indexEntryDeploymentName returns the deployment name an index entry
-// records, and builds it from the entry's plan ID and the instance ID only
-// when the entry records none, as deploymentNameForInstance does for a
-// decoded entry. The reconciler can rewrite the plan ID after the deployment
-// was created, and a name built from it then names a deployment that does
-// not exist.
-func indexEntryDeploymentName(instanceID string, entry map[string]interface{}) string {
-	if name, _ := entry["deployment_name"].(string); name != "" {
-		return name
-	}
-
-	planID, _ := entry["plan_id"].(string)
-
-	return planID + "-" + instanceID
 }
 
 // isDeletedTombstone reports whether an index entry is a tombstone left by the
@@ -3052,7 +3024,7 @@ func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, de
 }
 
 func (b *Broker) storeInstanceData(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, logger logger.Logger) (string, error) {
-	deploymentName := fmt.Sprintf("%s-%s", details.PlanID, instanceID)
+	deploymentName := vaultPkg.MintDeploymentName(details.PlanID, instanceID)
 	logger.Debug("deployment name: %s", deploymentName)
 
 	// Store deployment details
@@ -3600,7 +3572,7 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 	// the reconciler can rewrite PlanID, and a plan ID that extends another one
 	// (valkey-standalone vs valkey-standalone-classic) then yields the name of a
 	// deployment that was never created, so LastOperation polls forever.
-	deploymentName := deploymentNameForInstance(instanceID, instance)
+	deploymentName := instance.DeploymentNameFor(instanceID)
 	if instance.DeploymentName == "" {
 		logger.Debug("no deployment_name recorded for instance %s; derived %s from plan ID", instanceID, deploymentName)
 	}

@@ -688,7 +688,7 @@ func (m *Manager) buildInstanceList(ctx context.Context, instanceIDs []string) (
 
 			// If deployment_name is not set, try to construct it from plan_id + instance_id
 			if instance.DeploymentName == "" && instance.PlanID != "" {
-				instance.DeploymentName = instance.PlanID + "-" + instanceID
+				instance.DeploymentName = vaultPkg.MintDeploymentName(instance.PlanID, instanceID)
 			}
 		}
 

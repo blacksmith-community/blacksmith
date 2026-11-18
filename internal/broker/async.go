@@ -277,7 +277,7 @@ func (p *provisioningPhase) setupBOSHDefaults(ctx context.Context, plan services
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Setting up deployment defaults", 0, p.params, p.logger)
 
 	defaults := make(map[string]interface{})
-	defaults["name"] = plan.ID + "-" + p.instanceID
+	defaults["name"] = vaultPkg.MintDeploymentName(plan.ID, p.instanceID)
 	p.params["instance_id"] = p.instanceID
 
 	// Get BOSH director UUID
@@ -437,7 +437,7 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 		return false
 	}
 
-	deploymentName := plan.ID + "-" + p.instanceID
+	deploymentName := vaultPkg.MintDeploymentName(plan.ID, p.instanceID)
 
 	// Only the deploy request carries the context ID, so a lookup by the ID
 	// finds the deploy task and nothing else the provision started.
@@ -1182,7 +1182,7 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	// sent, so a restart at any point leaves an ID to look the delete task
 	// up by.
 	contextID := uuid.NewString()
-	deploymentName := deploymentNameForInstance(instanceID, instance)
+	deploymentName := instance.DeploymentNameFor(instanceID)
 
 	// Track initial state
 	recordCtx, cancelRecord := recordContext(ctx)

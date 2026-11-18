@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
+	vaultpkg "blacksmith/pkg/vault"
 )
 
 // OrphanSweepMinimumAge is how old an index entry must be before the sweep
@@ -344,7 +345,7 @@ func indexEntryDeploymentName(instanceID string, dataMap map[string]interface{})
 	}
 
 	if planID, ok := dataMap["plan_id"].(string); ok && planID != "" {
-		return planID + "-" + instanceID
+		return vaultpkg.MintDeploymentName(planID, instanceID)
 	}
 
 	return ""
