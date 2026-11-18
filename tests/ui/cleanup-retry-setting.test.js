@@ -54,3 +54,16 @@ t('an empty cleanup retry interval is refused before any request',async()=>{
  expect(sent).toEqual([]);
  expect(s.host.querySelector('#feedback-cleanup-retry-interval').textContent).toBe('Enter an interval from 1m to 6h, for example 15m or 1h.');
 });
+
+t('every Settings control has its own keep key',async()=>{
+ const s=await screen([]);
+ expect(s.host.querySelector('#settings-cleanup-retry-interval').dataset.keepKey).toBe('settings:cleanup-retry-interval');
+ expect(s.host.querySelector('#apply-cleanup-retry-interval').dataset.keepKey).toBe('settings:apply-cleanup-retry-interval');
+ expect(s.host.querySelector('#settings-errand-timeout').dataset.keepKey).toBe('settings:errand-timeout');
+ expect(s.host.querySelector('#apply-errand-timeout').dataset.keepKey).toBe('settings:apply-errand-timeout');
+ const controls=[...s.host.querySelectorAll('input, select, button')];
+ expect(controls.length).toBeGreaterThan(0);
+ expect(controls.filter((node)=>!node.dataset.keepKey).map((node)=>node.id)).toEqual([]);
+ const keys=controls.map((node)=>node.dataset.keepKey);
+ expect(new Set(keys).size).toBe(keys.length);
+});

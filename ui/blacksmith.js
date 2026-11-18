@@ -10989,8 +10989,8 @@
         <div class="settings-row">
           <label class="settings-label" for="settings-max-versions">Vault Max Versions</label>
           <div class="settings-input-group">
-            <input type="number" id="settings-max-versions" class="settings-input" value="${escapeAttribute(String(maxVersions))}" min="0" max="1000" step="1" placeholder="0 = unlimited" aria-describedby="help-max-versions feedback-max-versions" />
-            <button type="button" id="apply-max-versions" class="settings-apply-btn" aria-label="Apply Vault maximum versions">Apply</button>
+            <input type="number" id="settings-max-versions" class="settings-input" data-keep-key="settings:max-versions" value="${escapeAttribute(String(maxVersions))}" min="0" max="1000" step="1" placeholder="0 = unlimited" aria-describedby="help-max-versions feedback-max-versions" />
+            <button type="button" id="apply-max-versions" class="settings-apply-btn" data-keep-key="settings:apply-max-versions" aria-label="Apply Vault maximum versions">Apply</button>
           </div>
           <span id="help-max-versions" class="settings-hint">Controls how many versions are kept per secret path (0 = unlimited). Only affects future writes.</span>
           <span id="feedback-max-versions" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
@@ -10998,8 +10998,8 @@
         <div class="settings-row">
           <label class="settings-label" for="settings-reconciler-interval">Reconciler Interval</label>
           <div class="settings-input-group">
-            <input type="text" id="settings-reconciler-interval" class="settings-input" value="${escapeAttribute(String(reconcilerInterval))}" placeholder="e.g. 1h, 30m, 5m" aria-describedby="help-reconciler-interval feedback-reconciler-interval" />
-            <button type="button" id="apply-reconciler-interval" class="settings-apply-btn" aria-label="Apply reconciler interval">Apply</button>
+            <input type="text" id="settings-reconciler-interval" class="settings-input" data-keep-key="settings:reconciler-interval" value="${escapeAttribute(String(reconcilerInterval))}" placeholder="e.g. 1h, 30m, 5m" aria-describedby="help-reconciler-interval feedback-reconciler-interval" />
+            <button type="button" id="apply-reconciler-interval" class="settings-apply-btn" data-keep-key="settings:apply-reconciler-interval" aria-label="Apply reconciler interval">Apply</button>
           </div>
           <span id="help-reconciler-interval" class="settings-hint">How often the reconciler syncs BOSH deployments with Vault (minimum 10s). Persisted across restarts.</span>
           <span id="feedback-reconciler-interval" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
@@ -11007,8 +11007,8 @@
         <div class="settings-row">
           <label class="settings-label" for="settings-errand-timeout">Errand Timeout</label>
           <div class="settings-input-group">
-            <input type="text" id="settings-errand-timeout" class="settings-input" value="${escapeAttribute(String(errandTimeout))}" placeholder="e.g. 30m, 1h" aria-describedby="help-errand-timeout feedback-errand-timeout" />
-            <button type="button" id="apply-errand-timeout" class="settings-apply-btn" aria-label="Apply errand timeout">Apply</button>
+            <input type="text" id="settings-errand-timeout" class="settings-input" data-keep-key="settings:errand-timeout" value="${escapeAttribute(String(errandTimeout))}" placeholder="e.g. 30m, 1h" aria-describedby="help-errand-timeout feedback-errand-timeout" />
+            <button type="button" id="apply-errand-timeout" class="settings-apply-btn" data-keep-key="settings:apply-errand-timeout" aria-label="Apply errand timeout">Apply</button>
           </div>
           <span id="help-errand-timeout" class="settings-hint">The longest the broker waits for a BOSH errand to finish, above zero. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(errandSource)}</span>
           <span id="feedback-errand-timeout" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
@@ -11028,8 +11028,8 @@
         <div class="settings-row">
           <label class="settings-label" for="settings-cleanup-retry-interval">Cleanup Retry Interval</label>
           <div class="settings-input-group">
-            <input type="text" id="settings-cleanup-retry-interval" class="settings-input" value="${escapeAttribute(String(cleanupRetry))}" placeholder="e.g. 15m, 1h" aria-describedby="help-cleanup-retry-interval feedback-cleanup-retry-interval" />
-            <button type="button" id="apply-cleanup-retry-interval" class="settings-apply-btn" aria-label="Apply cleanup retry interval">Apply</button>
+            <input type="text" id="settings-cleanup-retry-interval" class="settings-input" data-keep-key="settings:cleanup-retry-interval" value="${escapeAttribute(String(cleanupRetry))}" placeholder="e.g. 15m, 1h" aria-describedby="help-cleanup-retry-interval feedback-cleanup-retry-interval" />
+            <button type="button" id="apply-cleanup-retry-interval" class="settings-apply-btn" data-keep-key="settings:apply-cleanup-retry-interval" aria-label="Apply cleanup retry interval">Apply</button>
           </div>
           <span id="help-cleanup-retry-interval" class="settings-hint">How often the broker tries again to delete the deployment of a failed provision whose delete did not go through, from 1m to 6h. An instance that keeps failing waits twice as long each time, up to six hours. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(cleanupRetrySource)}</span>
           <span id="feedback-cleanup-retry-interval" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
