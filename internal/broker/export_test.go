@@ -605,3 +605,12 @@ func (b *Broker) DeploymentNameSites() map[string]func(ctx context.Context, inst
 		},
 	}
 }
+
+// SetDeprovisionSettleWait replaces how long a deprovision waits for the
+// settle lock before it answers ConcurrencyError, and returns a function
+// that restores the previous wait.
+func SetDeprovisionSettleWait(d time.Duration) func() {
+	previous := deprovisionSettleWaitOverride.Swap(int64(d))
+
+	return func() { deprovisionSettleWaitOverride.Store(previous) }
+}

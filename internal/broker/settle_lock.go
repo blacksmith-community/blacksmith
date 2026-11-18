@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // settleLocks serializes the settling of each instance's operation in this
@@ -73,6 +74,15 @@ func (l *settleLocks) done(instanceID string, entry *settleLock) {
 // lockSettle takes the settle lock of instanceID. See settleLocks.
 func (b *Broker) lockSettle(ctx context.Context, instanceID string) (func(), error) {
 	return b.settling.lock(ctx, instanceID)
+}
+
+// lockSettleWithin takes the settle lock of instanceID, waiting at most
+// wait for it.
+func (b *Broker) lockSettleWithin(ctx context.Context, instanceID string, wait time.Duration) (func(), error) {
+	waitCtx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+
+	return b.settling.lock(waitCtx, instanceID)
 }
 
 // deleteSettled reports whether a delete of the instance has already been

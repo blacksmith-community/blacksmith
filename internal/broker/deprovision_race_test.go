@@ -351,4 +351,165 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 			Expect(exists).To(BeFalse(), "provision completion must not recreate the index entry")
 		})
 	})
+
+	Context("while the cleanup of its failed provision waits for a director slot", func() {
+		var (
+			slot      chan struct{}
+			waiting   chan struct{}
+			deletes   chan string
+			running   *bosh.Task
+			runningMu sync.Mutex
+			restore   func()
+		)
+
+		BeforeEach(func() {
+			restore = broker.SetDeprovisionSettleWait(100 * time.Millisecond)
+			slot = make(chan struct{})
+			waiting = make(chan struct{})
+			deletes = make(chan string, 4)
+			running = nil
+
+			Expect(vaultClient.Index(ctx, instanceID, map[string]interface{}{recordedPlanKey: planID, serviceIDKey: serviceID})).To(Succeed())
+			Expect(recordFailedProvisionOwingCleanup(ctx, vaultClient, instanceID)).To(Succeed())
+
+			var once sync.Once
+
+			// The cleanup's first read of the deployment waits for a slot,
+			// as a pooled director makes it wait. Every later read finds
+			// the deployment, which the delete task is still removing.
+			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+				first := false
+
+				once.Do(func() { first = true })
+
+				if first {
+					close(waiting)
+					<-slot
+				}
+
+				return &bosh.DeploymentDetail{Name: name, Manifest: "name: " + name}, nil
+			}
+			director.DeleteDeploymentFn = func(name string) (*bosh.Task, error) {
+				deletes <- name
+
+				runningMu.Lock()
+				defer runningMu.Unlock()
+
+				running = &bosh.Task{ID: 900, State: "processing", Description: "delete deployment " + name, Deployment: name}
+
+				return running, nil
+			}
+			director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+				runningMu.Lock()
+				defer runningMu.Unlock()
+
+				return running, nil
+			}
+		})
+
+		AfterEach(func() {
+			restore()
+
+			select {
+			case <-slot:
+			default:
+				close(slot)
+			}
+		})
+
+		It("refuses a deprovision that waits on the cleanup for longer than its bound, and records nothing for it", func() {
+			cleaned := make(chan struct{})
+
+			go func() {
+				defer GinkgoRecover()
+				defer close(cleaned)
+
+				brokerInstance.CleanupFailedDeployment(ctx, instanceID, deploymentName)
+			}()
+
+			Eventually(waiting, 10*time.Second).Should(BeClosed())
+
+			_, _, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
+			Expect(err).To(MatchError(osbapi.ErrConcurrencyError), "a deprovision recorded while the cleanup holds the settle lock sends a second delete")
+			Expect(taskAction()).To(Equal("provision"), "the refused deprovision must not replace the record")
+
+			close(slot)
+			Eventually(cleaned, 10*time.Second).Should(BeClosed())
+			Expect(deletes).To(Receive(Equal(deploymentName)))
+			Consistently(deletes, 200*time.Millisecond).ShouldNot(Receive())
+		})
+
+		It("records a deprovision that got past the busy check only once the cleanup is done, and follows the cleanup's delete rather than sending its own", func() {
+			restore()
+			restore = broker.SetDeprovisionSettleWait(10 * time.Second)
+
+			cleaned := make(chan struct{})
+
+			go func() {
+				defer GinkgoRecover()
+				defer close(cleaned)
+
+				brokerInstance.CleanupFailedDeployment(ctx, instanceID, deploymentName)
+			}()
+
+			Eventually(waiting, 10*time.Second).Should(BeClosed())
+
+			accepted := make(chan error, 1)
+
+			go func() {
+				defer GinkgoRecover()
+
+				_, _, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
+				accepted <- err
+			}()
+
+			// The deprovision found no task on the deployment, because the
+			// cleanup has not sent its delete yet, and now waits for the
+			// settle lock the cleanup holds.
+			Eventually(func() []string { return director.Calls("FindRunningTaskForDeployment") }, 10*time.Second).ShouldNot(BeEmpty())
+			Consistently(accepted, 300*time.Millisecond).ShouldNot(Receive())
+			Expect(taskAction()).To(Equal("provision"))
+
+			close(slot)
+			Eventually(cleaned, 10*time.Second).Should(BeClosed())
+			Eventually(accepted, 10*time.Second).Should(Receive(BeNil()))
+			Expect(deletes).To(Receive(Equal(deploymentName)))
+
+			Eventually(func() int {
+				_, taskID, _, err := vaultClient.State(ctx, instanceID)
+				Expect(err).ToNot(HaveOccurred())
+
+				return taskID
+			}, 10*time.Second).Should(Equal(900), "the deprovision follows the cleanup's delete task")
+			Consistently(deletes, 300*time.Millisecond).ShouldNot(Receive(), "only one delete may be in flight")
+		})
+
+		It("leaves the delete to a deprovision that holds the instance's claim", func() {
+			close(slot)
+
+			release := brokerInstance.HoldOperationClaim(instanceID, "deprovision")
+			defer release()
+
+			brokerInstance.CleanupFailedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(deletes).ToNot(Receive())
+			Expect(director.Calls("GetDeployment")).To(BeEmpty())
+		})
+
+		It("adopts a delete task that already runs rather than sending another", func() {
+			close(slot)
+
+			runningMu.Lock()
+			running = &bosh.Task{ID: 901, State: "processing", Description: "delete deployment " + deploymentName, Deployment: deploymentName}
+			runningMu.Unlock()
+
+			brokerInstance.CleanupFailedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(deletes).ToNot(Receive())
+
+			recorded, err := brokerInstance.RecordedOperation(ctx, instanceID)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(recorded.CleanupPending).To(BeFalse(), "a running delete is the cleanup")
+		})
+	})
 })

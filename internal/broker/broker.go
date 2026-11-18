@@ -611,11 +611,31 @@ func (b *Broker) Deprovision(
 	// may have been recorded since rejectIfOperationInProgress read it. The
 	// one exception is the unknown provision that rejectIfOperationInProgress
 	// let this deprovision replace.
+	//
+	// The write runs under the settle lock, which the cleanup of a failed
+	// provision holds across its director calls, so the deprovision is
+	// not recorded while a cleanup may be sending a delete. A cleanup that
+	// takes the lock after the write finds the deprovision on record, or
+	// this claim, and deletes nothing. A cleanup that holds the lock for
+	// longer than the deprovision waits gets the deprovision refused, and
+	// the platform asks again.
+	// The wait is detached from the request, as the write is.
+	unlockSettle, err := b.lockSettleWithin(context.WithoutCancel(ctx), instanceID, settleWaitForDeprovision())
+	if err != nil {
+		b.withdrawDeprovisionRequest(ctx, instanceID, withdrawRequest, logger)
+		logger.Warning("Rejecting deprovision of instance %s: another settle of the instance, such as the cleanup of a failed provision, holds its record: %s", instanceID, err)
+
+		return osbapi.DeprovisionResponse{}, false, osbapi.ErrConcurrencyError
+	}
+
+	followRunning := b.replacesFailedProvision(ctx, instanceID, logger)
+
 	trackCtx, cancelTrack := recordContext(ctx)
 	err = b.Vault.TrackProgressReplacingOutcomeUnknown(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted",
 		superseded.Action, superseded.ContextID, 0, nil)
 
 	cancelTrack()
+	unlockSettle()
 
 	if err != nil {
 		// The refused deprovision takes its request back off the index
@@ -665,7 +685,7 @@ func (b *Broker) Deprovision(
 		defer b.releaseOperation(instanceID, claim)
 		defer cancelAsync()
 
-		b.deprovisionAsync(asyncCtx, instanceID, instance, release)
+		b.deprovisionAsync(asyncCtx, instanceID, instance, followRunning, release)
 	})
 
 	logger.Info("Accepted deprovisioning request for service instance %s", instanceID)
@@ -1173,6 +1193,26 @@ type TaskWaiters interface {
 // 422 ConcurrencyError, even while the guard holds it for no one.
 func (b *Broker) SetTaskWaiters(waiters TaskWaiters) {
 	b.taskWaiters.Store(&waiters)
+}
+
+// replacesFailedProvision reports whether the record a deprovision is
+// about to replace, read under the settle lock its caller holds, holds a
+// failed provision. Its cleanup may have sent a delete just before the
+// lock was taken, so the deprovision follows a running delete rather
+// than sending one. A record that cannot be read is taken as one, since
+// following a running delete is never wrong.
+func (b *Broker) replacesFailedProvision(ctx context.Context, instanceID string, logger logger.Logger) bool {
+	readCtx, cancelRead := recordContext(ctx)
+	defer cancelRead()
+
+	recorded, err := b.readRecordedOperation(readCtx, instanceID)
+	if err != nil {
+		logger.Warning("The record of instance %s could not be read before its deprovision was recorded, so the deprovision follows a delete already running on its deployment: %s", instanceID, err)
+
+		return true
+	}
+
+	return recorded.Action == operationTypeProvision && recorded.State == recordedStateFailed
 }
 
 // deprovisionDeployment names the deployment a deprovision of instanceID
@@ -4288,6 +4328,16 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploy
 	}
 	defer unlock()
 
+	// A deprovision that holds the instance's claim deletes the
+	// deployment itself, and records itself under this lock, so the
+	// cleanup leaves the delete to it. The mark goes with the record the
+	// deprovision writes.
+	if b.deprovisionActive(instanceID) {
+		logger.Info("Deployment %s is not deleted by the cleanup of instance %s: a deprovision of the instance is under way and deletes it", deploymentName, instanceID)
+
+		return
+	}
+
 	recorded, owed := b.recordOwesCleanup(cleanupCtx, instanceID, deploymentName, logger)
 	if !owed {
 		b.forgetCleanupAttention(instanceID)
@@ -4398,9 +4448,10 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 }
 
 // deleteFailedDeployment sends the delete of a failed deployment when the
-// director still has it. It reports true once the delete is sent or the
-// director says the deployment is gone, and false when the director could
-// not be asked or refused the delete.
+// director still has it and runs no delete on it. It reports true once the
+// delete is sent, a delete already runs, or the director says the
+// deployment is gone, and false when the director could not be asked or
+// refused the delete.
 func (b *Broker) deleteFailedDeployment(ctx context.Context, deploymentName string, logger logger.Logger) bool {
 	logger.Debug("checking if failed deployment exists and needs cleanup")
 
@@ -4415,6 +4466,22 @@ func (b *Broker) deleteFailedDeployment(ctx context.Context, deploymentName stri
 		logger.Error("Failed deployment %s is not deleted yet, because the director could not say whether it exists: %s", deploymentName, err)
 
 		return false
+	}
+
+	// A delete already running on the deployment is the cleanup, whether
+	// an earlier try sent it and lost the answer, or a deprovision did, so
+	// a second one is not sent.
+	running, err := b.runningDeleteTask(ctx, deploymentName)
+	if err != nil {
+		logger.Error("Failed deployment %s is not deleted yet, because whether a delete already runs on it is not known: %s", deploymentName, err)
+
+		return false
+	}
+
+	if running != nil {
+		logger.Info("Delete task %d already runs on failed deployment %s, so no second delete is sent", running.ID, deploymentName)
+
+		return true
 	}
 
 	logger.Info("Failed deployment %s still exists, attempting cleanup", deploymentName)

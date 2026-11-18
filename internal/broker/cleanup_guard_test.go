@@ -13,10 +13,11 @@ import (
 	"blacksmith/pkg/testutil"
 )
 
-// cleanupGuardDirector returns a director on which the deployment exists
-// and a delete is accepted.
+// cleanupGuardDirector returns a director on which the deployment exists,
+// no delete runs on it, and a delete is accepted.
 func cleanupGuardDirector() *testutil.ScriptedBOSHDirector {
 	director := testutil.NewScriptedBOSHDirector()
+	director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no running task is a nil task without an error
 	director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
 		return &bosh.DeploymentDetail{Name: name}, nil
 	}
