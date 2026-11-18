@@ -16,6 +16,10 @@ import (
 	"blacksmith/internal/credhub"
 )
 
+// watchdog is how long a held request waits for the client to give up before
+// the handler lets go, so a client that never does cannot hold the server.
+const watchdog = 10 * time.Second
+
 const regenerateAnswerBody = `{"id":"v3","name":"/d/dep/redis_crt","type":"certificate","value":{"certificate":"CERT","private_key":"-----BEGIN RSA PRIVATE KEY-----SECRET"}}` //nolint:gosec // A fake marker; the tests check it never leaks.
 
 // regenerateFake records each regenerate request and answers with handler.
@@ -109,13 +113,25 @@ func TestRegenerateRefusesEmptyID(t *testing.T) {
 	}
 }
 
+// The deadline ends once CredHub has the request, so the test cancels the
+// context as the request arrives and not after a fixed wait that a slow
+// machine could spend before the request went out.
 func TestRegenerateTimeoutIsUncertain(t *testing.T) {
 	t.Parallel()
 
-	fake := newRegenerateFake(t, func(_ int, _ http.ResponseWriter, _ *http.Request) { time.Sleep(600 * time.Millisecond) })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	var arrived sync.Once
+
+	fake := newRegenerateFake(t, func(_ int, _ http.ResponseWriter, request *http.Request) {
+		arrived.Do(cancel)
+
+		select {
+		case <-request.Context().Done():
+		case <-time.After(watchdog):
+		}
+	})
 
 	_, err := fake.client(t).Regenerate(ctx, "c-1")
 	if !credhub.IsUncertain(err) {
