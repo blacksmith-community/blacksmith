@@ -3787,12 +3787,49 @@ func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentNam
 			found(taskID)
 		}
 
-		b.recordTask(ctx, instanceID, operationTypeProvision, fmt.Sprintf("BOSH deployment in progress (task %d)", taskID), taskID, logger)
+		// The provision was read without the settle lock, and an
+		// operation is accepted without it, so the task is recorded only
+		// while the record still holds a provision with no task. The task
+		// is settled only once it is on record.
+		unrecorded, recorded := b.recordFoundProvisionTask(ctx, instanceID, taskID, logger)
+		if !recorded {
+			return unrecorded, nil
+		}
 
 		return b.handleProvisionTask(ctx, instanceID, deploymentName, taskID, logger)
 	}
 
 	return b.interruptedOperationStatus(ctx, instanceID, deploymentName, "Provisioning was interrupted before the deployment was handed to BOSH", found, logger)
+}
+
+// recordFoundProvisionTask records taskID, the create task recovery found,
+// as the task of the provision on record, and reports true when the write
+// landed. It lands only while the record holds a provision with no task.
+// When it does not land, it returns the in progress answer to give
+// instead, and the next poll looks again.
+func (b *Broker) recordFoundProvisionTask(ctx context.Context, instanceID string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	description := fmt.Sprintf("BOSH deployment in progress (task %d)", taskID)
+
+	err := b.Vault.TrackFoundTask(recordCtx, instanceID, operationTypeProvision, description, taskID)
+	if err == nil {
+		return osbapi.LastOperationResponse{}, true
+	}
+
+	if errors.Is(err, internalVault.ErrTaskRecordReplaced) {
+		logger.Info("Instance %s: create task %d was found, and the record no longer holds a provision without a task, so the task is not recorded: %s", instanceID, taskID, err)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("Found BOSH task %d, and the instance's record now holds a newer operation", taskID),
+		}, false
+	}
+
+	logger.Error("Instance %s: create task %d was found and could not be recorded, so a later poll looks again: %s", instanceID, taskID, err)
+
+	return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: description}, false
 }
 
 // deprovisionStatus answers a deprovision poll from the deprovision the broker
@@ -4049,8 +4086,14 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 	// Record the failure so later polls answer from it, and start the
 	// cleanup while the settle lock is still held, so it starts only once.
 	// The cleanup's director calls can be slow, so it runs in the
-	// background rather than holding up the poll.
-	b.recordTask(ctx, instanceID, operationTypeProvision, description, -1, logger)
+	// background rather than holding up the poll. An operation is
+	// accepted without the settle lock, so the write lands only while the
+	// record still holds this provision, and no cleanup starts unless it
+	// lands.
+	unrecorded, recordedFailure := b.recordProvisionFailed(ctx, instanceID, recorded, description, taskID, logger)
+	if !recordedFailure {
+		return unrecorded, nil
+	}
 
 	// The cleanup outlives this poll; it keeps the values of cleanupCtx
 	// and sets its own deadline.
@@ -4078,6 +4121,35 @@ func (b *Broker) recordSucceeded(ctx context.Context, instanceID, description st
 	case err != nil:
 		logger.Error("failed to record the provision of instance %s in task %d as succeeded: %s", instanceID, taskID, err)
 	}
+}
+
+// recordProvisionFailed records the provision that recorded holds, which
+// ran as taskID, as failed, and reports true when the write landed. The
+// write lands only while the record still holds that provision unsettled.
+// When it does not land, it returns the answer to give instead. A record
+// that now holds another operation is left to that operation, and the
+// answer is in progress.
+func (b *Broker) recordProvisionFailed(ctx context.Context, instanceID string, recorded recordedOperation, description string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.TrackFailed(recordCtx, instanceID, operationTypeProvision, description, recorded.ContextID, taskID)
+	if err == nil {
+		return osbapi.LastOperationResponse{}, true
+	}
+
+	if errors.Is(err, internalVault.ErrTaskRecordReplaced) {
+		logger.Info("Instance %s: task %d of its provision failed, and its record now holds a newer operation, which is left as it is, with nothing deleted: %s", instanceID, taskID, err)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("BOSH task %d failed, and the instance's record now holds a newer operation", taskID),
+		}, false
+	}
+
+	logger.Error("Instance %s: task %d of its provision failed, and the failure could not be recorded, so nothing is deleted: %s", instanceID, taskID, err)
+
+	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, false
 }
 
 // settledProvision reads the instance's record again and returns it. It

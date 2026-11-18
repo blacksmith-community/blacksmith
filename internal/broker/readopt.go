@@ -911,7 +911,15 @@ func (b *Broker) recordReadoptedFailure(ctx context.Context, instanceID string, 
 		return
 	}
 
-	b.recordTask(ctx, instanceID, current.Action, description, -1, logger)
+	// An operation is accepted without the settle lock, so the failure
+	// lands only while the record still holds the operation just read.
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err = b.Vault.TrackFailed(recordCtx, instanceID, current.Action, description, latest.ContextID, latest.TaskID)
+	if err != nil {
+		logger.Error("The failure of the %s of instance %s was not recorded: %s", current.Action, instanceID, err)
+	}
 }
 
 // readoptUnindexed settles a re-adopted operation whose index entry is

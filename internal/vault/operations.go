@@ -93,6 +93,81 @@ func (vault *Vault) TrackSucceeded(ctx context.Context, instanceID, action, desc
 	return vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(TaskStateSucceeded, taskID))
 }
 
+// TrackFailed records the operation of action that ran as taskID, with
+// contextID, as failed, as TrackProgress records the failure -1. It writes
+// only when the record still holds that operation unsettled, which is
+// action with taskID and contextID in a state that is not failed,
+// succeeded, deleted, or outcome_unknown. The check and the write happen
+// under the instance's task record lock, so it never replaces an
+// operation recorded since the caller read the record. Otherwise it
+// writes nothing and returns an error that wraps ErrTaskRecordReplaced. A
+// record that cannot be read stops the write.
+func (vault *Vault) TrackFailed(ctx context.Context, instanceID, action, description, contextID string, taskID int) error {
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", -1, nil, holdingUnsettled(instanceID, action, contextID, taskID))
+}
+
+// TrackFoundTask records taskID, a task the director started for the
+// operation of action, as that operation's task, as TrackProgress does. It
+// writes only when the record still holds action unsettled with no task,
+// so a task found after a restart never lands on an operation recorded
+// since the caller read the record. Otherwise it writes nothing and
+// returns an error that wraps ErrTaskRecordReplaced. A record that cannot
+// be read stops the write.
+func (vault *Vault) TrackFoundTask(ctx context.Context, instanceID, action, description string, taskID int) error {
+	guard := func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrTaskRecordReplaced, instanceID)
+		}
+
+		recordedAction, _ := current["action"].(string)
+		recordedTask, _ := recordedTaskID(current)
+		state, _ := current["state"].(string)
+
+		if recordedAction != action || recordedTask != 0 || settledOrUnknown(state) {
+			return fmt.Errorf("%w: instance %s records the %s state of a %s with task %d, not a %s with no task",
+				ErrTaskRecordReplaced, instanceID, state, recordedAction, recordedTask, action)
+		}
+
+		return nil
+	}
+
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, nil, guard)
+}
+
+// holdingUnsettled returns a guard that lets a write through only when the
+// current record holds action with taskID and contextID, in a state that
+// neither settles it nor leaves its outcome unknown.
+func holdingUnsettled(instanceID, action, contextID string, taskID int) func(current map[string]interface{}) error {
+	return func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrTaskRecordReplaced, instanceID)
+		}
+
+		recordedAction, _ := current["action"].(string)
+		recordedTask, _ := recordedTaskID(current)
+		recordedContextID, _ := current[taskRecordContextIDKey].(string)
+		state, _ := current["state"].(string)
+
+		if recordedAction != action || recordedTask != taskID || recordedContextID != contextID || settledOrUnknown(state) {
+			return fmt.Errorf("%w: instance %s records the %s state of a %s with task %d and context ID %q, not the %s with task %d and context ID %q",
+				ErrTaskRecordReplaced, instanceID, state, recordedAction, recordedTask, recordedContextID, action, taskID, contextID)
+		}
+
+		return nil
+	}
+}
+
+// settledOrUnknown reports whether a record in state is settled, or holds
+// an outcome only the unknown-outcome resolver may settle.
+func settledOrUnknown(state string) bool {
+	switch state {
+	case eventStateFailed, TaskStateSucceeded, TaskStateDeleted, TaskStateOutcomeUnknown:
+		return true
+	}
+
+	return false
+}
+
 // settledRecord returns a copy of replaced with the terminal state and
 // description, and the time of the write.
 func settledRecord(replaced map[string]interface{}, state, description string) map[string]interface{} {
