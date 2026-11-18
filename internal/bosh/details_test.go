@@ -188,7 +188,7 @@ func vmListing() listingCall {
 // lostAnswerRequestTimeout is the request timeout of the test of a lost
 // answer. The timeout is real, because boshapi owns the timer, so it is long
 // enough that a slow machine cannot spend it before the request is sent.
-const lostAnswerRequestTimeout = time.Second
+const lostAnswerRequestTimeout = 2 * time.Second
 
 // warmUpDeployment is the deployment warmAdapter reads, so that a test can
 // leave its requests out of what it checks.

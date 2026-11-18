@@ -352,8 +352,8 @@ func TestFetchLogsStreamsTheBundle(t *testing.T) {
 // the timer, so it is long enough that a slow machine cannot spend it before
 // the director's answer begins.
 const (
-	slowBodyRequestTimeout = time.Second
-	slowBundleGap          = 400 * time.Millisecond
+	slowBodyRequestTimeout = 3 * time.Second
+	slowBundleGap          = 1200 * time.Millisecond
 )
 
 // slowBundle streams a bundle one flushed entry at a time, so the whole
