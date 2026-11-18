@@ -10999,7 +10999,7 @@
         <div class="settings-row">
           <label class="settings-label" for="settings-update-rollback">Update Rollback</label>
           <div class="settings-input-group">
-            <select id="settings-update-rollback" class="settings-input" data-keep-key="settings:update-rollback" aria-describedby="help-update-rollback feedback-update-rollback">
+            <select id="settings-update-rollback" data-keep-key="settings:update-rollback" aria-describedby="help-update-rollback feedback-update-rollback">
               <option value="false"${updateRollback ? '' : ' selected'}>Off</option>
               <option value="true"${updateRollback ? ' selected' : ''}>On</option>
             </select>
