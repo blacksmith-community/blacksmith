@@ -3,8 +3,9 @@ const fs=require('fs');
 const path=require('path');
 const H=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
-const {boot,sleep}=H.fleet;
+const {boot,idle}=H.fleet;
+const {TEST_LIMIT}=H.main;
+const t=JSDOM?(name,fn)=>test(name,fn,TEST_LIMIT):test.skip;
 
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
@@ -18,11 +19,13 @@ afterEach(()=>{
 // The certificate settings form is a native <dialog> that ModalManager opens
 // with showModal. Every way out must leave the surface stack, inert, and
 // aria-hidden as they were, and must put focus back on the Settings button.
+// Each step waits with idle() for the page to finish what it started, which a
+// loaded machine only makes slower.
 const start=async()=>{
  const env=await boot(); envs.push(env);
  const {w,d}=env;
  w.eval(OAT);
- await w.blacksmithNav.switchTab('certificates'); await sleep(120);
+ await w.blacksmithNav.switchTab('certificates'); await idle(w);
  const opener=d.getElementById('cert-settings-btn');
  opener.focus();
  const dialog=()=>d.getElementById('cert-settings-modal');
@@ -34,14 +37,14 @@ const start=async()=>{
  const key=(k)=>d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true}));
  const backdrop=()=>dialog().dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));
  const touch=()=>dialog().dispatchEvent(new w.Event('touchstart',{bubbles:true,cancelable:true}));
- const open=async()=>{ opener.click(); await sleep(100); };
+ const open=async()=>{ opener.click(); await idle(w); };
  return {...env,opener,dialog,snapshot,key,backdrop,touch,open};
 };
 const cancel=(env)=>[...env.dialog().querySelectorAll('.cert-settings-actions button')].find(b=>b.textContent==='Cancel');
 
 t('the settings form opens as a native modal dialog on the surface stack with the first field focused',async()=>{
  const env=await start(); const {w,d,dialog,stubs,snapshot,open}=env;
- await sleep(60);
+ await idle(env);
  const before=snapshot();
  await open();
  expect(dialog() instanceof w.HTMLDialogElement).toBe(true);
@@ -55,7 +58,7 @@ t('the settings form opens as a native modal dialog on the surface stack with th
  expect(d.activeElement).toBe(d.getElementById('cert-setting-warning_days'));
  expect(JSON.parse(env.snapshot()).inert.length).toBeGreaterThan(0);
  expect(dialog().hasAttribute('inert')).toBe(false);
- cancel(env).click(); await stubs.settle(); await sleep(320);
+ cancel(env).click(); await idle(env);
  expect(snapshot()).toBe(before);
 });
 
@@ -69,13 +72,13 @@ const paths=[
 paths.forEach(({name,close})=>{
  t(`${name} closes the settings form and restores the stack, inert, aria-hidden, and focus`,async()=>{
   const env=await start(); const {d,dialog,stubs,snapshot,open}=env;
-  await sleep(60);
+  await idle(env);
   const before=snapshot();
   await open();
   expect(snapshot()).not.toBe(before);
   const shown=dialog();
   close(env);
-  await stubs.settle();
+  await idle(env);
   expect(shown.open).toBe(false);
   expect(stubs.isModal(shown)).toBe(false);
   expect(snapshot()).toBe(before);
@@ -92,21 +95,21 @@ t('a click or touch on the form leaves the settings dialog open',async()=>{
  inside.click();
  const e=new w.Event('touchstart',{bubbles:true,cancelable:true});
  inside.dispatchEvent(e);
- await stubs.settle();
+ await idle(env);
  expect(e.defaultPrevented).toBe(false);
  expect(dialog().open).toBe(true);
  expect(w.blacksmithSurfaces.size()).toBe(1);
- cancel(env).click(); await stubs.settle();
+ cancel(env).click(); await idle(env);
 });
 
 t('a saved form closes the dialog and restores focus to the Settings button',async()=>{
  const env=await start(); const {w,d,dialog,stubs,snapshot,open}=env;
- await sleep(60);
+ await idle(env);
  const before=snapshot();
  await open();
  const shown=dialog();
  dialog().querySelector('form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
- await sleep(120); await stubs.settle();
+ await idle(env);
  expect(shown.open).toBe(false);
  expect(w.blacksmithSurfaces.size()).toBe(0);
  expect(d.activeElement).toBe(env.opener);
@@ -118,12 +121,14 @@ t('Escape closes only the topmost surface when another surface sits above the se
  await open();
  const above={close(){}};
  w.blacksmithSurfaces.push(above);
- key('Escape'); await stubs.settle();
+ key('Escape'); await idle(env);
  expect(dialog().open).toBe(true);
  expect(w.blacksmithSurfaces.size()).toBe(2);
  w.blacksmithSurfaces.remove(above);
- key('Escape'); await stubs.settle();
- expect(dialog().open).toBe(false);
+ // The page removes a closed form once it has finished closing, so hold it first.
+ const shown=dialog();
+ key('Escape'); await idle(env);
+ expect(shown.open).toBe(false);
  expect(w.blacksmithSurfaces.size()).toBe(0);
 });
 
@@ -132,18 +137,19 @@ t('a confirmation opened over the settings form returns to it, still modal, and 
  await open();
  const field=d.getElementById('cert-setting-critical_days'); field.focus();
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
+ await idle(env);
  expect(w.blacksmithSurfaces.size()).toBe(2);
  key('Escape');
  expect(await done).toBe(false);
- await stubs.settle();
+ await idle(env);
  expect(dialog().open).toBe(true);
  expect(stubs.isModal(dialog())).toBe(true);
  expect(dialog().hasAttribute('inert')).toBe(false);
  expect(JSON.parse(env.snapshot()).inert.length).toBeGreaterThan(0);
  expect(w.blacksmithSurfaces.size()).toBe(1);
  expect(d.activeElement).toBe(field);
- key('Escape'); await stubs.settle();
- expect(dialog().open).toBe(false);
+ const shown=dialog();
+ key('Escape'); await idle(env);
+ expect(shown.open).toBe(false);
  expect(w.blacksmithSurfaces.size()).toBe(0);
 });
