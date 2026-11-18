@@ -1,5 +1,5 @@
 const { test, expect } = require('bun:test');
-const { main:{boot,sleep,idle,TEST_LIMIT} } = require('./certificates/harness.js');
+const { main:{boot,idle,until,TEST_LIMIT} } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 
 const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
@@ -160,7 +160,8 @@ t('at the broker ceiling the button is gone and the status says older events are
     for (let page = 1; page < 3; page++) {
       const before = rows(host).length;
       more(host).click();
-      for (let waited = 0; rows(host).length === before && waited < 5000; waited += 20) await idle(w);
+      await until(() => rows(host).length !== before, 'the next page of events');
+      await idle(w);
     }
     expect(rows(host).length).toBe(300);
     expect(more(host)).toBeNull();
@@ -187,7 +188,8 @@ t('a failed Load more says so in plain words and keeps the button', async () => 
   try {
     w.__routes.unshift([`/b/${ID}/events`, (u, o, json) => json(500, { error: 'boom' })]);
     more(host).click();
-    for (let waited = 0; !host.querySelector('.events-load-error') && waited < 3000; waited += 20) await idle(w);
+    await until(() => host.querySelector('.events-load-error'), 'the Load more error');
+    await idle(w);
     const note = host.querySelector('.events-load-error');
     expect(note.textContent).toBe('Older events could not be loaded.');
     expect(note.textContent).not.toContain('HTTP');
