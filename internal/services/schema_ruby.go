@@ -193,14 +193,14 @@ func isRubyInteger(number json.Number) bool {
 func rubyJSONLength(value any) int {
 	switch typed := value.(type) {
 	case *rubyHash:
-		length := 2 + max(len(typed.keys)-1, 0)
+		length := len("{}") + max(len(typed.keys)-1, 0)
 		for _, key := range typed.keys {
 			length += rubyStringLength(key) + 1 + rubyJSONLength(typed.values[key])
 		}
 
 		return length
 	case []any:
-		length := 2 + max(len(typed)-1, 0)
+		length := len("[]") + max(len(typed)-1, 0)
 		for _, member := range typed {
 			length += rubyJSONLength(member)
 		}
@@ -257,24 +257,11 @@ func rubyNumberLength(number json.Number) int {
 	}
 
 	sign := 0
-	if strings.HasPrefix(text, "-") {
+	negative, digits, point := decimalParts(number)
+
+	if negative {
 		sign = 1
-		text = text[1:]
 	}
-
-	mantissa, exponentText, _ := strings.Cut(strings.ToLower(text), "e")
-
-	exponent := 0
-	if exponentText != "" {
-		exponent, _ = strconv.Atoi(exponentText)
-	}
-
-	whole, fraction, _ := strings.Cut(mantissa, ".")
-	digits := strings.TrimLeft(whole+fraction, "0")
-	// The point sits after len(whole) digits, moved by the exponent, and
-	// counted here from the first significant digit.
-	point := len(whole) + exponent - (len(whole+fraction) - len(digits))
-	digits = strings.TrimRight(digits, "0")
 
 	switch {
 	case digits == "":
@@ -286,4 +273,25 @@ func rubyNumberLength(number json.Number) int {
 	default:
 		return sign + len(digits) + 1
 	}
+}
+
+// decimalParts writes number as 0.digits times ten to the power point,
+// with digits holding no leading or trailing zero, and empty for zero.
+func decimalParts(number json.Number) (bool, string, int) {
+	text := string(number)
+	negative := strings.HasPrefix(text, "-")
+	mantissa, exponentText, _ := strings.Cut(strings.ToLower(strings.TrimPrefix(text, "-")), "e")
+
+	exponent := 0
+	if exponentText != "" {
+		exponent, _ = strconv.Atoi(exponentText)
+	}
+
+	whole, fraction, _ := strings.Cut(mantissa, ".")
+	digits := strings.TrimLeft(whole+fraction, "0")
+	// The point sits after len(whole) digits, moved by the exponent, and
+	// counted here from the first significant digit.
+	point := len(whole) + exponent - (len(whole+fraction) - len(digits))
+
+	return negative, strings.TrimRight(digits, "0"), point
 }

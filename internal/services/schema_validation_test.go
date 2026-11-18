@@ -19,9 +19,10 @@ func draft4(members string) string {
 
 // schemaPlans are the plans of the schema validation test, by name, with
 // the schema.json each ships and whether that schema is published. Cloud
-// Controller refuses a whole catalog when any one schema in it is not a
-// JSON Schema draft-04 schema, is larger than 64 KB, or refers outside
-// itself.
+// Controller refuses a whole catalog when any one schema in it is larger
+// than 64 KB, has no $schema, fails the draft-04 meta-schema, or raises
+// an error when the json-schema gem checks it, as a $ref outside the
+// schema does.
 func schemaPlans() map[string]struct {
 	schema    string
 	published bool
@@ -78,10 +79,11 @@ func schemaPlans() map[string]struct {
 	}
 }
 
-// A forge plan's schema is published only when it is a valid JSON Schema
-// draft-04 schema, as the OSB spec requires. An invalid schema is left
-// out of the catalog with an error that names the forge and the plan, and
-// the rest of the catalog, the plan included, is still served.
+// A forge plan's schema is published only when Cloud Controller accepts
+// it, and Cloud Controller checks it against the draft-04 meta-schema,
+// as the OSB spec asks. A schema it would refuse is left out of the
+// catalog with an error that names the forge and the plan, and the rest
+// of the catalog, the plan included, is still served.
 //
 //nolint:paralleltest // the test swaps the process-wide logger
 func TestCatalog_PublishesOnlyValidDraft4Schemas(t *testing.T) {
