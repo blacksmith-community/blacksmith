@@ -29,6 +29,16 @@ credentials:
 initscriptpath: plan-init
 manifestpath: plan-manifest
 credentialspath: plan-credentials
+free: false
+plan_updateable: true
+update_to: [plan-large]
+schemas:
+  parameters:
+    type: object
+ephemeral_update_ok: true
+maintenance_info:
+  version: 1.0.0
+  description: plan maintenance
 service:
   id: nested-service
   name: nested-service
@@ -37,6 +47,12 @@ service:
   bindable: true
   tags: [first, second]
   limit: 3
+  plan_updateable: true
+  allow_context_updates: true
+  init_idempotent: true
+  maintenance_info:
+    version: 2.0.0
+    description: service maintenance
   plans:
   - id: nested-plan
     name: nested-plan
@@ -50,6 +66,16 @@ service:
     initscriptpath: nested-init
     manifestpath: nested-manifest
     credentialspath: nested-credentials
+    free: true
+    plan_updateable: false
+    update_to: [nested-large]
+    schemas:
+      parameters:
+        type: string
+    ephemeral_update_ok: true
+    maintenance_info:
+      version: 3.0.0
+      description: nested maintenance
 `
 
 // writePlanDir writes each file into a new directory and returns it. A
@@ -83,25 +109,52 @@ func writePlanDir(t *testing.T, files map[string]string) string {
 // nestedService is the service everyFieldPlan names.
 func nestedService() *services.Service {
 	return &services.Service{
-		ID:          "nested-service",
-		Name:        "nested-service",
-		Type:        "nested-type",
-		Description: "a nested service",
-		Bindable:    true,
-		Tags:        []string{"first", "second"},
-		Limit:       3,
+		ID:                  "nested-service",
+		Name:                "nested-service",
+		Type:                "nested-type",
+		Description:         "a nested service",
+		Bindable:            true,
+		Tags:                []string{"first", "second"},
+		Limit:               3,
+		PlanUpdateable:      true,
+		AllowContextUpdates: true,
+		InitIdempotent:      true,
+		MaintenanceInfo:     &services.MaintenanceInfo{Version: "2.0.0", Description: "service maintenance"},
 		Plans: []services.Plan{{
-			ID:              "nested-plan",
-			Name:            "nested-plan",
-			Description:     "a nested plan",
-			Limit:           2,
-			Type:            "nested-plan-type",
-			Credentials:     map[string]interface{}{"nested": "nested-value"},
-			InitScriptPath:  "nested-init",
-			ManifestPath:    "nested-manifest",
-			CredentialsPath: "nested-credentials",
+			ID:                "nested-plan",
+			Name:              "nested-plan",
+			Description:       "a nested plan",
+			Limit:             2,
+			Type:              "nested-plan-type",
+			Credentials:       map[string]interface{}{"nested": "nested-value"},
+			InitScriptPath:    "nested-init",
+			ManifestPath:      "nested-manifest",
+			CredentialsPath:   "nested-credentials",
+			Free:              boolPointer(true),
+			PlanUpdateable:    boolPointer(false),
+			UpdateTo:          []string{"nested-large"},
+			Schemas:           &services.Schemas{Parameters: map[string]interface{}{"type": "string"}},
+			EphemeralUpdateOK: true,
+			MaintenanceInfo:   &services.MaintenanceInfo{Version: "3.0.0", Description: "nested maintenance"},
 		}},
 	}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
+}
+
+// everyFieldPlanDeclarations sets the plan-change, schema, and maintenance
+// fields of want to the values everyFieldPlan gives them.
+func everyFieldPlanDeclarations(want services.Plan) services.Plan {
+	want.Free = boolPointer(false)
+	want.PlanUpdateable = boolPointer(true)
+	want.UpdateTo = []string{"plan-large"}
+	want.Schemas = &services.Schemas{Parameters: map[string]interface{}{"type": "object"}}
+	want.EphemeralUpdateOK = true
+	want.MaintenanceInfo = &services.MaintenanceInfo{Version: "1.0.0", Description: "plan maintenance"}
+
+	return want
 }
 
 // requireEveryField fails the test when a field of value, or of a struct
@@ -198,6 +251,8 @@ func TestReadPlanDecodesEveryField(t *testing.T) {
 			Service:         nestedService(),
 		}
 
+		want = everyFieldPlanDeclarations(want)
+
 		requireEveryField(t, "Plan", reflect.ValueOf(want), skip)
 
 		requirePlan(t, plan, want)
@@ -233,6 +288,8 @@ func TestReadPlanDecodesEveryField(t *testing.T) {
 			CredentialsPath: dir + "/credentials.yml",
 			Service:         nestedService(),
 		}
+
+		want = everyFieldPlanDeclarations(want)
 
 		requireEveryField(t, "Plan", reflect.ValueOf(want), skip)
 

@@ -80,6 +80,16 @@ $.Plans[0].Service.Tags[1]	string	"dedicated"
 $.Plans[0].Service.Tags[2]	string	"redis"
 $.Plans[0].Service.Limit	int	0
 $.Plans[0].Service.Plans	[]services.Plan	null
+$.Plans[0].Service.PlanUpdateable	bool	true
+$.Plans[0].Service.AllowContextUpdates	bool	false
+$.Plans[0].Service.InitIdempotent	bool	false
+$.Plans[0].Service.MaintenanceInfo	*services.MaintenanceInfo	null
+$.Plans[0].Free	*bool	null
+$.Plans[0].PlanUpdateable	*bool	null
+$.Plans[0].UpdateTo	[]string	null
+$.Plans[0].Schemas	*services.Schemas	null
+$.Plans[0].EphemeralUpdateOK	bool	false
+$.Plans[0].MaintenanceInfo	*services.MaintenanceInfo	null
 $.Plans[1].ID	string	"redis-standalone-6"
 $.Plans[1].Name	string	"standalone-6"
 $.Plans[1].Description	string	"A dedicated Redis 6 server, with no redundancy or replication\n"
@@ -174,6 +184,16 @@ $.Plans[1].Service.Tags[1]	string	"dedicated"
 $.Plans[1].Service.Tags[2]	string	"redis"
 $.Plans[1].Service.Limit	int	0
 $.Plans[1].Service.Plans	[]services.Plan	null
+$.Plans[1].Service.PlanUpdateable	bool	true
+$.Plans[1].Service.AllowContextUpdates	bool	false
+$.Plans[1].Service.InitIdempotent	bool	false
+$.Plans[1].Service.MaintenanceInfo	*services.MaintenanceInfo	null
+$.Plans[1].Free	*bool	null
+$.Plans[1].PlanUpdateable	*bool	null
+$.Plans[1].UpdateTo	[]string	null
+$.Plans[1].Schemas	*services.Schemas	null
+$.Plans[1].EphemeralUpdateOK	bool	false
+$.Plans[1].MaintenanceInfo	*services.MaintenanceInfo	null
 $.Plans[2].ID	string	"redis-standalone-7"
 $.Plans[2].Name	string	"standalone-7"
 $.Plans[2].Description	string	"A dedicated Redis 7 server, with no redundancy or replication\n"
@@ -268,3 +288,17 @@ $.Plans[2].Service.Tags[1]	string	"dedicated"
 $.Plans[2].Service.Tags[2]	string	"redis"
 $.Plans[2].Service.Limit	int	0
 $.Plans[2].Service.Plans	[]services.Plan	null
+$.Plans[2].Service.PlanUpdateable	bool	true
+$.Plans[2].Service.AllowContextUpdates	bool	false
+$.Plans[2].Service.InitIdempotent	bool	false
+$.Plans[2].Service.MaintenanceInfo	*services.MaintenanceInfo	null
+$.Plans[2].Free	*bool	null
+$.Plans[2].PlanUpdateable	*bool	null
+$.Plans[2].UpdateTo	[]string	null
+$.Plans[2].Schemas	*services.Schemas	null
+$.Plans[2].EphemeralUpdateOK	bool	false
+$.Plans[2].MaintenanceInfo	*services.MaintenanceInfo	null
+$.PlanUpdateable	bool	true
+$.AllowContextUpdates	bool	false
+$.InitIdempotent	bool	false
+$.MaintenanceInfo	*services.MaintenanceInfo	null

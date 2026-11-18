@@ -134,3 +134,17 @@ $.Plans[0].Service.Tags[1]	string	"dedicated"
 $.Plans[0].Service.Tags[2]	string	"rabbitmq"
 $.Plans[0].Service.Limit	int	0
 $.Plans[0].Service.Plans	[]services.Plan	null
+$.Plans[0].Service.PlanUpdateable	bool	true
+$.Plans[0].Service.AllowContextUpdates	bool	false
+$.Plans[0].Service.InitIdempotent	bool	false
+$.Plans[0].Service.MaintenanceInfo	*services.MaintenanceInfo	null
+$.Plans[0].Free	*bool	null
+$.Plans[0].PlanUpdateable	*bool	null
+$.Plans[0].UpdateTo	[]string	null
+$.Plans[0].Schemas	*services.Schemas	null
+$.Plans[0].EphemeralUpdateOK	bool	false
+$.Plans[0].MaintenanceInfo	*services.MaintenanceInfo	null
+$.PlanUpdateable	bool	true
+$.AllowContextUpdates	bool	false
+$.InitIdempotent	bool	false
+$.MaintenanceInfo	*services.MaintenanceInfo	null

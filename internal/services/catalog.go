@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -20,7 +21,24 @@ import (
 var (
 	ErrInvalidNameFormat         = errors.New("invalid name format - names should only contain letters, numbers and hyphens")
 	ErrNoServiceDirectoriesFound = errors.New("no service directories found")
+	ErrPlanSchemaDeclaredTwice   = errors.New("the plan declares its parameter schema in both plan.yml and schema.json")
+	ErrPlanSchemaNotAnObject     = errors.New("the parameter schema is not a JSON object")
 )
+
+// planChangesSupported reports whether this release of the broker can
+// change an instance's plan. Until it can, every plan publishes
+// plan_updateable false, whatever the forge declares.
+const planChangesSupported = false
+
+// contextUpdatesSupported reports whether this release of the broker can
+// apply an update that changes only an instance's context. Until it can,
+// the catalog publishes allow_context_updates false.
+const contextUpdatesSupported = false
+
+// maintenanceInfoSupported reports whether this release of the broker can
+// run a maintenance update. Until it can, the catalog publishes no
+// maintenance_info.
+const maintenanceInfoSupported = false
 
 type Plan struct {
 	ID          string `json:"id"          yaml:"id"`
@@ -41,6 +59,40 @@ type Plan struct {
 	CredentialsPath string `json:"-" yaml:"credentialspath"`
 
 	Service *Service `json:"service" yaml:"service"`
+
+	// Free is the plan's free flag. A plan that sets none is free, as the
+	// OSB catalog's default is.
+	Free *bool `json:"free,omitempty" yaml:"free"`
+
+	// PlanUpdateable is what the plan declares about changing to another
+	// plan, and when it declares nothing the service's declaration holds.
+	// UpdateTo names the plans this plan can move to. The catalog
+	// publishes a computed flag, never these declarations as they are.
+	PlanUpdateable *bool    `json:"plan_updateable,omitempty" yaml:"plan_updateable"`
+	UpdateTo       []string `json:"update_to,omitempty"       yaml:"update_to"`
+
+	// Schemas holds the JSON schema of the plan's instance parameters,
+	// from the schemas block of plan.yml or from schema.json beside it.
+	Schemas *Schemas `json:"schemas,omitempty" yaml:"schemas"`
+
+	// EphemeralUpdateOK lets a plan whose instance groups keep no
+	// persistent disk take part in a plan change.
+	EphemeralUpdateOK bool `json:"ephemeral_update_ok,omitempty" yaml:"ephemeral_update_ok"`
+
+	MaintenanceInfo *MaintenanceInfo `json:"maintenance_info,omitempty" yaml:"maintenance_info"`
+}
+
+// Schemas holds the JSON schema a plan's instance parameters must match.
+// The catalog publishes it for both create and update.
+type Schemas struct {
+	Parameters map[string]interface{} `json:"parameters,omitempty" yaml:"parameters"`
+}
+
+// MaintenanceInfo is the version a service or plan declares for its
+// maintenance updates.
+type MaintenanceInfo struct {
+	Version     string `json:"version"               yaml:"version"`
+	Description string `json:"description,omitempty" yaml:"description"`
 }
 
 type Service struct {
@@ -52,6 +104,17 @@ type Service struct {
 	Tags        []string `json:"tags"        yaml:"tags"`
 	Limit       int      `json:"limit"       yaml:"limit"`
 	Plans       []Plan   `json:"plans"       yaml:"plans"`
+
+	// PlanUpdateable is what service.yml declares about plan changes,
+	// and a plan that declares nothing of its own takes it.
+	// AllowContextUpdates is the service's declaration that it accepts an
+	// update that changes only the instance's context. InitIdempotent
+	// declares that the forge's init script can run again without
+	// rotating a secret it already generated.
+	PlanUpdateable      bool             `json:"plan_updateable,omitempty"       yaml:"plan_updateable"`
+	AllowContextUpdates bool             `json:"allow_context_updates,omitempty" yaml:"allow_context_updates"`
+	InitIdempotent      bool             `json:"init_idempotent,omitempty"       yaml:"init_idempotent"`
+	MaintenanceInfo     *MaintenanceInfo `json:"maintenance_info,omitempty"      yaml:"maintenance_info"`
 }
 
 // Job represents a BOSH deployment job/instance.
@@ -188,6 +251,11 @@ func ReadPlan(path string) (Plan, error) {
 		return plan, err
 	}
 
+	err = processPlanSchema(path, &plan, loggerInstance)
+	if err != nil {
+		return plan, err
+	}
+
 	plan.InitScriptPath = path + "/init"
 	loggerInstance.Info("Successfully read plan %s from %s", plan.Name, path)
 
@@ -266,6 +334,44 @@ func processPlanManifest(path string, plan *Plan, loggerInstance logger.Logger) 
 	plan.ManifestPath = manifestFile
 
 	loggerInstance.Debug("Successfully merged manifest files for plan %s", plan.Name)
+
+	return nil
+}
+
+// processPlanSchema reads schema.json beside plan.yml, when there is one, as
+// the JSON schema of the plan's instance parameters. A plan declares its
+// schema in one place, so a plan.yml that has a schemas block of its own
+// beside a schema.json is refused.
+func processPlanSchema(path string, plan *Plan, loggerInstance logger.Logger) error {
+	schemaFile := path + "/schema.json"
+
+	data, exists, err := utils.ReadFile(schemaFile)
+	switch {
+	case err != nil:
+		loggerInstance.Error("Error checking schema file %s: %s", schemaFile, err)
+
+		return fmt.Errorf("failed to check schema file: %w", err)
+	case !exists:
+		return nil
+	case plan.Schemas != nil:
+		return fmt.Errorf("%s: %w", schemaFile, ErrPlanSchemaDeclaredTwice)
+	}
+
+	var parameters map[string]interface{}
+
+	err = json.Unmarshal(data, &parameters)
+	if err != nil {
+		loggerInstance.Debug("Schema file %s (%d bytes) did not decode: %s", schemaFile, len(data), err)
+
+		return fmt.Errorf("%s: %w", schemaFile, ErrPlanSchemaNotAnObject)
+	}
+
+	if parameters == nil {
+		return fmt.Errorf("%s: %w", schemaFile, ErrPlanSchemaNotAnObject)
+	}
+
+	plan.Schemas = &Schemas{Parameters: parameters}
+	loggerInstance.Debug("Loaded the parameter schema of plan %s from %s", plan.Name, schemaFile)
 
 	return nil
 }
@@ -684,13 +790,22 @@ func Catalog(services []Service) []osbapi.Service {
 		brokerServices[index].Plans = make([]osbapi.Plan, len(service.Plans))
 		loggerInstance.Debug("Processing %d plans for service %s", len(service.Plans), service.Name)
 
+		anyUpdateable := false
+
 		for planIndex, servicePlan := range service.Plans {
-			brokerServices[index].Plans[planIndex].ID = servicePlan.ID
-			brokerServices[index].Plans[planIndex].Name = servicePlan.Name
-			brokerServices[index].Plans[planIndex].Description = servicePlan.Description
-			loggerInstance.Debug("  Plan %d/%d - ID: %s, Name: %s, Description: %s",
-				planIndex+1, len(service.Plans), servicePlan.ID, servicePlan.Name, servicePlan.Description)
-			/* FIXME: support free */
+			updateable := PlanUpdateable(planChangesSupported, service, servicePlan)
+			anyUpdateable = anyUpdateable || updateable
+
+			brokerServices[index].Plans[planIndex] = catalogPlan(servicePlan, updateable)
+			loggerInstance.Debug("  Plan %d/%d - ID: %s, Name: %s, Description: %s, plan_updateable: %v",
+				planIndex+1, len(service.Plans), servicePlan.ID, servicePlan.Name, servicePlan.Description, updateable)
+		}
+
+		brokerServices[index].PlanUpdateable = &anyUpdateable
+		brokerServices[index].AllowContextUpdates = contextUpdatesSupported && service.AllowContextUpdates
+
+		if maintenanceInfoSupported {
+			brokerServices[index].MaintenanceInfo = catalogMaintenanceInfo(service.MaintenanceInfo)
 		}
 
 		loggerInstance.Info("Added service %s to catalog with %d plans", service.Name, len(service.Plans))
@@ -699,4 +814,58 @@ func Catalog(services []Service) []osbapi.Service {
 	loggerInstance.Info("Successfully created broker catalog with %d services", len(brokerServices))
 
 	return brokerServices
+}
+
+// PlanUpdateable computes the plan_updateable flag the catalog publishes for
+// plan. It is true only when the broker supports plan changes, the plan
+// allows them by its own declaration or, when it makes none, by its
+// service's, the plan names the plans it can move to, and the forge
+// declares that its init script can run again without rotating secrets.
+func PlanUpdateable(supported bool, service Service, plan Plan) bool {
+	declared := service.PlanUpdateable
+	if plan.PlanUpdateable != nil {
+		declared = *plan.PlanUpdateable
+	}
+
+	return supported && declared && service.InitIdempotent && len(plan.UpdateTo) > 0
+}
+
+// catalogPlan converts plan into the plan the catalog publishes, with
+// updateable as its plan_updateable flag.
+func catalogPlan(plan Plan, updateable bool) osbapi.Plan {
+	free := true
+	if plan.Free != nil {
+		free = *plan.Free
+	}
+
+	published := osbapi.Plan{
+		ID:             plan.ID,
+		Name:           plan.Name,
+		Description:    plan.Description,
+		Free:           &free,
+		PlanUpdateable: &updateable,
+	}
+
+	if plan.Schemas != nil && plan.Schemas.Parameters != nil {
+		published.Schemas = &osbapi.Schemas{
+			ServiceInstance: &osbapi.ServiceInstanceSchema{
+				Create: &osbapi.InputParametersSchema{Parameters: plan.Schemas.Parameters},
+				Update: &osbapi.InputParametersSchema{Parameters: plan.Schemas.Parameters},
+			},
+		}
+	}
+
+	if maintenanceInfoSupported {
+		published.MaintenanceInfo = catalogMaintenanceInfo(plan.MaintenanceInfo)
+	}
+
+	return published
+}
+
+func catalogMaintenanceInfo(info *MaintenanceInfo) *osbapi.MaintenanceInfo {
+	if info == nil {
+		return nil
+	}
+
+	return &osbapi.MaintenanceInfo{Version: info.Version, Description: info.Description}
 }
