@@ -1,8 +1,8 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs'),path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','forge-theme.css'),'utf8');
 // Narrow-window overrides live in media blocks, and these checks are about the base rules.
 const base=css.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g,'');
@@ -22,10 +22,10 @@ async function setupUpgrade(footerHeight){
  w.ResizeObserver=class{constructor(cb){this.cb=cb;observers.push(this);}observe(el){this.el=el;}disconnect(){}};
  w.Element.prototype.getBoundingClientRect=function(){return {top:0,left:0,right:0,bottom:0,width:100,height:this.classList&&this.classList.contains('batch-flow-footer')?footerHeight.value:0};};
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
- await sleep(30);
+ await idle(w);
  w.serviceInstances={'inst-1':{service_id:'valkey',plan_id:'cluster',name:'Cache 1'}};
  d.getElementById('upgrade').classList.add('active');
- await w.__T.initUpgradeTab();await sleep(30);
+ await w.__T.initUpgradeTab();await idle(w);
  return {...env,observers};
 }
 

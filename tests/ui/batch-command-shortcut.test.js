@@ -1,13 +1,13 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 async function setup(){
  const env=boot({oat:true}),{w,d}=env;
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[{operating_system:'ubuntu',version:'1'}])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})]);
- await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await idle(w);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
  await w.__T.initUpgradeTab();return env;
 }
 const press=(w,code,target)=>target.dispatchEvent(new w.KeyboardEvent('keydown',{code,key:code.replace('Key',''),altKey:true,shiftKey:true,bubbles:true,cancelable:true}));
@@ -16,22 +16,22 @@ t('Alt/Option+Shift+X opens the Run command options',async()=>{
  const {w,d}=await setup();try{
  const panel=d.getElementById('upgrade');panel.classList.add('active');
  expect(d.getElementById('rotate-op-command').getAttribute('aria-keyshortcuts')).toBe('Alt+Shift+X');
- press(w,'KeyX',panel);await sleep(0);
+ press(w,'KeyX',panel);await idle(w);
  expect(d.getElementById('rotate-op-command').checked).toBe(true);
  expect(w.__T.batchFlow.step).toBe(1);
  // The draft of the operation left behind comes back the same way as for U, R, and C.
- press(w,'KeyU',panel);await sleep(0);
+ press(w,'KeyU',panel);await idle(w);
  expect(d.getElementById('rotate-op-upgrade').checked).toBe(true);
  }finally{w.close();}
 });
 t('the shortcut pauses in text fields and does nothing when commands are off',async()=>{
  const {w,d}=await setup();try{
  const panel=d.getElementById('upgrade');panel.classList.add('active');
- press(w,'KeyX',d.getElementById('batch-search'));await sleep(0);
+ press(w,'KeyX',d.getElementById('batch-search'));await idle(w);
  expect(d.getElementById('rotate-op-command').checked).toBe(false);
  const radio=d.getElementById('rotate-op-command');radio.disabled=true;
  w.__T.commandState.unavailable='Commands are turned off.';
- press(w,'KeyX',panel);await sleep(0);
+ press(w,'KeyX',panel);await idle(w);
  expect(radio.checked).toBe(false);expect(w.__T.batchFlow.step).toBe(0);
  }finally{w.close();}
 });

@@ -1,8 +1,8 @@
 const {test,expect,afterEach}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {setupRotate,cert}=require('./rotate-flow-support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 // Routes for the page's own load, so a console error means something broke.
 const QUIET=[[/\/b\/status$/,(u,o,j)=>j(200,{env:'Local fixture',instances:{},plans:{}})],[/\/b\/instance$/,(u,o,j)=>j(200,{deployment:'blacksmith'})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],[/inventory\?summary_only=true/,(u,o,j)=>j(200,{summary:{certificates:0,needs_attention:0}})]];
@@ -12,8 +12,8 @@ async function setupCommand(){
  const env=boot({noDialogs:true,guidance:true,routes:QUIET}),{w}=env;envs.push(env);
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])],
   ['/b/upgrade/commands/preview',(u,o,j)=>j(400,{success:false,error:'Select at least one instance to preview.',code:'no_selections'})]);
- await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
- await w.__T.initUpgradeTab();await sleep(10);
+ await idle(w);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await w.__T.initUpgradeTab();await idle(w);
  await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
  return env;
 }
@@ -56,15 +56,15 @@ t('info buttons stay usable while a command create is pending',async()=>{
   ['/b/upgrade/commands/preview',(u,o,j)=>JSON.parse(o.body).instance_ids.length?j(200,preview):j(400,{success:false,error:'Select at least one instance to preview.',code:'no_selections'})],
   ['/b/upgrade/tasks',(u,o,j)=>(o.method||'GET')==='POST'?j(401,{success:false,error:'A command key is required.',code:'command_credential_required'}):j(200,[])]);
  w.plansData={services:[{id:'valkey',name:'valkey'}]};
- await sleep(30);w.serviceInstances={'val-a':{service_id:'valkey',plan_id:'small',plan:{id:'small',name:'small'}}};
- await w.__T.initUpgradeTab();await sleep(10);
+ await idle(w);w.serviceInstances={'val-a':{service_id:'valkey',plan_id:'small',plan:{id:'small',name:'small'}}};
+ await w.__T.initUpgradeTab();await idle(w);
  await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
  const text=d.getElementById('command-text');text.value='uptime';text.dispatchEvent(new w.Event('input',{bubbles:true}));
- w.__T.setBatchStep(2,false);await sleep(5);
+ w.__T.setBatchStep(2,false);await idle(w);
  d.querySelector('#upgrade .upgrade-instance-item[data-instance-id="val-a"] input[type="checkbox"]').click();
- w.__T.runBatchReview();await sleep(30);
+ w.__T.runBatchReview();await idle(w);
  const ack=d.getElementById('batch-flow-ack');ack.value='run as vcap';ack.dispatchEvent(new w.Event('input',{bubbles:true}));
- d.getElementById('batch-flow-next').click();await sleep(30);
+ d.getElementById('batch-flow-next').click();await idle(w);
  expect(d.getElementById('command-text').disabled).toBe(true);
  const buttons=[...d.querySelectorAll('#batch-flow-options .command-pane .field-guidance button')];
  expect(buttons.length).toBe(4);
@@ -105,7 +105,7 @@ t('the Mode info button comes before the tab strip in the DOM',async()=>{
 
 t('the Mode strip without tabs keeps a hidden legend and the same info button',async()=>{
  const env=boot({noDialogs:true,guidance:true,oat:true,routes:QUIET});envs.push(env);
- const {w}=env;await sleep(30);
+ const {w}=env;await idle(w);
  const controls=w.__T.buildModeControls({prefix:'rotate-dialog-x',name:'rotate-dialog-mode-x',state:{mode:'redeploy',converge:''},blockReason:()=>'',onChange(){}});
  const mode=controls.root;
  expect(mode.querySelector('bs-tabs')).toBe(null);

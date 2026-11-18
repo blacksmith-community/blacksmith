@@ -1,19 +1,19 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs'),path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {setupRotate,cert}=require('./rotate-flow-support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','forge-theme.css'),'utf8');
 const certs=[cert('/s/a_crt','a_crt',5,'inst-a','cache-a'),cert('/s/b_crt','b_crt',20,'inst-b','cache-b')];
 const row=(d,id)=>d.querySelector(`#upgrade .upgrade-instance-item[data-instance-id="${id}"]`);
 async function setupUpgrade(){
  const env=boot(),{w,d}=env;
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
- await sleep(30);
+ await idle(w);
  w.serviceInstances={'inst-1':{service_id:'valkey',plan_id:'cluster',name:'Cache 1'},'inst-2':{service_id:'valkey',plan_id:'cluster',name:'Cache 2'}};
  d.getElementById('upgrade').classList.add('active');
- await w.__T.initUpgradeTab();await sleep(30);
+ await w.__T.initUpgradeTab();await idle(w);
  w.__T.setBatchStep(2,false);
  return env;
 }

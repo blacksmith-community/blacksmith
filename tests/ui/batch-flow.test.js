@@ -1,12 +1,12 @@
 const {test,expect}=require('bun:test');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 async function setup(){
  const env=boot({oat:true}),{w,d}=env;
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[{operating_system:'ubuntu',version:'1'}])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
- await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
- await w.__T.initUpgradeTab();return env;
+ await idle(w);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await w.__T.initUpgradeTab();await idle(w);return env;
 }
 t('focused steps preserve choices across breadcrumbs and Activity',async()=>{
  const {w,d}=await setup();try{
@@ -16,7 +16,7 @@ t('focused steps preserve choices across breadcrumbs and Activity',async()=>{
  expect(w.__T.batchFlow.step).toBe(0);
  expect(d.querySelector('.upgrade-targets-panel').hidden).toBe(true);
  next.click();expect(w.__T.batchFlow.step).toBe(1);expect(next.disabled).toBe(true);
- const target=d.getElementById('upgrade-stemcell-filter');target.value='ubuntu/1';target.dispatchEvent(new w.Event('change',{bubbles:true}));await sleep(0);
+ const target=d.getElementById('upgrade-stemcell-filter');target.value='ubuntu/1';target.dispatchEvent(new w.Event('change',{bubbles:true}));await idle(w);
  expect(next.disabled).toBe(false);next.click();expect(w.__T.batchFlow.step).toBe(2);
  d.getElementById('upgrade-select-all').click();
  d.querySelector('[data-batch-step="0"]').click();
@@ -129,7 +129,7 @@ t('upgrade options use System and Releases rows and an applied release summary',
 
 t('release picker keeps drafts isolated until Apply and rejects stale versions',async()=>{
  const {w,d}=await setup();try{
- await sleep(30);
+ await idle(w);
  const source=d.querySelector('.upgrade-advanced-releases');
  source.innerHTML='<select id="upgrade-advrel-bpm" data-release-name="bpm"><option value="">Keep current</option><option value="1.4">1.4</option><option value="1.5">1.5</option></select>';
  const original=source.querySelector('select');original.value='1.4';w.__T.syncAdvancedReleaseSummary();
@@ -171,8 +171,8 @@ t('batch shortcuts navigate views and steps without submitting or intercepting t
  key('KeyN');expect(w.__T.batchFlow.step).toBe(0);
  const modal=d.createElement('dialog');modal.setAttribute('open','');d.body.append(modal);
  key('KeyA');shown('batch-new');modal.remove();
- key('KeyR');await sleep(0);expect(d.getElementById('rotate-op-rotate').checked).toBe(true);expect(w.__T.batchFlow.step).toBe(1);
- key('KeyU');await sleep(0);key('KeyN');
+ key('KeyR');await idle(w);expect(d.getElementById('rotate-op-rotate').checked).toBe(true);expect(w.__T.batchFlow.step).toBe(1);
+ key('KeyU');await idle(w);key('KeyN');
 
  key('ArrowRight');expect(w.__T.batchFlow.step).toBe(1);
  key('ArrowRight');expect(w.__T.batchFlow.step).toBe(1); // no target selected

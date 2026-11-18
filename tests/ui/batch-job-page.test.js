@@ -1,10 +1,10 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {main:{boot,idle,trackTimers,TEST_LIMIT}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const {watchUncaught}=require('./watch-uncaught.js');
-const t=JSDOM?test:test.skip;
+const t=JSDOM?(n,f,l)=>test(n,f,l===undefined?TEST_LIMIT:l):test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
 const strip=(css)=>css.replace(/\/\*[\s\S]*?\*\//g,'');
@@ -43,7 +43,7 @@ const task=()=>({
 const start=async()=>{
  const env=boot({noDialogs:true});
  envs.push(env);
- await sleep(60);
+ await idle(env);
  env.w.__T.renderTaskDetail(task());
  return env;
 };
@@ -130,11 +130,11 @@ t('the certificate changes header does not stick over the toolbar',()=>{
 
 const crumbs=async(hash,title)=>{
  const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1><div class="tab-content"></div></main>',{url:'http://localhost/'+hash,runScripts:'outside-only',pretendToBeVisual:true});
- const w=watchUncaught(dom.window);
+ const w=watchUncaught(dom.window);trackTimers(w);
  w.blacksmithViews={activate:async (r)=>r};
  if(title) w.blacksmithJobTitle=(id)=>id==='job-1'?title:'';
  w.eval(fs.readFileSync(path.join(UI,'routes.js'),'utf8'));
- await sleep(40);
+ await idle(w);
  return w;
 };
 const list=(w)=>[...w.document.querySelectorAll('nav[aria-label="Breadcrumb"] li')].map((li)=>li.textContent);
