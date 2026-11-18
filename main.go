@@ -1512,6 +1512,10 @@ func readoptServiceOperations(ctx context.Context, brokerInstance *broker.Broker
 	defer stop()
 
 	err := brokerInstance.ReadoptInFlightOperations(readoptCtx)
+	if err != nil && readoptCtx.Err() != nil && ctx.Err() == nil {
+		return fmt.Errorf("%w: re-adoption of the service operations left in flight did not finish: %w", errStoppedBeforeServing, err)
+	}
+
 	if err != nil {
 		return fmt.Errorf("blacksmith stopped before it re-adopted the service operations left in flight: %w", err)
 	}
@@ -1535,12 +1539,15 @@ const deploymentNameBackfillTimeout = 2 * time.Minute
 // The service context does not end on a signal, so the backfill runs under
 // a context that also ends on SIGINT or SIGTERM, and after
 // deploymentNameBackfillTimeout. A director that accepts the connection
-// and then stalls can't hold boot, or a stop, for longer than that.
-func backfillDeploymentNames(ctx context.Context, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) {
+// and then stalls can't hold boot, or a stop, for longer than that. Only a
+// signal stops boot: the backfill then returns an error that wraps
+// errStoppedBeforeServing, and runService returns it before it starts
+// anything else.
+func backfillDeploymentNames(ctx context.Context, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) error {
 	if boshDirector == nil {
 		logger.Warn("No BOSH director is configured, so the deployment names of instances indexed without one are not recorded")
 
-		return
+		return nil
 	}
 
 	signalCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
@@ -1552,8 +1559,17 @@ func backfillDeploymentNames(ctx context.Context, brokerInstance *broker.Broker,
 	result, err := brokerInstance.BackfillDeploymentNames(backfillCtx)
 	if err != nil {
 		logger.Warn("The deployment names of instances indexed without one were not recorded, and the next boot tries again: %s", err)
+	}
 
-		return
+	// A signal that arrived while the backfill ran stops boot, whether or
+	// not it cut the backfill short. The service context itself ending
+	// is not a signal, and the timeout alone never stops boot.
+	if signalCtx.Err() != nil && ctx.Err() == nil {
+		return fmt.Errorf("%w: the signal arrived while the deployment names were recorded", errStoppedBeforeServing)
+	}
+
+	if err != nil {
+		return nil
 	}
 
 	if len(result.Recorded) > 0 {
@@ -1564,6 +1580,8 @@ func backfillDeploymentNames(ctx context.Context, brokerInstance *broker.Broker,
 		logger.Warn("%d instances record no deployment name, and the director has no deployment under the name each resolves to, so none was recorded: %s",
 			len(result.Unconfirmed), strings.Join(result.Unconfirmed, ", "))
 	}
+
+	return nil
 }
 
 // sshCleanupSweepInterval is how often the broker sweeps its SSH cleanup
@@ -1663,7 +1681,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	}
 
 	if bootCtx.Err() != nil {
-		return fmt.Errorf("blacksmith received a shutdown signal during startup and stopped before serving: %w", bootCtx.Err())
+		return fmt.Errorf("%w: %w", errStoppedBeforeServing, bootCtx.Err())
 	}
 
 	stopBoot()
@@ -1680,7 +1698,10 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 		return err
 	}
 
-	backfillDeploymentNames(ctx, brokerInstance, boshDirector, logger)
+	err = backfillDeploymentNames(ctx, brokerInstance, boshDirector, logger)
+	if err != nil {
+		return err
+	}
 
 	startSSHCleanupSweeps(ctx, boshDirector, vault, logger)
 
@@ -2211,12 +2232,37 @@ func main() {
 
 	// Initialize and run the service
 	err = runService(configPath, *buildInfo, logger)
-	if err != nil {
-		logger.Error("Service failed: %v", err)
-		os.Exit(exitCodeError)
+
+	code := serviceExitCode(err, logger)
+	if code != 0 {
+		os.Exit(code)
 	}
 
 	logger.Info("Blacksmith service broker shut down complete")
+}
+
+// errStoppedBeforeServing marks a boot that a shutdown signal stopped
+// before the broker served anything. runService returns it once its
+// deferred cleanup has run, and the broker exits without an error, as it
+// does after a shutdown that follows serving.
+var errStoppedBeforeServing = errors.New("blacksmith received a shutdown signal during startup and stopped before serving")
+
+// serviceExitCode logs how runService ended and returns the exit code.
+// A boot that a signal stopped is a clean exit, and any other error is
+// exitCodeError.
+func serviceExitCode(err error, logger loggerPkg.Logger) int {
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, errStoppedBeforeServing):
+		logger.Info("%v", err)
+
+		return 0
+	default:
+		logger.Error("Service failed: %v", err)
+
+		return exitCodeError
+	}
 }
 
 // Use SSH.WebSocket.PingInterval as the authoritative setting for WS ping tuning.

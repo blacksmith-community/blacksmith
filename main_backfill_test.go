@@ -34,7 +34,10 @@ func TestBackfillDeploymentNamesNeverStopsBoot(t *testing.T) {
 		pool := bosh.NewPooledDirector(director, 1, time.Second, loggerPkg.CreateSilentLogger())
 		logger := newRecordingLogger()
 
-		backfillDeploymentNames(context.Background(), &broker.Broker{BOSH: pool}, pool, logger)
+		err := backfillDeploymentNames(context.Background(), &broker.Broker{BOSH: pool}, pool, logger)
+		if err != nil {
+			t.Errorf("the backfill stopped boot: %v", err)
+		}
 
 		warnings := strings.Join(logger.lines("warn"), "\n")
 		if !strings.Contains(warnings, "director unavailable") {
@@ -47,7 +50,10 @@ func TestBackfillDeploymentNamesNeverStopsBoot(t *testing.T) {
 
 		logger := newRecordingLogger()
 
-		backfillDeploymentNames(context.Background(), &broker.Broker{}, nil, logger)
+		err := backfillDeploymentNames(context.Background(), &broker.Broker{}, nil, logger)
+		if err != nil {
+			t.Errorf("the backfill stopped boot: %v", err)
+		}
 
 		if warnings := logger.lines("warn"); len(warnings) != 1 {
 			t.Errorf("expected one warning, got %q", warnings)

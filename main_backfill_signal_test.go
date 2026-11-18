@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -67,10 +69,12 @@ func TestBackfillDeploymentNamesStopsOnSIGTERM(t *testing.T) {
 	logger := newRecordingLogger()
 	done := make(chan struct{})
 
+	var stopped error
+
 	go func() {
 		defer close(done)
 
-		backfillDeploymentNames(context.Background(), &broker.Broker{BOSH: director}, pool, logger)
+		stopped = backfillDeploymentNames(context.Background(), &broker.Broker{BOSH: director}, pool, logger)
 	}()
 
 	select {
@@ -93,5 +97,42 @@ func TestBackfillDeploymentNamesStopsOnSIGTERM(t *testing.T) {
 	warnings := strings.Join(logger.lines("warn"), "\n")
 	if !strings.Contains(warnings, "were not recorded") {
 		t.Errorf("expected a warning that the names were not recorded, got %q", warnings)
+	}
+
+	// Boot goes no further after the signal. runService returns this
+	// error before it starts the sweeps, the reconciler, the VM monitor,
+	// or the servers, and main exits without an error.
+	if !errors.Is(stopped, errStoppedBeforeServing) {
+		t.Errorf("the backfill returned %v after SIGTERM, want an error wrapping errStoppedBeforeServing", stopped)
+	}
+
+	if code := serviceExitCode(stopped, newRecordingLogger()); code != 0 {
+		t.Errorf("a broker stopped by SIGTERM during the backfill exits with %d, want 0", code)
+	}
+}
+
+// A boot that a signal stops before serving exits without an error, and
+// any other failure of the service exits with exitCodeError.
+func TestServiceExitCode(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		err  error
+		code int
+	}{
+		{"a clean shutdown", nil, 0},
+		{"a signal before serving", fmt.Errorf("re-adoption: %w", errStoppedBeforeServing), 0},
+		{"a failure", errDirectorListFailed, exitCodeError},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if code := serviceExitCode(test.err, newRecordingLogger()); code != test.code {
+				t.Errorf("serviceExitCode(%v) is %d, want %d", test.err, code, test.code)
+			}
+		})
 	}
 }
