@@ -1,7 +1,7 @@
 const { test, expect } = require('bun:test');
 const fs = require('fs');
 const path = require('path');
-const { main: { boot } } = require('./certificates/harness.js');
+const { main: { boot, idle, until, TEST_LIMIT } } = require('./certificates/harness.js');
 const { pinZone } = require('./fixed-zone.js');
 
 pinZone('America/New_York');
@@ -100,7 +100,6 @@ const clickButton = (w, button) => {
   button.addEventListener('click', (event) => new w.Function('event', button.getAttribute('onclick')).call(button, event));
   button.click();
 };
-const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 const fetchedAtOf = (content) => content.querySelector('.data-fetched-note time')?.getAttribute('datetime');
 
 test('the real Refresh button moves the fetched time that a restored view shows', async () => {
@@ -108,21 +107,21 @@ test('the real Refresh button moves the fetched time that a restored view shows'
   try {
     let now = Date.parse('2026-11-01T10:00:05Z');
     w.Date.now = () => now;
-    await settle(200);
+    await idle(w);
     stubFetch(w);
     w.blacksmithDeploymentName = 'test-blacksmith';
     const content = mountVms(w, d);
     w.__T.markFetched(content);
     now = Date.parse('2026-11-01T10:30:00Z');
     clickButton(w, content.querySelector('.refresh-btn-logs'));
-    await settle(50);
+    await until(() => content.textContent.includes('refreshed-job'), 'the refreshed job to show');
     expect(content.textContent).toContain('refreshed-job');
     expect(w.__T.retainView(content, 'other')).toBe(false);
     content.innerHTML = '<p>Other</p>';
     expect(w.__T.retainView(content, 'vms')).toBe(true);
     expect(fetchedAtOf(content)).toBe('2026-11-01T10:30:00.000Z');
   } finally { w.close(); }
-});
+}, TEST_LIMIT);
 
 test('a load that finishes while its container is detached is stamped', async () => {
   const { w, d } = boot();
@@ -140,7 +139,7 @@ test('a load that finishes while its container is detached is stamped', async ()
     expect(w.__T.retainView(content, 'vms')).toBe(true);
     expect(fetchedAtOf(content)).toBe('2026-11-01T10:45:00.000Z');
   } finally { w.close(); }
-});
+}, TEST_LIMIT);
 
 test('a child added after the load does not move the fetched time', async () => {
   const { w, d } = boot();
@@ -153,10 +152,10 @@ test('a child added after the load does not move the fetched time', async () => 
     const toast = d.createElement('div');
     toast.className = 'toast';
     content.appendChild(toast);
-    await settle();
+    await idle(w);
     expect(w.__T.retainView(content, 'other')).toBe(false);
     content.innerHTML = '<p>Other</p>';
     expect(w.__T.retainView(content, 'vms')).toBe(true);
     expect(fetchedAtOf(content)).toBe('2026-11-01T10:00:05.000Z');
   } finally { w.close(); }
-});
+}, TEST_LIMIT);

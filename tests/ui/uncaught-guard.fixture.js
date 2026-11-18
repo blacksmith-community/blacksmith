@@ -6,11 +6,12 @@ const { JSDOM } = require('./certificates/support.js');
 const { watchUncaught } = require('./watch-uncaught.js');
 
 const t = JSDOM ? test : test.skip;
-const { sleep } = H.main;
+const { until } = H.main;
 
 const throwLater = async (env) => {
-  env.w.setTimeout(() => { throw new Error('boom from a timer'); }, 0);
-  await sleep(30);
+  let ran = false;
+  env.w.setTimeout(() => { ran = true; throw new Error('boom from a timer'); }, 0);
+  await until(() => ran, 'the timer to run');
 };
 
 t('main harness window', async () => { const env = H.main.boot(); await throwLater(env); env.w.close(); });
