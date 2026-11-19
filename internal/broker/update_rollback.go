@@ -289,8 +289,9 @@ func (p *updatePhase) settleRollback(ctx context.Context, task *bosh.Task, reaso
 }
 
 // settleFailure records the end of an update whose deploy failed, under
-// the instance's settle lock, writes its change record, and deletes the
-// manifest saved for the rollback. The stored plan, parameters, and
+// the instance's settle lock, trying the write until it lands, and then
+// writes its change record and deletes the manifest saved for the
+// rollback. The stored plan, parameters, and
 // manifest stay at their last good values, and nothing is deleted from
 // the director.
 func (p *updatePhase) settleFailure(ctx context.Context, state, description, outcome string, rollback internalVault.UpdateRollback) {
@@ -304,13 +305,14 @@ func (p *updatePhase) settleFailure(ctx context.Context, state, description, out
 	}
 	defer unlock()
 
+	if !p.settleWrite(settleCtx, outcome, func(recordCtx context.Context) error {
+		return p.broker.Vault.SettleUpdateFailure(recordCtx, p.instanceID, state, description, p.contextID, rollback) //nolint:wrapcheck // settleWrite matches the vault's sentinels
+	}) {
+		return
+	}
+
 	recordCtx, cancel := recordContext(settleCtx)
 	defer cancel()
-
-	err = p.broker.Vault.SettleUpdateFailure(recordCtx, p.instanceID, state, description, p.contextID, rollback)
-	if err != nil && !errors.Is(err, internalVault.ErrHistoryNotAppended) {
-		p.logger.Error("CRITICAL: failed to record the %s update of instance %s: %s", state, p.instanceID, err)
-	}
 
 	p.broker.auditUpdateFailure(recordCtx, p.instanceID, p.target, p.request, outcome, rollback)
 	p.dropRollbackManifest(settleCtx)

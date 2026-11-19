@@ -243,20 +243,24 @@ func (p *updatePhase) progress(ctx context.Context, message string, taskID int) 
 	}
 }
 
-// fail records the update as failed with description and leaves a change
-// record. The deployment, the stored plan, parameters, and manifest stay
-// as they were, and nothing is deleted.
+// fail records the update as failed with description, trying the write
+// until it lands, and then leaves a change record and deletes the saved
+// manifest. The deployment, the stored plan, parameters, and manifest
+// stay as they were, and nothing is deleted from the director.
 func (p *updatePhase) fail(ctx context.Context, description string, taskID int) {
-	recordCtx, cancel := recordContext(context.WithoutCancel(ctx))
-	defer cancel()
+	settleCtx := context.WithoutCancel(ctx)
 
-	err := p.broker.Vault.TrackFailed(recordCtx, p.instanceID, operationTypeUpdate, description, p.contextID, taskID)
-	if err != nil {
-		p.logger.Error("CRITICAL: failed to record the failed update of instance %s: %s", p.instanceID, err)
+	if !p.settleWrite(settleCtx, updateOutcomeFailed, func(recordCtx context.Context) error {
+		return p.broker.Vault.TrackFailed(recordCtx, p.instanceID, operationTypeUpdate, description, p.contextID, taskID) //nolint:wrapcheck // settleWrite matches the vault's sentinels
+	}) {
+		return
 	}
 
+	recordCtx, cancel := recordContext(settleCtx)
+	defer cancel()
+
 	p.broker.auditUpdate(recordCtx, p.instanceID, p.target, p.request, updateOutcomeFailed, "", taskID)
-	p.dropRollbackManifest(ctx)
+	p.dropRollbackManifest(settleCtx)
 }
 
 // carryLiveVersions returns the requested manifest with the live version
@@ -319,6 +323,60 @@ func (p *updatePhase) deploy(ctx context.Context, deployed string) (*bosh.Task, 
 	return task, true
 }
 
+// updateRetryWait is the first wait before an update reads its task again
+// or tries a settle write again, after one failed.
+func (b *Broker) updateRetryWait() time.Duration {
+	if b.updateTaskWait > 0 {
+		return b.updateTaskWait
+	}
+
+	return updateTaskRetry
+}
+
+// settleWrite runs write, the write that settles the update's record,
+// until it lands, waiting between attempts as a failed task read does.
+// The record is the only place the update's end is kept, so a failed
+// write that was passed over left the record unsettled, every later
+// update refused, and the saved manifest deleted while a restart still
+// needed it. A write the record refuses because it has moved on isn't
+// tried again. It reports false only when the broker shuts down before
+// the write lands, and the caller then writes no change record and keeps
+// the saved manifest, so re-adoption follows the task again at the next
+// start and settles the update.
+func (p *updatePhase) settleWrite(ctx context.Context, outcome string, write func(context.Context) error) bool {
+	wait := p.broker.updateRetryWait()
+
+	for {
+		recordCtx, cancel := recordContext(ctx)
+		err := write(recordCtx)
+
+		cancel()
+
+		switch {
+		case err == nil, errors.Is(err, internalVault.ErrHistoryNotAppended):
+			return true
+		case errors.Is(err, internalVault.ErrTaskRecordReplaced), errors.Is(err, internalVault.ErrUpdateNotInFlight):
+			p.logger.Error("CRITICAL: the record of instance %s no longer holds its update, so the %s update was not recorded: %s", p.instanceID, outcome, err)
+
+			return true
+		}
+
+		p.logger.Error("Instance %s: failed to record its %s update, and tries again in %v: %s", p.instanceID, outcome, wait, err)
+
+		timer := time.NewTimer(wait)
+		wait = min(updateTaskRetryFactor*wait, max(updateTaskRetryMax, wait))
+
+		select {
+		case <-timer.C:
+		case <-p.broker.serviceContext().Done():
+			timer.Stop()
+			p.logger.Warning("Instance %s: the broker is shutting down before its %s update was recorded, so re-adoption settles it at the next start", p.instanceID, outcome)
+
+			return false
+		}
+	}
+}
+
 // followUpdateTask waits for the update's BOSH task to end, and reads it
 // again after a failed read, with a wait that doubles up to
 // updateTaskRetryMax, until ctx ends. No time bound applies, because the
@@ -326,10 +384,7 @@ func (p *updatePhase) deploy(ctx context.Context, deployed string) (*bosh.Task, 
 // reached. It returns the director's task-not-found answer when the
 // director no longer has the task.
 func (b *Broker) followUpdateTask(ctx context.Context, taskID int, logger logger.Logger) (*bosh.Task, error) {
-	wait := updateTaskRetry
-	if b.updateTaskWait > 0 {
-		wait = b.updateTaskWait
-	}
+	wait := b.updateRetryWait()
 
 	var failingSince, stallLogged time.Time
 
@@ -407,7 +462,8 @@ func (p *updatePhase) failUnresumable(ctx context.Context, task *bosh.Task) {
 
 // commit records the update whose deploy succeeded, under the instance's
 // settle lock. It commits the staged values, the deployed manifest, the
-// credentials, and the plan references.
+// credentials, and the plan references, and then settles the record,
+// trying the write until it lands, before it leaves the change record.
 func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed string) {
 	settleCtx := context.WithoutCancel(ctx)
 
@@ -436,13 +492,14 @@ func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed stri
 
 	p.broker.storePlanReferences(settleCtx, p.instanceID, &p.plan, p.logger)
 
+	if !p.settleWrite(settleCtx, updateOutcomeSucceeded, func(recordCtx context.Context) error {
+		return p.broker.Vault.TrackSucceeded(recordCtx, p.instanceID, operationTypeUpdate, fmt.Sprintf("Updated by BOSH deployment task %d", task.ID), task.ID) //nolint:wrapcheck // settleWrite matches the vault's sentinels
+	}) {
+		return
+	}
+
 	recordCtx, cancelRecord := recordContext(settleCtx)
 	defer cancelRecord()
-
-	err = p.broker.Vault.TrackSucceeded(recordCtx, p.instanceID, operationTypeUpdate, fmt.Sprintf("Updated by BOSH deployment task %d", task.ID), task.ID)
-	if err != nil {
-		p.logger.Error("CRITICAL: failed to record the succeeded update of instance %s: %s", p.instanceID, err)
-	}
 
 	p.broker.auditUpdate(recordCtx, p.instanceID, p.target, p.request, updateOutcomeSucceeded, "", task.ID)
 	p.dropRollbackManifest(settleCtx)
