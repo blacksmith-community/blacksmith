@@ -112,12 +112,14 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 	var (
 		plan        services.Plan
 		unresumable string
+		planMissing bool
 	)
 
 	staged, stagedErr := stagedUpdate(record)
 	if stagedErr == nil {
 		plan, err = b.FindPlan(instance.ServiceID, staged.PlanID)
 		if err != nil {
+			planMissing = true
 			unresumable = fmt.Sprintf("the broker can't record the update's values, because plan %s is no longer in the catalog", staged.PlanID)
 		}
 	} else {
@@ -156,6 +158,7 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 		logger:      logger,
 		rollback:    rollback,
 		unresumable: unresumable,
+		planMissing: planMissing,
 		stagedLost:  stagedErr != nil,
 	}, nil
 }

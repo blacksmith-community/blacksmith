@@ -284,7 +284,7 @@ The broker merges the request over the stored parameters. A key in the request s
 
 - **Failure**
 
-  When the deploy task fails, the stored plan, parameters, and manifest keep their last good values, and the broker never deletes the deployment. With `update_rollback` off, which is the default, the poll answers `failed` with `instance_usable: true` and `update_repeatable: true`.
+  When the deploy task fails, the stored plan, parameters, and manifest keep their last good values, and the broker never deletes the deployment. With `update_rollback` off, which is the default, the poll answers `failed` with `instance_usable: true` and `update_repeatable: true`. Once the instance's plan has left the catalog, every update is refused until an operator restores the plan, so the poll answers `update_repeatable: false` until then. When a restart interrupts an update whose plan has since left the catalog, the broker follows the task to its end and settles the update as failed with a description that tells the tenant an operator must restore the plan.
 
 - **Rollback**
 

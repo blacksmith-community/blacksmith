@@ -6,6 +6,7 @@ import (
 
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
+	vaultPkg "blacksmith/pkg/vault"
 
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
@@ -14,7 +15,7 @@ import (
 // recorded. The update's own goroutine, or re-adoption after a restart,
 // settles it, so a poll never settles an update as a provision and never
 // deletes anything.
-func (b *Broker) updateStatus(_ context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+func (b *Broker) updateStatus(_ context.Context, instanceID string, instance *vaultPkg.Instance, deploymentName string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if recorded.Action != operationTypeUpdate {
 		if recorded.Action == "" {
 			logger.Error("Instance %s: an update poll found no operation on record, so it changes nothing and leaves deployment %s as it is", instanceID, deploymentName)
@@ -40,8 +41,11 @@ func (b *Broker) updateStatus(_ context.Context, instanceID, deploymentName stri
 		// failed as well, or a failure was recorded while the rollback
 		// still ran, the broker can no longer vouch for the deployment,
 		// and a repeated update deploys a fresh render that can repair it.
+		// Once the instance's plan has left the catalog, every update is
+		// refused until an operator restores it, so the update isn't
+		// repeatable until then.
 		usable := recorded.State == recordedStateFailed && !recorded.RollingBack
-		repeatable := true
+		_, repeatable := b.Plans[instance.ServiceID+"/"+instance.PlanID]
 
 		return osbapi.LastOperationResponse{
 			State: osbapi.StateFailed, Description: recorded.Description,

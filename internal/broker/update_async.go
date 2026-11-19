@@ -77,6 +77,10 @@ type updatePhase struct {
 	// still followed to its end under the claim, and the update then
 	// settles as failed with this reason, committing nothing.
 	unresumable string
+	// planMissing reports that the plan the staged values name has left
+	// the catalog. Every update of the instance is refused until an
+	// operator restores it, so the update isn't repeatable until then.
+	planMissing bool
 	// stagedLost reports that the staged values can't be read back, so
 	// whether a rollback ran isn't known either. Any end of the task then
 	// settles the update as failed, and nothing rolls back.
@@ -594,12 +598,19 @@ func (p *updatePhase) settle(ctx context.Context, task *bosh.Task, deployed stri
 }
 
 // failUnresumable settles an update re-adoption can't carry through as
-// failed once its task ended, and says why. The instance's values stay
-// at their last good state, and a repeat of the update deploys and
-// records them.
+// failed once its task ended, and says why and what comes next. The
+// instance's values stay at their last good state, and a repeat of the
+// update deploys and records them. When the plan has left the catalog,
+// every update is refused until an operator restores it, so the answer
+// says that instead.
 func (p *updatePhase) failUnresumable(ctx context.Context, task *bosh.Task) {
+	next := "Send the update again"
+	if p.planMissing {
+		next = "An operator must restore the plan before the instance can be updated, and the update must then be sent again so its values are recorded"
+	}
+
 	p.logger.Error("Instance %s: BOSH task %d ended in state %s, and %s, so the update settles as failed", p.instanceID, task.ID, task.State, p.unresumable)
-	p.fail(ctx, fmt.Sprintf("BOSH deployment task %d ended in state %s, and %s. Send the update again", task.ID, task.State, p.unresumable), task.ID)
+	p.fail(ctx, fmt.Sprintf("BOSH deployment task %d ended in state %s, and %s. %s", task.ID, task.State, p.unresumable, next), task.ID)
 }
 
 // commit records the update whose deploy succeeded, under the instance's

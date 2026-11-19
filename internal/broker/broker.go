@@ -858,7 +858,7 @@ func (b *Broker) LastOperation(
 	case operationTypeDeprovision:
 		return b.deprovisionStatus(ctx, instanceID, deploymentName, recorded, logger)
 	case operationTypeUpdate:
-		return b.updateStatus(ctx, instanceID, deploymentName, recorded, logger)
+		return b.updateStatus(ctx, instanceID, instance, deploymentName, recorded, logger)
 	default:
 		return b.provisionStatus(ctx, instanceID, deploymentName, recorded, logger)
 	}
