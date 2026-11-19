@@ -137,6 +137,12 @@ func (b *Broker) forgetCleanupAttention(instanceID string) {
 	b.cleanupAttention.Delete(instanceID)
 }
 
+// forgetAttentionRow drops row only while it is still the row held for
+// its instance, so a row noted in its place after it was read stays.
+func (b *Broker) forgetAttentionRow(row attentionRow) {
+	b.cleanupAttention.CompareAndDelete(row.InstanceID, row)
+}
+
 // isDeleteRefusal reports whether row was noted by a refused delete.
 func isDeleteRefusal(row attentionRow) bool {
 	return row.kind == deleteRefusal

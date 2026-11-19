@@ -1025,6 +1025,43 @@ func debtorRow(t *testing.T, deleter *broker.Broker) interfaces.CleanupAttention
 	return interfaces.CleanupAttention{}
 }
 
+// The sweep drops only the row it read and found settled. A row noted in
+// its place while the sweep checked the delete's refusal, here a cleanup's
+// row noted while the director is asked whether the deployment is gone,
+// stays listed.
+func TestDeleteRow_SweepDropsOnlyTheRowItRead(t *testing.T) {
+	t.Parallel()
+
+	const raised = "Request details stored under redis-small-x-abc could not be read"
+
+	vaultClient, _ := claimFaultVault(t)
+	ctx := context.Background()
+	name := writeTwoLiveClaims(ctx, t, vaultClient)
+
+	var deleter *broker.Broker
+
+	scripted := newFaultingScanDirector(func() { deleter.NoteCleanupAttention(doubleClaimDebtor, name, raised) })
+	deleter = doubleClaimDeprovisioner(ctx, t, scripted.director, vaultClient)
+
+	requireRefusedDelete(ctx, t, deleter)
+
+	// The check of the delete's row asks the director last, and the
+	// director says the deployment is gone, so the row it read is
+	// settled.
+	scripted.state.Store(scanDeploymentGone)
+	scripted.armed.Store(true)
+	deleter.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+	if scripted.armed.Swap(false) {
+		t.Fatal("the scan never asked the director, so no row was noted during its check")
+	}
+
+	rows := deleter.CleanupAttention()
+	if len(rows) != 1 || rows[0].InstanceID != doubleClaimDebtor || rows[0].Reason != raised {
+		t.Fatalf("the sweep left %+v for an operator, want only the row noted during its check", rows)
+	}
+}
+
 // requireRefusedDelete sends the delete of x-abc to deleter and requires
 // a 500.
 func requireRefusedDelete(ctx context.Context, t *testing.T, deleter *broker.Broker) {

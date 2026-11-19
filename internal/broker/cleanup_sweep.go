@@ -367,7 +367,9 @@ func (b *Broker) adoptStalledProvision(instanceID string, recorded recordedOpera
 // drops those of an instance it did not find. A record the pass found
 // but could not parse says nothing about the cleanup, so it settles
 // nothing. An entry a refused delete noted does not depend on a cleanup,
-// so it stays while deleteRefusalHolds says the refusal still holds.
+// so it stays while deleteRefusalHolds says the refusal still holds. Only
+// the entry the pass read is dropped, so one noted in its place while
+// the pass checked it stays.
 func (b *Broker) forgetSettledSuspects(ctx context.Context, candidates []*readoptCandidate, owed map[string]bool, notes map[string]uint64, full bool, logger logger.Logger) {
 	read := make(map[string]bool, len(candidates))
 	unparsed := map[string]bool{}
@@ -398,7 +400,7 @@ func (b *Broker) forgetSettledSuspects(ctx context.Context, candidates []*readop
 
 	for _, row := range b.attentionRows() {
 		if settled(row.InstanceID) && !b.deleteRefusalHolds(ctx, row, logger) {
-			b.forgetCleanupAttention(row.InstanceID)
+			b.forgetAttentionRow(row)
 		}
 	}
 }
