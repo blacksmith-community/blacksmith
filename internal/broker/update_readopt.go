@@ -119,6 +119,13 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 
 	contextID, _ := record["context_id"].(string)
 
+	// A rollback the restart interrupted is resumed as the rollback, by
+	// its own context ID, and never sent again.
+	var rollback *internalVault.UpdateRollback
+	if staged.Rollback != nil && staged.Rollback.Phase == internalVault.UpdatePhaseRollingBack {
+		rollback = staged.Rollback
+	}
+
 	return &updatePhase{
 		broker:     b,
 		instanceID: operation.instanceID,
@@ -131,6 +138,7 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 		plan:      plan,
 		contextID: contextID,
 		logger:    logger,
+		rollback:  rollback,
 	}, nil
 }
 
@@ -162,7 +170,9 @@ func stagedUpdate(record map[string]interface{}) (internalVault.StagedUpdate, er
 // resume follows the interrupted update's deploy and settles it. A record
 // that names no task yet may belong to an update the restart stopped
 // before or while it sent its deploy, so the resolver asks the director
-// by the update's context ID. It reports false when ctx ends first.
+// by the update's context ID. A rollback the restart interrupted is
+// followed and settled the same way by the rollback's context ID, and is
+// never sent again. It reports false when ctx ends first.
 func (p *updatePhase) resume(ctx context.Context) bool {
 	current, err := p.broker.readoptCurrent(ctx, p.instanceID)
 	if err != nil {
@@ -180,12 +190,12 @@ func (p *updatePhase) resume(ctx context.Context) bool {
 	taskID := current.TaskID
 
 	if !current.hasTask() {
-		task, found := p.resolveLostAnswer(ctx)
+		var found bool
+
+		taskID, found = p.resolveReadoptedTask(ctx)
 		if !found {
 			return ctx.Err() == nil
 		}
-
-		taskID = task.ID
 	}
 
 	finished, err := p.broker.followReadoptedTask(ctx, taskID, p.logger)
@@ -193,6 +203,13 @@ func (p *updatePhase) resume(ctx context.Context) bool {
 	switch {
 	case ctx.Err() != nil:
 		return false
+	case bosh.IsTaskNotFound(err) && p.rollback != nil:
+		// The director pruned the rollback's task, so whether it restored
+		// the deployment can't be known, and the broker can't vouch for
+		// the deployment.
+		p.settleRollback(ctx, nil, fmt.Sprintf("BOSH task %d is no longer known to the director, so its result is unknown", taskID))
+
+		return true
 	case bosh.IsTaskNotFound(err):
 		// The director pruned the task, so whether the deploy succeeded
 		// can't be known. The stored values stay at their last good state,
@@ -208,7 +225,9 @@ func (p *updatePhase) resume(ctx context.Context) bool {
 
 	deployed := ""
 
-	if finished.State == taskStateDone {
+	// A rollback's task commits nothing, so only the update's own
+	// succeeded deploy needs the deployed manifest.
+	if finished.State == taskStateDone && p.rollback == nil {
 		deployed, err = p.liveManifest(ctx)
 		if err != nil {
 			p.logger.Warning("Instance %s: its update's task %d succeeded, and the deployed manifest could not be read, so the next start settles it: %s", p.instanceID, taskID, err)
@@ -220,6 +239,24 @@ func (p *updatePhase) resume(ctx context.Context) bool {
 	p.settle(ctx, finished, deployed)
 
 	return true
+}
+
+// resolveReadoptedTask resolves the lost answer of the interrupted
+// update's deploy, or of its rollback's, by its context ID, and returns
+// the task the deploy started. A rollback's task is recorded as the
+// rollback's, so the poll says the previous manifest is being redeployed.
+func (p *updatePhase) resolveReadoptedTask(ctx context.Context) (int, bool) {
+	task, found := p.resolveLostAnswer(ctx)
+	if !found {
+		return 0, false
+	}
+
+	if p.rollback != nil {
+		p.rollback.TaskID = task.ID
+		p.progress(ctx, rollingBackDescription(*p.rollback), task.ID)
+	}
+
+	return task.ID, true
 }
 
 // liveManifest reads the manifest the director holds for the update's
