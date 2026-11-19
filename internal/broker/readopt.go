@@ -133,9 +133,9 @@ type readoptMigration struct {
 // that a previous run of the broker left in flight, and claims each of
 // them, so that when it returns every such operation holds its claim. An
 // update whose instance another operation holds gets its claim once the
-// instance is free. Then one
-// goroutine for each settles it as LastOperation would, and releases its
-// claim when it ends. It reads the instance index, lists the mount to find
+// instance is free. Then one goroutine for each settles it as
+// LastOperation would, or as the update's own goroutine would, and
+// releases its claim when it ends. It reads the instance index, lists the mount to find
 // the records whose index entry is gone, and reads each instance's record.
 // A failed read is retried with a backoff until Vault answers or ctx ends,
 // and no claim is taken until every read has succeeded. It returns an
