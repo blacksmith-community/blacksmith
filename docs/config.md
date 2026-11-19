@@ -256,7 +256,7 @@ Every layer takes a duration, so a bare number is refused, and so is a value of 
 #### `update_rollback` (boolean)
 **Default:** `false`
 
-When this is on, the broker redeploys the last good manifest once after a failed instance update. The broker doesn't accept instance updates yet, so for now the setting has no effect, and the Settings page shows it so an operator can choose before updates arrive.
+When this is on, the broker redeploys the last good manifest once after a failed instance update. The last good manifest is the one the director ran just before the update, and the broker deploys it exactly as it was. The broker reads the setting at the moment an update's deploy fails, so a change saved while an update runs applies to it. A rollback that restores the deployment leaves the update failed and the instance usable, and a rollback that fails leaves the update failed and the instance marked not usable, so an operator should check the deployment. The broker never retries a rollback.
 
 The broker takes the setting from the first of these that holds a usable value, in this order:
 

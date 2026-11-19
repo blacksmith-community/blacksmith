@@ -11022,7 +11022,7 @@
             </select>
             <button type="button" id="apply-update-rollback" class="settings-apply-btn" data-keep-key="settings:apply-update-rollback" aria-label="Apply update rollback">Apply</button>
           </div>
-          <span id="help-update-rollback" class="settings-hint">When on, the broker redeploys the last good manifest once after a failed instance update. Off by default. The broker doesn't accept instance updates yet, so this has no effect until it does. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(rollbackSource)}</span>
+          <span id="help-update-rollback" class="settings-hint">When on, the broker redeploys the last good manifest once after a failed instance update. Off by default. The value in effect when an update fails decides. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(rollbackSource)}</span>
           <span id="feedback-update-rollback" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
         <div class="settings-row">

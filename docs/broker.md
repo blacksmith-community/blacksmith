@@ -246,6 +246,7 @@ forges:
 
 2. **Plan Validation**
    - Service and plan lookup from catalog
+   - Parameters checked against the plan's schema, so a bad parameter gets a synchronous 400 `InvalidParameters` before anything is written
    - Service limit enforcement
    - Status updated to `validated` in Vault index
 
@@ -262,6 +263,34 @@ forges:
    - Real-time status updates in Vault
    - Progress tracking with detailed messages
    - Task ID storage for operation monitoring
+
+### Service Update Workflow
+
+A `PATCH /v2/service_instances/{instance_id}` changes an instance's parameters, or the platform context it carries. A plan change and a `maintenance_info` change are refused with 422 for now, and so is an update to an instance whose provision did not succeed.
+
+The broker merges the request over the stored parameters. A key in the request sets or replaces the stored value, a key whose value is `null` removes it, and a key the request leaves out keeps its value. The merged parameters are checked against the plan's schema, and a bad one gets a 400 `InvalidParameters`. The broker then renders the manifest for the current parameters and for the merged ones, and compares the two.
+
+- **No effect**
+
+  When the two renders match, nothing is deployed. The broker records the merged parameters and any new platform context, such as a renamed space, and answers 200.
+
+- **A change to deploy**
+
+  When the renders differ, the platform must accept an asynchronous answer, or the broker refuses the update with 422 `AsyncRequired`. The broker answers 202 with the operation `update`, and a background goroutine takes the change from there. It reads the live manifest from the director, carries forward any newer release and stemcell versions an upgrade applied, saves the live manifest for a possible rollback, uploads the releases the manifest still needs, and deploys it with a fresh context ID. The goroutine holds the instance's claim until the update settles, so an upgrade, a certificate rotation, or a manifest change finds the instance busy. A repeat of the same update gets 202 with the same operation, and a different update gets 422 `ConcurrencyError`.
+
+- **Success**
+
+  Once the deploy task succeeds, the broker commits the new parameters, the deployed manifest, and the context, and the poll answers `succeeded`.
+
+- **Failure**
+
+  When the deploy task fails, the stored plan, parameters, and manifest keep their last good values, and the broker never deletes the deployment. With `update_rollback` off, which is the default, the poll answers `failed` with `instance_usable: true` and `update_repeatable: true`.
+
+- **Rollback**
+
+  With `update_rollback` on, the broker redeploys the saved live manifest once, exactly as it was, under the same operation and the same claim. While it runs, the poll answers `in progress` and says the previous manifest is being redeployed. When the rollback restores the deployment, the poll answers `failed` with `instance_usable: true`, because the update the tenant asked for did not happen. When the rollback fails too, the poll answers `failed` with `instance_usable: false` and a description that names both BOSH tasks, and an operator should check the deployment. Nothing retries a rollback.
+
+The broker reads the setting at the moment the deploy fails, so a change an operator saves applies to any update that fails afterward. When the director's answer to a deploy is lost, the broker looks the task up by the deploy's context ID and never sends the deploy again. A restart in the middle of an update or its rollback is picked up at the next start, which follows the recorded task or looks it up by context ID. Every update that reaches its checks leaves a change record that names the parameter keys it changed, never their values, along with the BOSH tasks and the rollback setting in effect.
 
 ### Service Binding Workflow
 

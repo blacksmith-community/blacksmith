@@ -147,6 +147,34 @@ graph TD
 - Secrets preserved in Vault for audit purposes (never deleted)
 - Deletion timestamps tracked in metadata
 
+#### Update Workflow
+
+```mermaid
+graph TD
+    A[Update Request] --> B[Merge Parameters<br/>Check plan schema]
+    B --> C{Renders differ?}
+    C -- No --> D[Record parameters and context<br/>200 OK]
+    C -- Yes --> E[Record staged update<br/>202 Accepted]
+    E --> F[Read live manifest<br/>Save it for a rollback]
+    F --> G[Deploy with a context ID]
+    G --> H{Task result}
+    H -- done --> I[Commit parameters,<br/>manifest, and context]
+    H -- failed --> J{update_rollback on?}
+    J -- No --> K[Failed, usable]
+    J -- Yes --> L[Redeploy the saved manifest once]
+    L --> M{Rollback result}
+    M -- done --> N[Failed, usable]
+    M -- failed --> O[rollback_failed, not usable]
+```
+
+**Key Steps:**
+
+1. **Staged values**: The update's plan, merged parameters, fingerprint, and context are staged in the task record under `update`, and the stored values change only after the deploy succeeds
+2. **Claim**: The update holds the instance's claim until it settles, including through a rollback
+3. **Rollback manifest**: The live manifest is saved at `<instance_id>/update_rollback_manifest` before the deploy and deleted once the update settles
+4. **No cleanup**: A failed update or rollback never deletes the deployment or marks a cleanup as owed
+5. **Restart**: An unsettled update stays in the index, and the next start follows its recorded task or looks it up by context ID
+
 ### 4. Reconciler Component
 
 The reconciler ensures consistency between BOSH deployments and Vault records.

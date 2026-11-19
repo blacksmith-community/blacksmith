@@ -33,6 +33,10 @@ t('the update rollback shows off and where that comes from',async()=>{
  expect(select.selectedOptions[0].textContent).toBe('Off');
  expect(s.host.querySelector('label[for="settings-update-rollback"]').textContent).toBe('Update Rollback');
  expect(s.host.querySelector('#help-update-rollback').textContent).toContain('Now set by: default.');
+ // The broker accepts updates now, so the hint says when the value
+ // applies and no longer says the setting has no effect.
+ expect(s.host.querySelector('#help-update-rollback').textContent).toContain('The value in effect when an update fails decides.');
+ expect(s.host.querySelector('#help-update-rollback').textContent).not.toContain('no effect');
 });
 
 t('a saved rollback shows on',async()=>{
