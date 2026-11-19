@@ -129,9 +129,11 @@ type readoptMigration struct {
 	state      string
 }
 
-// ReadoptInFlightOperations finds the provisions and deprovisions that a
-// previous run of the broker left in flight, and claims each of them, so
-// that when it returns every such operation holds its claim. Then one
+// ReadoptInFlightOperations finds the provisions, deprovisions, and updates
+// that a previous run of the broker left in flight, and claims each of
+// them, so that when it returns every such operation holds its claim. An
+// update whose instance another operation holds gets its claim once the
+// instance is free. Then one
 // goroutine for each settles it as LastOperation would, and releases its
 // claim when it ends. It reads the instance index, lists the mount to find
 // the records whose index entry is gone, and reads each instance's record.
@@ -184,11 +186,21 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	loaded := time.Now()
 	claimed := make([]readoptOperation, 0, len(operations))
 
+	var waiting []readoptOperation
+
 	for _, operation := range operations {
 		claim := &operationClaim{operation: operation.recorded.Action, claimed: loaded, readopted: true}
 		claim.launched.Store(true)
 
 		held, taken, err := b.claimOperation(operation.instanceID, operation.deploymentName, claim)
+		if (err != nil || !taken) && operation.recorded.Action == operationTypeUpdate {
+			logger.Warning("Instance %s is held by another operation, so re-adoption takes its update's claim once it is free", operation.instanceID)
+
+			waiting = append(waiting, operation)
+
+			continue
+		}
+
 		if err != nil {
 			logger.Error("Instance %s is held in the mutation guard, so its recorded %s is not re-adopted: %s", operation.instanceID, operation.recorded.Action, err)
 
@@ -234,6 +246,12 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	for _, operation := range claimed {
 		b.track(fmt.Sprintf("re-adoption of the %s of instance %s", operation.recorded.Action, operation.instanceID), func() { //nolint:contextcheck // the operation outlives the boot call and runs under the service context
 			b.readoptOperation(operation, loaded, checks, logger)
+		})
+	}
+
+	for _, operation := range waiting {
+		b.track("re-adoption of the update of instance "+operation.instanceID+" once it is free", func() { //nolint:contextcheck // the update outlives the boot call and runs under the service context
+			b.awaitReadoptedUpdateClaim(operation, loaded, checks, logger)
 		})
 	}
 
@@ -517,8 +535,12 @@ func sortReadoptCandidates(candidates []*readoptCandidate, logger logger.Logger)
 			logDebugUnindexed(candidate, logger, "it has no operation record")
 
 			continue
-		case recorded.Action != operationTypeProvision && recorded.Action != operationTypeDeprovision:
+		case recorded.Action != operationTypeProvision && recorded.Action != operationTypeDeprovision && recorded.Action != operationTypeUpdate:
 			logDebugUnindexed(candidate, logger, fmt.Sprintf("its record names the action %q", recorded.Action))
+
+			continue
+		case recorded.Action == operationTypeUpdate && !candidate.indexed:
+			logger.Warning("Instance %s: its record holds an update in flight, and its index entry is gone, so the update is not re-adopted", candidate.instanceID)
 
 			continue
 		case !readoptClaimable(recorded.State):
@@ -813,9 +835,12 @@ func (b *Broker) readoptOperation(operation readoptOperation, loaded time.Time, 
 
 	var settled bool
 
-	if operation.indexed {
+	switch {
+	case operation.recorded.Action == operationTypeUpdate:
+		settled = b.readoptUpdate(ctx, operation, logger)
+	case operation.indexed:
 		settled = b.readoptIndexed(ctx, operation, logger)
-	} else {
+	default:
 		settled = b.readoptUnindexed(ctx, operation, loaded, checks, logger)
 	}
 

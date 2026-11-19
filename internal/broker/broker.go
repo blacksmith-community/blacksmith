@@ -249,7 +249,8 @@ type Broker struct {
 
 	// updateOutcomeWait, when positive, replaces updateOutcomeRetry as
 	// the wait between the resolver passes an update runs over its own
-	// lost deploy answer.
+	// lost deploy answer, and between re-adoption's attempts to take the
+	// claim of an update whose instance another operation holds.
 	updateOutcomeWait time.Duration
 
 	// unknownOutcomePasses holds an *unknownOutcomePass for each instance

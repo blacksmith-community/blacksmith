@@ -13,9 +13,11 @@ import (
 // passes it runs over its own lost deploy answer.
 const updateOutcomeRetry = 15 * time.Second
 
-// errOutcomeNotRecorded is why an update records its lost deploy answer
-// again: the first record of it did not land.
-var errOutcomeNotRecorded = errors.New("the first record of the lost answer did not land")
+// errDeployTaskNotRecorded is why an update records the outcome of its
+// deploy as unknown when the record names no task for it: the write of a
+// lost answer did not land, or a restart stopped the update before the
+// deploy's task was recorded.
+var errDeployTaskNotRecorded = errors.New("the record names no task for the deploy")
 
 // updateOutcomeRetryWait returns the wait between an update's resolver
 // passes.
@@ -61,10 +63,11 @@ func (p *updatePhase) resolveLostAnswer(ctx context.Context) (*bosh.Task, bool) 
 
 			return nil, false
 		case recorded.State != internalVault.TaskStateOutcomeUnknown:
-			// The write of the unknown outcome failed, so the record still
-			// says the deploy is being sent. It is written again before any
-			// pass runs, because a pass settles only an unknown outcome.
-			p.broker.recordOutcomeUnknown(context.WithoutCancel(ctx), p.instanceID, operationTypeUpdate, "deploy", p.contextID, errOutcomeNotRecorded, p.logger)
+			// The record names no task and no unknown outcome, because the
+			// write of the lost answer failed or a restart stopped the
+			// update around its deploy. The outcome is recorded as unknown
+			// before any pass runs, because a pass settles only that.
+			p.broker.recordOutcomeUnknown(context.WithoutCancel(ctx), p.instanceID, operationTypeUpdate, "deploy", p.contextID, errDeployTaskNotRecorded, p.logger)
 		case !passed:
 			_, err = p.broker.resolveUnknownOutcome(ctx, p.instanceID, p.target.deployment, recorded, p.logger)
 			if err != nil {
