@@ -2146,9 +2146,11 @@ func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, 
 var errInstanceUnindexed = errors.New("instance has no index entry")
 
 // refuseDeleteOfGoneInstance answers a deprovision of an instance the index
-// does not have. The instance is gone when the director confirms that the
-// deployment named from the request's plan and the instance ID is gone, and
-// the request then answers 410 Gone with nothing recorded. A deployment that
+// does not have. The instance is gone when another instance claims the
+// deployment named from the request's plan and the instance ID, as
+// nameClaimant decides, or when the director confirms that deployment is
+// gone, and the request then answers 410 Gone with nothing recorded. A
+// claim that cannot be checked fails the request with nothing recorded. A deployment that
 // still exists gets the running-task check that rejectIfOperationInProgress
 // gives an indexed instance, and with no task running it is left to the
 // deprovision, which records the request and deletes it. An indexed instance
@@ -2174,6 +2176,22 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 	}
 
 	deploymentName := vaultPkg.MintDeploymentName(details.PlanID, instanceID)
+
+	// The minted name can be another instance's, and that instance's
+	// deployment is never deleted for this one.
+	claimant, where, err := b.nameClaimant(readCtx, instanceID, deploymentName)
+	if err != nil {
+		logger.Error("Refusing deprovision of instance %s, which has no index entry: %s", instanceID, err)
+
+		return fmt.Errorf("could not check whether another instance claims deployment %s, so the deprovision of instance %s was refused: %w", deploymentName, instanceID, err)
+	}
+
+	if claimant != "" {
+		logger.Warning("Answering the deprovision of instance %s, which has no index entry, with 410 Gone: instance %s claims deployment %s through %s, so nothing of this instance exists under that name",
+			instanceID, claimant, deploymentName, where)
+
+		return fmt.Errorf("%w: instance %s has no index entry, and deployment %s belongs to another service instance", osbapi.ErrGoneError, instanceID, deploymentName)
+	}
 
 	err = b.deploymentGone(readCtx, instanceID, deploymentName, logger)
 	if err != nil {

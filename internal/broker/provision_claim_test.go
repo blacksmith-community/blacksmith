@@ -7,14 +7,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/broker"
+	"blacksmith/internal/config"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/testutil"
+	"blacksmith/shield"
 
 	osbapibroker "github.com/fivetwenty-io/osbapi/v2/pkg/broker"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
@@ -339,12 +343,27 @@ func TestProvision_RefusedOverAnOwedCleanupKeepsTheOtherInstanceSafe(t *testing.
 		t.Fatalf("the refused provision deployed %v", created)
 	}
 
-	// The deployment exists by the time the owed cleanup is tried again,
-	// and it is still the first instance's own.
+	// Later the first instance's deployment exists, and it is still its
+	// own.
 	director.GetDeploymentFn = func(deployment string) (*bosh.DeploymentDetail, error) {
 		return &bosh.DeploymentDetail{Name: deployment}, nil
 	}
 
+	// A platform may follow the refusal with a delete of the instance it
+	// asked for, and that delete must not reach the first instance's
+	// deployment.
+	status, body = deleteInstance(ctx, t, provisioner, intruder, collidingShortPlan)
+	if status != http.StatusGone {
+		t.Fatalf("the delete of %s was answered %d %s, want 410", intruder, status, body)
+	}
+
+	requireNothingWritten(ctx, t, vaultClient, intruder)
+
+	if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+		t.Fatalf("the delete of %s deleted %v", intruder, deleted)
+	}
+
+	// The cleanup the first instance owes still finds its deployment.
 	provisioner.CleanupFailedDeployment(ctx, owner, name)
 
 	if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 1 || deleted[0] != name {
@@ -390,17 +409,92 @@ func TestProvision_RefusedOverADeploymentNothingNamesDeploysNothing(t *testing.T
 	}
 }
 
+// A delete of an instance ID the broker never held does not delete another
+// instance's deployment. Instance <id> under plan redis-small-x is
+// provisioned and owes nothing, and a delete arrives for x-<id> under plan
+// redis-small, whose name would be the same. It is answered 410 Gone with
+// nothing written, and the director is asked to delete nothing.
+func TestDeprovision_OfAnInstanceNeverHeldLeavesAnotherInstancesDeployment(t *testing.T) {
+	t.Parallel()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start Vault: %v", err)
+	}
+
+	t.Cleanup(server.Close)
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+	ctx := context.Background()
+
+	const owner = "abc"
+
+	intruder := "x-" + owner
+	name := collidingLongPlan + "-" + owner
+
+	err = vaultClient.Index(ctx, owner, map[string]interface{}{
+		serviceIDKey: recordedNameService, recordedPlanKey: collidingLongPlan, recordedDeploymentKey: name,
+		createdAtKey: time.Now().Add(-time.Hour).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("failed to index the first instance: %v", err)
+	}
+
+	director := cleanupGuardDirector()
+
+	// The broker can carry a delete all the way through, so only the
+	// claim check stands between it and the first instance's deployment.
+	deprovisioner := cleanupGuardBroker(director, vaultClient, collidingShortPlan, collidingLongPlan)
+	deprovisioner.Shield = &shield.NoopClient{}
+	deprovisioner.Config = &config.Config{}
+
+	status, body := deleteInstance(ctx, t, deprovisioner, intruder, collidingShortPlan)
+	if status != http.StatusGone {
+		t.Fatalf("the delete of %s was answered %d %s, want 410", intruder, status, body)
+	}
+
+	requireNothingWritten(ctx, t, vaultClient, intruder)
+
+	if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+		t.Fatalf("the delete of %s deleted %v", intruder, deleted)
+	}
+
+	entry, found, err := vaultClient.FindInstance(ctx, owner)
+	if err != nil || !found || entry.DeploymentName != name {
+		t.Fatalf("the first instance's entry is %+v, %v, %v, want it still naming %s", entry, found, err, name)
+	}
+}
+
+// deleteInstance sends the deprovision of instanceID under planID through
+// the OSB library's HTTP handler and returns the status and body of the
+// answer.
+func deleteInstance(ctx context.Context, t *testing.T, b *broker.Broker, instanceID, planID string) (int, string) {
+	t.Helper()
+
+	query := url.Values{serviceIDKey: {recordedNameService}, recordedPlanKey: {planID}, "accepts_incomplete": {"true"}}
+
+	return sendToHandler(ctx, t, b, http.MethodDelete, "/v2/service_instances/"+instanceID+"?"+query.Encode(), "")
+}
+
 // putProvision sends the provision of instanceID under planID through the
 // OSB library's HTTP handler and returns the status and body of the answer.
 func putProvision(ctx context.Context, t *testing.T, b *broker.Broker, instanceID, planID string) (int, string) {
 	t.Helper()
 
+	body := fmt.Sprintf(`{"service_id":%q,"plan_id":%q,"organization_guid":"org-guid","space_guid":"space-guid"}`, recordedNameService, planID)
+
+	return sendToHandler(ctx, t, b, http.MethodPut, "/v2/service_instances/"+instanceID+"?accepts_incomplete=true", body)
+}
+
+// sendToHandler sends one request to b through the OSB library's HTTP
+// handler and returns the status and body of the answer.
+func sendToHandler(ctx context.Context, t *testing.T, b *broker.Broker, method, target, body string) (int, string) {
+	t.Helper()
+
 	server := httptest.NewServer(osbapibroker.NewHandler(b))
 	t.Cleanup(server.Close)
 
-	body := fmt.Sprintf(`{"service_id":%q,"plan_id":%q,"organization_guid":"org-guid","space_guid":"space-guid"}`, recordedNameService, planID)
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, server.URL+"/v2/service_instances/"+instanceID+"?accepts_incomplete=true", strings.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, server.URL+target, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

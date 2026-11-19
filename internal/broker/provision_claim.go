@@ -36,44 +36,59 @@ func (b *Broker) refuseProvisionOverClaimedName(ctx context.Context, instanceID 
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	idx, err := b.Vault.GetIndex(readCtx, "db")
+	claimant, where, err := b.nameClaimant(readCtx, instanceID, requested)
 	if err != nil {
-		logger.Error("Refusing provision of instance %s: could not read the index to check whether another instance claims deployment %s: %s", instanceID, requested, err)
+		logger.Error("Refusing provision of instance %s: %s", instanceID, err)
 
-		return fmt.Errorf("could not read the index to check whether another instance claims deployment %s, so the provision of instance %s was refused: %w", requested, instanceID, err)
+		return fmt.Errorf("could not check whether another instance claims deployment %s, so the provision of instance %s was refused: %w", requested, instanceID, err)
 	}
 
-	if claimant := indexClaimant(idx, instanceID, requested); claimant != "" {
-		return refuseClaimedName(instanceID, requested, claimant, "its index entry", logger)
+	if claimant != "" {
+		return refuseClaimedName(instanceID, requested, claimant, where, logger)
 	}
 
-	ids, _, err := b.Vault.ListOperationRecordIDs(readCtx)
-	if err != nil {
-		logger.Error("Refusing provision of instance %s: could not list the instances in Vault to check whether another one claims deployment %s: %s", instanceID, requested, err)
+	return nil
+}
 
-		return fmt.Errorf("could not list the instances to check whether another one claims deployment %s, so the provision of instance %s was refused: %w", requested, instanceID, err)
+// nameClaimant returns the first instance other than instanceID that
+// claims deploymentName, and says where it claims it, or returns "" when
+// no instance does. It reads the index, then lists the instances in Vault
+// and reads the record of each one whose ID can mint the name. A read
+// that fails returns its error, because a claim it would have found
+// cannot be ruled out.
+func (b *Broker) nameClaimant(ctx context.Context, instanceID, deploymentName string) (string, string, error) {
+	idx, err := b.Vault.GetIndex(ctx, "db")
+	if err != nil {
+		return "", "", fmt.Errorf("could not read the index to check whether another instance claims deployment %s: %w", deploymentName, err)
+	}
+
+	if claimant := indexClaimant(idx, instanceID, deploymentName); claimant != "" {
+		return claimant, "its index entry", nil
+	}
+
+	ids, _, err := b.Vault.ListOperationRecordIDs(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("could not list the instances in Vault to check whether another one claims deployment %s: %w", deploymentName, err)
 	}
 
 	sort.Strings(ids)
 
 	for _, otherID := range ids {
-		if otherID == instanceID || !mintedShape(requested, otherID) {
+		if otherID == instanceID || !mintedShape(deploymentName, otherID) {
 			continue
 		}
 
-		claims, err := b.recordClaimsName(readCtx, otherID, requested)
+		claims, err := b.recordClaimsName(ctx, otherID, deploymentName)
 		if err != nil {
-			logger.Error("Refusing provision of instance %s: could not read the record of instance %s, which can claim deployment %s: %s", instanceID, otherID, requested, err)
-
-			return fmt.Errorf("could not check whether another instance claims deployment %s, so the provision of instance %s was refused: %w", requested, instanceID, err)
+			return "", "", fmt.Errorf("could not read the record of instance %s, which can claim deployment %s: %w", otherID, deploymentName, err)
 		}
 
 		if claims {
-			return refuseClaimedName(instanceID, requested, otherID, "its record, which owes the cleanup of a failed provision", logger)
+			return otherID, "its record, which owes the cleanup of a failed provision", nil
 		}
 	}
 
-	return nil
+	return "", "", nil
 }
 
 // indexClaimant returns the first instance other than instanceID, in ID
