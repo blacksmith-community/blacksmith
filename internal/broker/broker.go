@@ -2224,8 +2224,8 @@ var errNameClaimedTwice = errors.New("two service instances claim deployment")
 // deployment is the other instance's while the owed cleanup still
 // deletes it for this one, so the delete fails, nothing is written, and
 // the instance is listed under Attention required for an operator to
-// settle which instance the deployment belongs to. A record that cannot
-// be read fails the delete too.
+// settle which instance the deployment belongs to, unless a row already
+// lists it. A record that cannot be read fails the delete too.
 func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, deploymentName, claimant, where string, logger logger.Logger) error {
 	owes, err := b.recordClaimsName(ctx, instanceID, deploymentName)
 	if err != nil {
@@ -2236,11 +2236,14 @@ func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, depl
 	}
 
 	if owes {
-		reason := doubleClaimReason(claimant, deploymentName, where)
-		if b.noteCleanupAttention(instanceID, deploymentName, reason) {
+		// The delete leaves a row only when none is held, so it never
+		// replaces the refusal the sweep's cleanup gives, and a delete and
+		// a cleanup that take turns leave one row with one time.
+		reason := deleteDoubleClaimReason(claimant, deploymentName, where)
+		if b.holdCleanupAttention(instanceID, deploymentName, reason) {
 			logger.Error("Refusing deprovision of instance %s, which has no index entry: %s", instanceID, reason)
 		} else {
-			logger.Warning("Still refusing deprovision of instance %s, as the overview shows: %s", instanceID, reason)
+			logger.Warning("Still refusing deprovision of instance %s, which the overview already lists: %s", instanceID, reason)
 		}
 
 		return fmt.Errorf("%w %s. The failed provision of instance %s still owes the cleanup of that deployment, and another service instance claims it too, so the deprovision is refused until an operator settles which instance it belongs to",
@@ -4618,6 +4621,14 @@ func (b *Broker) claimedByAnotherInstance(ctx context.Context, instanceID, deplo
 // claims deploymentName while claimant claims it too, through where.
 func doubleClaimReason(claimant, deploymentName, where string) string {
 	return fmt.Sprintf("Instance %s also claims deployment %s, through %s, so two instances claim one name. The broker deletes nothing for this instance until an operator settles which instance the deployment belongs to",
+		claimant, deploymentName, where)
+}
+
+// deleteDoubleClaimReason is the refusal shown for an instance whose
+// delete from the platform was refused because its own record claims
+// deploymentName while claimant claims it too, through where.
+func deleteDoubleClaimReason(claimant, deploymentName, where string) string {
+	return fmt.Sprintf("The platform's delete of this instance was refused, because instance %s also claims deployment %s, through %s, so two instances claim one name. The broker deletes nothing for this instance until an operator settles which instance the deployment belongs to",
 		claimant, deploymentName, where)
 }
 
