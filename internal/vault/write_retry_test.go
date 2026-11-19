@@ -55,8 +55,14 @@ var _ = Describe("Vault write retries", func() {
 	})
 
 	AfterEach(func() {
-		proxy.Close()
-		server.Close()
+		// A BeforeEach that failed can leave either one unset.
+		if proxy != nil {
+			proxy.Close()
+		}
+
+		if server != nil {
+			server.Close()
+		}
 	})
 
 	// countUnseals turns auto-unseal on with a hook in place of the unseal,

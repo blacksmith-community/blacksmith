@@ -32,6 +32,11 @@ var (
 	ErrVaultNotReady = errors.New("vault dev server did not become ready")
 	// errBindFailure marks a start that failed because the port was taken.
 	errBindFailure = errors.New("vault dev server could not bind its port")
+	// errForeignServer marks a start whose port was answered by a server
+	// that refused this server's root token, so it is not the one started.
+	errForeignServer = errors.New("vault dev server port is answered by another server")
+	// errIdentityPending means the token lookup got no usable answer yet.
+	errIdentityPending = errors.New("vault dev server has not answered a token lookup")
 )
 
 const (
@@ -255,6 +260,20 @@ func NewVaultDevServer(t *testing.T) (*VaultDevServer, error) {
 		t.Helper()
 	}
 
+	return newVaultDevServer(t, nil)
+}
+
+// newVaultDevServer starts a dev server on a port from pick, which is
+// pickFreePort by default. A start that loses its port, to a bind failure
+// or to another server that answers on it, is stopped and retried on a new
+// port.
+//
+//nolint:thelper // t.Helper is called by the exported callers
+func newVaultDevServer(t *testing.T, pick func() (int, error)) (*VaultDevServer, error) {
+	if pick == nil {
+		pick = func() (int, error) { return pickFreePort(nil) }
+	}
+
 	bin, err := findVaultBinary()
 	if err != nil {
 		return nil, err
@@ -263,7 +282,7 @@ func NewVaultDevServer(t *testing.T) (*VaultDevServer, error) {
 	var lastErr error
 
 	for range maxStartAttempts {
-		srv, err := startDevServer(bin)
+		srv, err := startDevServer(bin, pick)
 		if err == nil {
 			if t != nil {
 				t.Cleanup(srv.Close)
@@ -272,7 +291,7 @@ func NewVaultDevServer(t *testing.T) (*VaultDevServer, error) {
 			return srv, nil
 		}
 
-		if !errors.Is(err, errBindFailure) {
+		if !errors.Is(err, errBindFailure) && !errors.Is(err, errForeignServer) {
 			return nil, err
 		}
 
@@ -282,8 +301,8 @@ func NewVaultDevServer(t *testing.T) (*VaultDevServer, error) {
 	return nil, fmt.Errorf("vault dev server failed to start after %d attempts: %w", maxStartAttempts, lastErr)
 }
 
-func startDevServer(bin string) (*VaultDevServer, error) {
-	port, err := pickFreePort(nil)
+func startDevServer(bin string, pick func() (int, error)) (*VaultDevServer, error) {
+	port, err := pick()
 	if err != nil {
 		return nil, err
 	}
@@ -406,9 +425,17 @@ func (v *VaultDevServer) waitReady() error {
 		}
 
 		if _, lastErr = probe.Sys().Health(); lastErr == nil {
-			// Another server could have answered if ours lost the port.
-			if v.exited() {
-				return v.exitError()
+			// Another server answers here when ours lost the port to it, and
+			// health needs no token, so the server must prove it is ours.
+			lastErr = v.confirmOwnServer(probe)
+			if errors.Is(lastErr, errIdentityPending) {
+				time.Sleep(readinessInterval)
+
+				continue
+			}
+
+			if lastErr != nil {
+				return lastErr
 			}
 
 			client, cerr := newIsolatedClient(v.Addr, v.RootToken, defaultRetries)
@@ -572,6 +599,40 @@ func (v *VaultDevServer) DeleteSecret(path string) error {
 	_, err := v.Client.Logical().Delete("secret/data/" + cleanPath)
 	if err != nil {
 		return fmt.Errorf("failed to delete secret at %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// confirmOwnServer returns nil once the server on v.Addr has shown it is
+// the one this helper started, and that our process is still running. The port was free when it was drawn, but it is closed
+// before the dev server binds it, so a server started by another test
+// process can take it in between. Ours then fails to bind and exits, but
+// until it does, the other server answers the health check, and a client
+// that went on would send our root token to it. The root token is random
+// per server, so only ours accepts it. A server that refuses it is
+// another one, and errForeignServer has the start retried on a new port.
+// Any other failed lookup returns errIdentityPending, so the caller polls
+// again, and sees our server exit if it has lost the port.
+func (v *VaultDevServer) confirmOwnServer(probe *api.Client) error {
+	secret, err := probe.Auth().Token().LookupSelf()
+	if err != nil {
+		var responseErr *api.ResponseError
+		if errors.As(err, &responseErr) &&
+			(responseErr.StatusCode == http.StatusForbidden || responseErr.StatusCode == http.StatusUnauthorized) {
+			return fmt.Errorf("%w: %s refused the root token of the server started on it: %w",
+				errForeignServer, v.Addr, err)
+		}
+
+		return fmt.Errorf("%w: %w", errIdentityPending, err)
+	}
+
+	if secret == nil || secret.Data["id"] != v.RootToken {
+		return fmt.Errorf("%w: %s answered a token lookup for another token", errForeignServer, v.Addr)
+	}
+
+	if v.exited() {
+		return v.exitError()
 	}
 
 	return nil

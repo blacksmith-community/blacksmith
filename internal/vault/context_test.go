@@ -45,7 +45,10 @@ var _ = Describe("Vault calls and their context", func() {
 	})
 
 	AfterEach(func() {
-		server.Close()
+		// A BeforeEach that failed can leave the server unset.
+		if server != nil {
+			server.Close()
+		}
 	})
 
 	It("fails a Get on a context that has ended", func() {

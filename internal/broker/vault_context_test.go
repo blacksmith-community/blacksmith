@@ -417,7 +417,12 @@ var _ = Describe("Vault writes that outlive their context", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 
-		AfterEach(func() { proxy.Close() })
+		AfterEach(func() {
+			// A BeforeEach that failed can leave the proxy unset.
+			if proxy != nil {
+				proxy.Close()
+			}
+		})
 
 		poll := func(pollCtx context.Context) (osbapi.LastOperationResponse, error) {
 			return brokerInstance.LastOperation(pollCtx, instanceID, osbapi.LastOperationRequest{

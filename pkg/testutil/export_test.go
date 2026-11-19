@@ -4,6 +4,7 @@ import (
 	"net"
 	"os/exec"
 	"syscall"
+	"testing"
 	"time"
 )
 
@@ -68,4 +69,14 @@ func AwaitKVWritable(addr string, limit, interval time.Duration) error {
 	}
 
 	return awaitKVWritable(client, limit, interval)
+}
+
+// ErrForeignServer exposes errForeignServer.
+var ErrForeignServer = errForeignServer
+
+// NewVaultDevServerOnPorts exposes newVaultDevServer with a port picker.
+func NewVaultDevServerOnPorts(t *testing.T, pick func() (int, error)) (*VaultDevServer, error) {
+	t.Helper()
+
+	return newVaultDevServer(t, pick)
 }

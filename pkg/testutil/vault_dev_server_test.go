@@ -548,3 +548,148 @@ func TestAwaitKVWritableGivesUpOnAStuckUpgrade(t *testing.T) {
 		t.Fatalf("AwaitKVWritable = %v, want an error that carries the backend's message", err)
 	}
 }
+
+// foreignServer stands in for a dev server that another test process
+// started on the port this one picked. It answers the health check, which
+// needs no token, and refuses every token, so it refuses ours too.
+type foreignServer struct {
+	*httptest.Server
+
+	mu       sync.Mutex
+	requests []string
+}
+
+func newForeignServer(t *testing.T) *foreignServer {
+	t.Helper()
+
+	foreign := &foreignServer{}
+	foreign.Server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		foreign.mu.Lock()
+		foreign.requests = append(foreign.requests, request.Method+" "+request.URL.Path)
+		foreign.mu.Unlock()
+
+		writer.Header().Set("Content-Type", "application/json")
+
+		if request.URL.Path == "/v1/sys/health" {
+			_, _ = writer.Write([]byte(`{"initialized":true,"sealed":false,"standby":false}`))
+
+			return
+		}
+
+		writer.WriteHeader(http.StatusForbidden)
+		_, _ = writer.Write([]byte(`{"errors":["permission denied"]}`))
+	}))
+	t.Cleanup(foreign.Close)
+
+	return foreign
+}
+
+func (f *foreignServer) port(t *testing.T) int {
+	t.Helper()
+
+	addr, ok := f.Listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("unexpected stand-in address %v", f.Listener.Addr())
+	}
+
+	return addr.Port
+}
+
+// beyondIdentityCheck lists the requests that a start sent the stand-in
+// after it should have seen that the server is not its own.
+func (f *foreignServer) beyondIdentityCheck() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var sent []string
+
+	for _, request := range f.requests {
+		if request != "GET /v1/sys/health" && request != "GET /v1/auth/token/lookup-self" {
+			sent = append(sent, request)
+		}
+	}
+
+	return sent
+}
+
+// The picked port is closed before the dev server binds it, so a server
+// that another test process started can take it in between. That server
+// answers the health check, and the helper once went on to send it our
+// root token and failed on a 403 when it mounted secret/. The helper must
+// see that the server refuses our token and start again on a new port.
+func TestVaultDevServerMovesOnFromAServerThatRefusesItsToken(t *testing.T) {
+	t.Parallel()
+
+	foreign := newForeignServer(t)
+
+	var picks atomic.Int32
+
+	pick := func() (int, error) {
+		if picks.Add(1) == 1 {
+			return foreign.port(t), nil
+		}
+
+		return testutil.PickFreePort(nil)
+	}
+
+	srv, err := testutil.NewVaultDevServerOnPorts(t, pick)
+	if err != nil {
+		t.Fatalf("NewVaultDevServer = %v, want it to move on to a new port", err)
+	}
+
+	if srv.Addr == foreign.URL {
+		t.Fatalf("the helper handed over the stand-in at %s", foreign.URL)
+	}
+
+	if got := picks.Load(); got != 2 {
+		t.Errorf("the helper picked %d ports, want 2", got)
+	}
+
+	if sent := foreign.beyondIdentityCheck(); len(sent) != 0 {
+		t.Errorf("the helper went on to send the stand-in %v", sent)
+	}
+
+	secret, err := srv.Client.Auth().Token().LookupSelf()
+	if err != nil {
+		t.Fatalf("lookup-self on the server handed over: %v", err)
+	}
+
+	if id := secret.Data["id"]; id != srv.RootToken {
+		t.Errorf("the server handed over knows token %v, want %s", id, srv.RootToken)
+	}
+}
+
+// A port that keeps going to a server that refuses our token uses up the
+// start attempts and ends in an error, never in a server handed over.
+func TestVaultDevServerGivesUpOnAPortThatIsNeverItsOwn(t *testing.T) {
+	t.Parallel()
+
+	foreign := newForeignServer(t)
+
+	var picks atomic.Int32
+
+	pick := func() (int, error) {
+		picks.Add(1)
+
+		return foreign.port(t), nil
+	}
+
+	srv, err := testutil.NewVaultDevServerOnPorts(t, pick)
+	if err == nil {
+		t.Fatalf("NewVaultDevServer handed over %s, want an error", srv.Addr)
+	}
+
+	// Our server can exit on its failed bind before the stand-in refuses
+	// the token, so either loss of the port may end the last attempt.
+	if !errors.Is(err, testutil.ErrForeignServer) && !strings.Contains(err.Error(), "address already in use") {
+		t.Errorf("NewVaultDevServer = %v, want the port lost to another server", err)
+	}
+
+	if got := picks.Load(); got != 3 {
+		t.Errorf("the helper picked %d ports, want one per start attempt (3)", got)
+	}
+
+	if sent := foreign.beyondIdentityCheck(); len(sent) != 0 {
+		t.Errorf("the helper went on to send the stand-in %v", sent)
+	}
+}

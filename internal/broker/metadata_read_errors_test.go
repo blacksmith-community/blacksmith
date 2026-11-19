@@ -60,7 +60,10 @@ var _ = Describe("Vault read errors in the broker", func() {
 	})
 
 	AfterEach(func() {
-		proxy.Close()
+		// A BeforeEach that failed can leave the proxy unset.
+		if proxy != nil {
+			proxy.Close()
+		}
 
 		for _, path := range cleanup {
 			_ = suite.vault.DeleteSecret(path)

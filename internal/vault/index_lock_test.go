@@ -46,7 +46,10 @@ var _ = Describe("Vault index read-modify-writes", func() {
 	})
 
 	AfterEach(func() {
-		server.Close()
+		// A BeforeEach that failed can leave the server unset.
+		if server != nil {
+			server.Close()
+		}
 	})
 
 	key := func(i int) string {

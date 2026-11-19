@@ -106,7 +106,10 @@ var _ = Describe("Index read errors in the broker", func() {
 	})
 
 	AfterEach(func() {
-		proxy.Close()
+		// A BeforeEach that failed can leave the proxy unset.
+		if proxy != nil {
+			proxy.Close()
+		}
 
 		direct := internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 		_ = direct.Index(ctx, instanceID, nil)
