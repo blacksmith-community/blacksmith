@@ -4491,9 +4491,21 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 		return "", false
 	}
 
+	return b.judgeCleanupClaim(ctx, instanceID, deploymentName, claim, logger)
+}
+
+// judgeCleanupClaim decides whether the cleanup asked for deploymentName
+// may delete the deployment claim names, and returns that deployment when
+// it may. It refuses by default. Only a case that proves the broker
+// minted the name for the instance, under the plan the record says or
+// the plan the request details stored under the name say, lets the
+// cleanup delete, and every other way through refuses with a reason.
+func (b *Broker) judgeCleanupClaim(ctx context.Context, instanceID, deploymentName string, claim cleanupName, logger logger.Logger) (string, bool) {
 	if deploymentName == "" || deploymentName == claim.callerMinted {
 		deploymentName = claim.name
 	}
+
+	owned := false
 
 	var refusal ownership
 
@@ -4509,21 +4521,35 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 	case claim.name != deploymentName:
 		refusal.reason = fmt.Sprintf("The cleanup was asked to delete %s, but the deployment recorded for this instance is %s, so the broker deletes neither", deploymentName, claim.name)
 	case claim.planID == "":
-		_, refusal = b.ownedUnder(ctx, instanceID, deploymentName, logger)
-	case !mintedFor(deploymentName, instanceID, claim.planID):
+		var planID string
+
+		planID, refusal = b.ownedUnder(ctx, instanceID, deploymentName, logger)
+		owned = planID != "" && refusal.reason == ""
+	case mintedFor(deploymentName, instanceID, claim.planID):
+		owned = true
+	default:
 		refusal.reason = notMintedReason(deploymentName, instanceID, claim.planID)
 	}
 
-	if refusal.reason == "" {
+	if owned && deploymentName != "" {
 		b.forgetCleanupAttention(instanceID)
 
 		return deploymentName, true
+	}
+
+	if refusal.reason == "" {
+		refusal.reason = unprovenCleanupReason
 	}
 
 	b.refuseCleanup(instanceID, deploymentName, refusal, logger)
 
 	return "", false
 }
+
+// unprovenCleanupReason is the refusal of a cleanup that no case proved
+// the instance owns. No path refuses without a reason of its own today,
+// so a row with this reason shows a path that forgot to give one.
+const unprovenCleanupReason = "The broker could not show that it named a deployment for this instance, so it deletes nothing"
 
 // refuseCleanup notes refusal of the cleanup of deploymentName for the
 // overview and logs it, at Error when it is new or its deployment or

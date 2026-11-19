@@ -688,3 +688,12 @@ func (b *Broker) OwedCleanupSuspects() []string {
 
 	return ids
 }
+
+// JudgeCleanupClaim runs the ownership decision of a cleanup asked for
+// asked over the name, plan, and refusal reason the name lookup returned
+// for instanceID, and returns what the cleanup would delete.
+func (b *Broker) JudgeCleanupClaim(ctx context.Context, instanceID, asked, name, planID, reason string) (string, bool) {
+	claim := cleanupName{name: name, planID: planID, refusal: ownership{reason: reason}}
+
+	return b.judgeCleanupClaim(ctx, instanceID, asked, claim, logger.Get().Named("broker"))
+}
