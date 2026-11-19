@@ -603,9 +603,10 @@ func (p *updatePhase) failUnresumable(ctx context.Context, task *bosh.Task) {
 }
 
 // commit records the update whose deploy succeeded, under the instance's
-// settle lock. It commits the staged values, the deployed manifest, the
-// credentials, and the plan references, and then settles the record,
-// trying the write until it lands, before it leaves the change record.
+// settle lock. It commits the staged values, trying the write until it
+// lands, then the deployed manifest, the credentials, and the plan
+// references, and then settles the record, trying that write until it
+// lands too, before it leaves the change record.
 func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed string) {
 	settleCtx := context.WithoutCancel(ctx)
 
@@ -617,11 +618,7 @@ func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed stri
 	}
 	defer unlock()
 
-	err = p.broker.commitUpdateValues(settleCtx, p.instanceID, p.target, p.request, p.context, p.logger)
-	if err != nil {
-		p.logger.Error("Instance %s: the update's task %d succeeded, and its values could not be recorded: %s", p.instanceID, task.ID, err)
-		p.fail(settleCtx, fmt.Sprintf("BOSH deployment task %d succeeded, and the broker could not record the new values, so send the update again", task.ID), task.ID)
-
+	if !p.commitValues(settleCtx, task.ID) {
 		return
 	}
 
@@ -650,6 +647,33 @@ func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed stri
 	p.broker.auditUpdate(recordCtx, p.instanceID, p.target, p.request, updateOutcomeSucceeded, "", task.ID)
 	p.dropRollbackManifest(settleCtx)
 	p.logger.Info("Instance %s: its update settled as succeeded by BOSH task %d", p.instanceID, task.ID)
+}
+
+// commitValues writes the update's values to the instance's records once
+// its deploy succeeded, trying the write until it lands. The deployment
+// already runs the new manifest, so a failure recorded here would leave
+// the stored values behind it, and the next upgrade or rotation would
+// render from them and quietly revert the change. The write is the same
+// each time, so trying it again is safe. It reports false only when the
+// broker shuts down first, and re-adoption commits the values at the next
+// start.
+func (p *updatePhase) commitValues(ctx context.Context, taskID int) bool {
+	wait := p.broker.updateRetryWait()
+
+	for {
+		err := p.broker.commitUpdateValues(ctx, p.instanceID, p.target, p.request, p.context, p.logger)
+		if err == nil {
+			return true
+		}
+
+		p.logger.Error("Instance %s: the update's task %d succeeded, and its values could not be recorded, so the write is tried again in %v: %s", p.instanceID, taskID, wait, err)
+
+		if !p.retryAfter(&wait) {
+			p.logger.Warning("Instance %s: the broker is shutting down before the values of its update were recorded, so re-adoption records them at the next start", p.instanceID)
+
+			return false
+		}
+	}
 }
 
 // storeDeployedManifest stores the manifest the update deployed as the
