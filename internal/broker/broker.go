@@ -253,6 +253,15 @@ type Broker struct {
 	// claim of an update whose instance another operation holds.
 	updateOutcomeWait time.Duration
 
+	// updatePrepareBound, when positive, replaces updatePrepareTimeout as
+	// the bound on the steps an update takes before its deploy.
+	updatePrepareBound time.Duration
+
+	// updateTaskWait, when positive, replaces updateTaskRetry as the
+	// first wait before an update reads its BOSH task again after a read
+	// failed.
+	updateTaskWait time.Duration
+
 	// unknownOutcomePasses holds an *unknownOutcomePass for each instance
 	// whose unknown outcome a poll has tried to settle.
 	unknownOutcomePasses sync.Map

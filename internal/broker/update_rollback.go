@@ -249,10 +249,8 @@ func (p *updatePhase) followRollback(ctx context.Context, taskID int) {
 	p.rollback.TaskID = taskID
 	p.progress(ctx, rollingBackDescription(*p.rollback), taskID)
 
-	finished, err := p.broker.followUpdateTask(ctx, taskID, p.logger)
-	if err != nil {
-		p.logger.Warning("Instance %s: %s, and the record keeps naming the rollback's task %d, so re-adoption follows it", p.instanceID, err, taskID)
-
+	finished, ended := p.awaitTask(ctx, taskID)
+	if !ended {
 		return
 	}
 

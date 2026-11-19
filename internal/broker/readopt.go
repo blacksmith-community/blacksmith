@@ -58,7 +58,7 @@ var readoptDeploymentChecks = 4
 var readoptIntervalOverride atomic.Int64
 
 // readoptBoundOverride, when positive, replaces the bound of every
-// re-adoption goroutine in nanoseconds.
+// re-adoption goroutine of a provision or a deprovision in nanoseconds.
 //
 //nolint:gochecknoglobals // a test seam, set only through export_test.go
 var readoptBoundOverride atomic.Int64
@@ -823,10 +823,19 @@ func (b *Broker) recordDeleted(ctx context.Context, instanceID, contextID, descr
 // readoptOperation settles one re-adopted operation, and releases its claim
 // when it ends. It gives up after provisionTimeout for a provision or
 // taskMonitorTimeout for a deprovision, and the operation is left to
-// LastOperation and the next start then. It also ends with the service
-// context.
+// LastOperation and the next start then. An update has no bound, because
+// only re-adoption settles it, and its claim must be held while BOSH may
+// still run its task. Every operation also ends with the service context.
 func (b *Broker) readoptOperation(operation readoptOperation, loaded time.Time, checks chan struct{}, logger logger.Logger) {
 	defer b.releaseOperation(operation.instanceID, operation.claim)
+
+	if operation.recorded.Action == operationTypeUpdate {
+		if !b.readoptUpdate(b.serviceContext(), operation, logger) {
+			logger.Info("The broker is shutting down, so the re-adopted update of instance %s is left for the next start", operation.instanceID)
+		}
+
+		return
+	}
 
 	bound := readoptBound(operation.recorded.Action)
 
@@ -836,8 +845,6 @@ func (b *Broker) readoptOperation(operation readoptOperation, loaded time.Time, 
 	var settled bool
 
 	switch {
-	case operation.recorded.Action == operationTypeUpdate:
-		settled = b.readoptUpdate(ctx, operation, logger)
 	case operation.indexed:
 		settled = b.readoptIndexed(ctx, operation, logger)
 	default:
@@ -1415,8 +1422,8 @@ func readoptRetry() time.Duration {
 	return readoptRetryInterval
 }
 
-// readoptBound returns how long a re-adoption goroutine for an operation
-// of action may run.
+// readoptBound returns how long a re-adoption goroutine for a provision or
+// a deprovision may run. An update's has no bound.
 func readoptBound(action string) time.Duration {
 	override := readoptBoundOverride.Load()
 	if override > 0 {

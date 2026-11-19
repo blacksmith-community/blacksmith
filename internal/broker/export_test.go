@@ -96,6 +96,19 @@ func (b *Broker) SetUpdateOutcomeWait(wait time.Duration) {
 	b.updateOutcomeWait = wait
 }
 
+// SetUpdatePrepareBound replaces the bound on the steps an update takes
+// before its deploy. Set it before the broker starts any work.
+func (b *Broker) SetUpdatePrepareBound(bound time.Duration) {
+	b.updatePrepareBound = bound
+}
+
+// SetUpdateTaskWait replaces the first wait before an update reads its
+// BOSH task again after a read failed. Set it before the broker starts
+// any work.
+func (b *Broker) SetUpdateTaskWait(wait time.Duration) {
+	b.updateTaskWait = wait
+}
+
 // SetCredentialSweepPassTimeout replaces the deadline of one sweep pass.
 func (b *Broker) SetCredentialSweepPassTimeout(timeout time.Duration) {
 	b.credentialSweep.mu.Lock()
@@ -522,9 +535,9 @@ func SetReadoptIntervals(d time.Duration) func() {
 	return func() { readoptIntervalOverride.Store(previous) }
 }
 
-// SetReadoptBound replaces the bound of every re-adoption goroutine
-// started from now on, and returns a function that restores the previous
-// one.
+// SetReadoptBound replaces the bound of every re-adoption goroutine of a
+// provision or a deprovision started from now on, and returns a function
+// that restores the previous one.
 func SetReadoptBound(d time.Duration) func() {
 	previous := readoptBoundOverride.Swap(int64(d))
 

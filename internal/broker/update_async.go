@@ -19,14 +19,32 @@ import (
 	"github.com/google/uuid"
 )
 
-// updateTaskRetry is how long the update waits before it reads its BOSH
-// task again after a read failed.
-const updateTaskRetry = 5 * time.Second
+const (
+	// updateTaskRetry is how long the update first waits before it reads
+	// its BOSH task again after a read failed. The wait doubles after
+	// each failed read, up to updateTaskRetryMax.
+	updateTaskRetry       = 5 * time.Second
+	updateTaskRetryMax    = time.Minute
+	updateTaskRetryFactor = 2
+
+	// updateTaskStall is how long the reads of an update's BOSH task may
+	// keep failing before the broker logs the stall as an error, and it
+	// logs it again each time the stall lasts that long once more.
+	updateTaskStall = 10 * time.Minute
+
+	// updatePrepareTimeout bounds the steps an update takes before its
+	// deploy, which are the read of the live manifest, its save for a
+	// rollback, and the release uploads. Nothing has changed on the
+	// deployment until the deploy is sent, so a failure there gives the
+	// claim up safely. Nothing bounds the deploy and what follows it,
+	// because the claim must be held while BOSH may still run a task.
+	updatePrepareTimeout = taskMonitorTimeout
+)
 
 // errUpdateTaskStopped reports that the update stopped following its BOSH
-// task before the task ended, because the broker is shutting down or the
-// update ran past its time limit. The task keeps running, and the record
-// keeps naming it, so re-adoption follows it after a restart.
+// task before the task ended, because the broker is shutting down. The
+// task keeps running, and the record keeps naming it, so re-adoption
+// follows it after the restart.
 var errUpdateTaskStopped = errors.New("stopped following the update's BOSH task")
 
 // updatePhase is an accepted update that needs a deploy. Its goroutine
@@ -79,10 +97,11 @@ func (b *Broker) launchUpdate(ctx context.Context, phase *updatePhase, claim *op
 	}
 
 	// The update outlives the request, so it runs under the service
-	// context with the task monitor's bound. A shutdown ends it, and the
+	// context. Only the steps before the deploy have a time bound. Once
+	// the deploy is sent, only a shutdown ends the goroutine, and the
 	// record keeps naming the BOSH task, so re-adoption follows the task
 	// after the restart.
-	asyncCtx, cancelAsync := context.WithTimeout(b.serviceContext(), taskMonitorTimeout)
+	asyncCtx := b.serviceContext()
 
 	// Nothing after this point can fail the request, so a repeated update
 	// may now be answered as accepted, and the goroutine takes the claim
@@ -91,7 +110,6 @@ func (b *Broker) launchUpdate(ctx context.Context, phase *updatePhase, claim *op
 
 	b.track("update of instance "+phase.instanceID, func() {
 		defer b.releaseOperation(phase.instanceID, claim)
-		defer cancelAsync()
 
 		phase.run(asyncCtx)
 	})
@@ -107,37 +125,8 @@ func (b *Broker) launchUpdate(ctx context.Context, phase *updatePhase, claim *op
 // The carry comes first, so a release the live deployment runs at a newer
 // version is never uploaded at the template's version.
 func (p *updatePhase) run(ctx context.Context) {
-	p.progress(ctx, "Reading the deployment's live release and stemcell versions", 0)
-
-	deployed, live, err := p.carryLiveVersions(ctx)
-	if err != nil {
-		p.logger.Error("Instance %s: %s", p.instanceID, err)
-		p.fail(ctx, "The update was not deployed, because the deployment's live release and stemcell versions could not be read", 0)
-
-		return
-	}
-
-	// The live manifest is what the director last ran, and the claim
-	// keeps anything else from changing it, so it is saved before the
-	// deploy for the rollback the setting may call for if the deploy
-	// fails.
-	err = p.saveRollbackManifest(ctx, live)
-	if err != nil {
-		p.logger.Error("Instance %s: %s", p.instanceID, err)
-		p.fail(ctx, "The update was not deployed, because the deployment's last good manifest could not be saved for a rollback", 0)
-
-		return
-	}
-
-	p.progress(ctx, "Uploading BOSH releases", 0)
-
-	err = manifest.UploadReleasesFromManifest(ctx, deployed, p.broker.BOSH, p.logger, func(message string) {
-		p.progress(ctx, message, 0)
-	})
-	if err != nil {
-		p.logger.Error("Instance %s: failed to upload the releases of its update: %s", p.instanceID, err)
-		p.fail(ctx, "Release upload failed: "+err.Error(), 0)
-
+	deployed, prepared := p.prepare(ctx)
+	if !prepared {
 		return
 	}
 
@@ -146,14 +135,91 @@ func (p *updatePhase) run(ctx context.Context) {
 		return
 	}
 
-	finished, err := p.broker.followUpdateTask(ctx, task.ID, p.logger)
-	if err != nil {
-		p.logger.Warning("Instance %s: %s, and the record keeps naming task %d, so re-adoption follows it", p.instanceID, err, task.ID)
-
+	finished, ended := p.awaitTask(ctx, task.ID)
+	if !ended {
 		return
 	}
 
 	p.settle(ctx, finished, deployed)
+}
+
+// prepare takes the steps before the deploy under updatePrepareTimeout,
+// and returns the manifest to deploy. It reports false when a step failed
+// and the update was recorded as failed.
+func (p *updatePhase) prepare(ctx context.Context) (string, bool) {
+	bound := updatePrepareTimeout
+	if p.broker.updatePrepareBound > 0 {
+		bound = p.broker.updatePrepareBound
+	}
+
+	prepareCtx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+
+	p.progress(ctx, "Reading the deployment's live release and stemcell versions", 0)
+
+	deployed, live, err := p.carryLiveVersions(prepareCtx)
+	if err != nil {
+		p.logger.Error("Instance %s: %s", p.instanceID, err)
+		p.fail(ctx, "The update was not deployed, because the deployment's live release and stemcell versions could not be read", 0)
+
+		return "", false
+	}
+
+	// The live manifest is what the director last ran, and the claim
+	// keeps anything else from changing it, so it is saved before the
+	// deploy for the rollback the setting may call for if the deploy
+	// fails.
+	err = p.saveRollbackManifest(prepareCtx, live)
+	if err != nil {
+		p.logger.Error("Instance %s: %s", p.instanceID, err)
+		p.fail(ctx, "The update was not deployed, because the deployment's last good manifest could not be saved for a rollback", 0)
+
+		return "", false
+	}
+
+	p.progress(ctx, "Uploading BOSH releases", 0)
+
+	err = manifest.UploadReleasesFromManifest(prepareCtx, deployed, p.broker.BOSH, p.logger, func(message string) {
+		p.progress(ctx, message, 0)
+	})
+	if err != nil {
+		p.logger.Error("Instance %s: failed to upload the releases of its update: %s", p.instanceID, err)
+		p.fail(ctx, "Release upload failed: "+err.Error(), 0)
+
+		return "", false
+	}
+
+	return deployed, true
+}
+
+// awaitTask follows the update's BOSH task, or its rollback's, until the
+// task ends, and returns the ended task. Only a shutdown stops it early,
+// and the claim is held the whole time. A task the director no longer
+// knows settles the update, because its result can't be known. It
+// reports false when the update didn't reach a settle by the task, which
+// is when the broker is shutting down, and re-adoption then follows the
+// task the record names after the restart.
+func (p *updatePhase) awaitTask(ctx context.Context, taskID int) (*bosh.Task, bool) {
+	finished, err := p.broker.followUpdateTask(ctx, taskID, p.logger)
+
+	switch {
+	case err == nil:
+		return finished, true
+	case bosh.IsTaskNotFound(err) && p.rollback != nil:
+		// The director pruned the rollback's task, so whether it restored
+		// the deployment can't be known, and the broker can't vouch for
+		// the deployment.
+		p.settleRollback(ctx, nil, fmt.Sprintf("BOSH task %d is no longer known to the director, so its result is unknown", taskID))
+	case bosh.IsTaskNotFound(err):
+		// The director pruned the task, so whether the deploy succeeded
+		// can't be known. The stored values stay at their last good state,
+		// and a repeat of the update deploys and records them.
+		p.fail(ctx, fmt.Sprintf("BOSH deployment task %d is no longer known to the director, so the update's result is unknown. Send the update again", taskID), taskID)
+	default:
+		p.logger.Warning("Instance %s: %s, and the record keeps naming task %d, so re-adoption follows it", p.instanceID, err, taskID)
+	}
+
+	return nil, false
 }
 
 // progress records the update's step, which the platform's poll shows.
@@ -243,9 +309,20 @@ func (p *updatePhase) deploy(ctx context.Context, deployed string) (*bosh.Task, 
 	return task, true
 }
 
-// followUpdateTask waits for the update's BOSH task to end, reading it
-// again after a failed read, until ctx ends.
+// followUpdateTask waits for the update's BOSH task to end, and reads it
+// again after a failed read, with a wait that doubles up to
+// updateTaskRetryMax, until ctx ends. No time bound applies, because the
+// task may still change the deployment while the director can't be
+// reached. It returns the director's task-not-found answer when the
+// director no longer has the task.
 func (b *Broker) followUpdateTask(ctx context.Context, taskID int, logger logger.Logger) (*bosh.Task, error) {
+	wait := updateTaskRetry
+	if b.updateTaskWait > 0 {
+		wait = b.updateTaskWait
+	}
+
+	var failingSince, stallLogged time.Time
+
 	for {
 		task, err := b.BOSH.WaitForTask(ctx, taskID)
 
@@ -254,11 +331,29 @@ func (b *Broker) followUpdateTask(ctx context.Context, taskID int, logger logger
 			return task, nil
 		case ctx.Err() != nil:
 			return nil, fmt.Errorf("%w %d: %w", errUpdateTaskStopped, taskID, ctx.Err())
+		case bosh.IsTaskNotFound(err):
+			logger.Error("The director no longer has the update's BOSH task %d: %s", taskID, err)
+
+			return nil, fmt.Errorf("following the update's BOSH task %d: %w", taskID, err)
 		case err != nil:
-			logger.Warning("Waiting for the update's BOSH task %d failed, and the update waits for it again: %s", taskID, err)
+			now := time.Now()
+			if failingSince.IsZero() {
+				failingSince, stallLogged = now, now
+			}
+
+			if now.Sub(stallLogged) >= updateTaskStall {
+				stallLogged = now
+
+				logger.Error("The update's BOSH task %d could not be read since %s, and the update keeps its claim and keeps following the task: %s", taskID, failingSince.Format(time.RFC3339), err)
+			} else {
+				logger.Warning("Waiting for the update's BOSH task %d failed, and the update waits for it again in %v: %s", taskID, wait, err)
+			}
+		default:
+			failingSince = time.Time{}
 		}
 
-		timer := time.NewTimer(updateTaskRetry)
+		timer := time.NewTimer(wait)
+		wait = min(updateTaskRetryFactor*wait, max(updateTaskRetryMax, wait))
 
 		select {
 		case <-timer.C:

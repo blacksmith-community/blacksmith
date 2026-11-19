@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"blacksmith/internal/bosh"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 )
@@ -55,9 +54,9 @@ func (b *Broker) awaitReadoptedUpdateClaim(operation readoptOperation, loaded ti
 // readoptUpdate resumes an update a restart interrupted, under the claim
 // re-adoption holds. It rebuilds the update from its task record, follows
 // the deploy's task, resolving a lost answer by its context ID first, and
-// settles the update as its own goroutine would have. It reports false
-// when ctx ends first, and the record then keeps the update for the next
-// start.
+// settles the update as its own goroutine would have. Only the end of ctx
+// stops it, and it reports false then, and the record keeps the update
+// for the next start.
 func (b *Broker) readoptUpdate(ctx context.Context, operation readoptOperation, logger logger.Logger) bool {
 	for {
 		phase, err := b.readoptedUpdatePhase(ctx, operation, logger)
@@ -175,10 +174,14 @@ func stagedUpdate(record map[string]interface{}) (internalVault.StagedUpdate, er
 // never sent again. It reports false when ctx ends first.
 func (p *updatePhase) resume(ctx context.Context) bool {
 	current, err := p.broker.readoptCurrent(ctx, p.instanceID)
-	if err != nil {
-		p.logger.Warning("Instance %s: re-adoption could not read its update's record again: %s", p.instanceID, err)
+	for err != nil {
+		p.logger.Warning("Instance %s: re-adoption could not read its update's record again, and reads it again: %s", p.instanceID, err)
 
-		return false
+		if !readoptWait(ctx) {
+			return false
+		}
+
+		current, err = p.broker.readoptCurrent(ctx, p.instanceID)
 	}
 
 	if current.Action != operationTypeUpdate || current.ContextID != p.contextID || readoptTerminal(current.State) || current.State == internalVault.TaskStateRollbackFailed {
@@ -198,29 +201,13 @@ func (p *updatePhase) resume(ctx context.Context) bool {
 		}
 	}
 
-	finished, err := p.broker.followReadoptedTask(ctx, taskID, p.logger)
+	// The task started before the restart, so the director counts it
+	// against its limit, as for any re-adopted task.
+	p.broker.adoptReadoptedTask(taskID)
 
-	switch {
-	case ctx.Err() != nil:
-		return false
-	case bosh.IsTaskNotFound(err) && p.rollback != nil:
-		// The director pruned the rollback's task, so whether it restored
-		// the deployment can't be known, and the broker can't vouch for
-		// the deployment.
-		p.settleRollback(ctx, nil, fmt.Sprintf("BOSH task %d is no longer known to the director, so its result is unknown", taskID))
-
-		return true
-	case bosh.IsTaskNotFound(err):
-		// The director pruned the task, so whether the deploy succeeded
-		// can't be known. The stored values stay at their last good state,
-		// and a repeat of the update deploys and records them.
-		p.fail(ctx, fmt.Sprintf("BOSH deployment task %d is no longer known to the director, so the update's result is unknown. Send the update again", taskID), taskID)
-
-		return true
-	case err != nil:
-		p.logger.Warning("Instance %s: re-adoption stopped following its update's task %d: %s", p.instanceID, taskID, err)
-
-		return false
+	finished, ended := p.awaitTask(ctx, taskID)
+	if !ended {
+		return ctx.Err() == nil
 	}
 
 	deployed := ""
