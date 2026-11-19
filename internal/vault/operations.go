@@ -754,6 +754,9 @@ type progressRecord struct {
 	DeploymentName   string      `json:"deployment_name,omitempty"`
 	DeploymentPlanID string      `json:"deployment_plan_id,omitempty"`
 	CleanupPending   bool        `json:"cleanup_pending,omitempty"`
+	// Update holds an update's staged values, which every later write of
+	// the same update keeps. See TaskRecordUpdateKey.
+	Update interface{} `json:"update,omitempty"`
 }
 
 // trackProgressGuarded writes the task record as trackProgress does, and
@@ -791,6 +794,8 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 			task.DeploymentPlanID, _ = replaced[TaskRecordDeploymentPlanIDKey].(string)
 		}
 
+		task.Update = replaced[TaskRecordUpdateKey]
+
 		kept, keeps := keptUnknownOutcome(replaced, task.ContextID, taskID)
 		if keeps {
 			logger.Debug("keeping the unknown outcome of context ID %s, unknown since %s, under the progress written", kept.ContextID, kept.UnknownSince)
@@ -801,6 +806,7 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 			kept.Params = task.Params
 			kept.DeploymentName = task.DeploymentName
 			kept.DeploymentPlanID = task.DeploymentPlanID
+			kept.Update = task.Update
 
 			return kept
 		}
@@ -874,6 +880,8 @@ type unknownOutcomeRecord struct {
 	// DeploymentPlanID is the plan DeploymentName was minted under. See
 	// TaskRecordDeploymentPlanIDKey.
 	DeploymentPlanID string `json:"deployment_plan_id,omitempty"`
+	// Update holds an update's staged values. See TaskRecordUpdateKey.
+	Update interface{} `json:"update,omitempty"`
 }
 
 // Bounds on the write of an unknown outcome. A lost write leaves the
@@ -923,6 +931,7 @@ func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action,
 		}
 		task.DeploymentName, _ = replaced[TaskRecordDeploymentNameKey].(string)
 		task.DeploymentPlanID, _ = replaced[TaskRecordDeploymentPlanIDKey].(string)
+		task.Update = replaced[TaskRecordUpdateKey]
 
 		// The same request's outcome recorded again keeps the time it
 		// first became unknown.
