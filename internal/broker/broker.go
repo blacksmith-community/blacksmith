@@ -598,7 +598,7 @@ func (b *Broker) Deprovision(
 	// confirms its deployment is, and then nothing is recorded for it. No
 	// delete, of an indexed instance or not, goes on while another
 	// instance claims the deployment it would delete.
-	err = b.refuseDeleteOfGoneInstance(ctx, instanceID, details, superseded, logger)
+	foundGone, err := b.refuseDeleteOfGoneInstance(ctx, instanceID, details, superseded, logger)
 	if err != nil {
 		return osbapi.DeprovisionResponse{}, false, err
 	}
@@ -679,7 +679,7 @@ func (b *Broker) Deprovision(
 		defer b.releaseOperation(instanceID, claim)
 		defer cancelAsync()
 
-		b.deprovisionAsync(asyncCtx, instanceID, instance, followRunning, release)
+		b.deprovisionAsync(asyncCtx, instanceID, instance, followRunning, foundGone, release)
 	})
 
 	logger.Info("Accepted deprovisioning request for service instance %s", instanceID)
@@ -2177,7 +2177,13 @@ var errInstanceUnindexed = errors.New("instance has no index entry")
 // confirms the deployment is gone, the unknown provision is recorded as a
 // finished delete, so the record does not show an operation in flight for an
 // instance the platform has been told is gone.
-func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, superseded recordedOperation, logger logger.Logger) error {
+//
+// It returns the double claim of an indexed instance that it let through
+// because the director said the deployment was gone, and the zero
+// doubleClaimFoundGone for every other delete it lets through. The
+// deprovision then sends no delete if the director has the deployment
+// again by the time it would send one.
+func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, superseded recordedOperation, logger logger.Logger) (doubleClaimFoundGone, error) {
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
 
@@ -2185,7 +2191,7 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 	if err != nil {
 		logger.Error("unable to look instance %s up in the vault index: %s", instanceID, err)
 
-		return fmt.Errorf("failed to find instance in vault: %w", err)
+		return doubleClaimFoundGone{}, fmt.Errorf("failed to find instance in vault: %w", err)
 	}
 
 	deploymentName := vaultPkg.MintDeploymentName(details.PlanID, instanceID)
@@ -2199,19 +2205,26 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 	if err != nil {
 		logger.Error("Refusing deprovision of instance %s: %s", instanceID, err)
 
-		return fmt.Errorf("could not check whether another instance claims deployment %s, so the deprovision of instance %s was refused: %w", deploymentName, instanceID, err)
+		return doubleClaimFoundGone{}, fmt.Errorf("could not check whether another instance claims deployment %s, so the deprovision of instance %s was refused: %w", deploymentName, instanceID, err)
 	}
 
 	if exists {
 		if claimant == "" {
-			return nil
+			return doubleClaimFoundGone{}, nil
 		}
 
-		return b.refuseDeleteOfDoubleClaim(readCtx, instanceID, deploymentName, claimant, where, logger)
+		// The double claim lets the delete through only when the director
+		// says the deployment is gone.
+		err = b.refuseDeleteOfDoubleClaim(readCtx, instanceID, deploymentName, claimant, where, logger)
+		if err != nil {
+			return doubleClaimFoundGone{}, err
+		}
+
+		return doubleClaimFoundGone{deploymentName: deploymentName, claimant: claimant, where: where}, nil
 	}
 
 	if claimant != "" {
-		return b.answerDeleteOfClaimedName(readCtx, instanceID, deploymentName, claimant, where, logger)
+		return doubleClaimFoundGone{}, b.answerDeleteOfClaimedName(readCtx, instanceID, deploymentName, claimant, where, logger)
 	}
 
 	err = b.deploymentGone(readCtx, instanceID, deploymentName, logger)
@@ -2220,17 +2233,27 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 			b.settleSupersededProvisionAsDeleted(ctx, instanceID, superseded, logger)
 		}
 
-		return err
+		return doubleClaimFoundGone{}, err
 	}
 
 	err = b.rejectIfDeploymentBusy(readCtx, instanceID, deploymentName, logger)
 	if err != nil {
-		return err
+		return doubleClaimFoundGone{}, err
 	}
 
 	logger.Info("instance %s has no index entry, but the director still has deployment %s, so the delete goes ahead", instanceID, deploymentName)
 
-	return nil
+	return doubleClaimFoundGone{}, nil
+}
+
+// doubleClaimFoundGone is the double claim of an indexed instance whose
+// delete went ahead because the director said the deployment was gone.
+// claimant claims deploymentName too, through where. The zero value,
+// whose deploymentName is empty, is no such double claim.
+type doubleClaimFoundGone struct {
+	deploymentName string
+	claimant       string
+	where          string
 }
 
 // errNameClaimedTwice fails the delete of an instance that claims a

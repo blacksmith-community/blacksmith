@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -867,4 +868,65 @@ func requireSweptRow(t *testing.T, deleter *broker.Broker, want interfaces.Clean
 	case !kept && len(rows) != 0:
 		t.Fatalf("after step %d the overview lists %+v, want nothing", step, rows)
 	}
+}
+
+// A delete of an indexed instance goes ahead over a double claim when the
+// director says the deployment is gone. If the director has the
+// deployment again when the deprovision would send its delete, the other
+// claimant may have deployed it, so nothing is deleted. The deprovision
+// fails with a description that names the deployment and not the other
+// instance, the index entry stays, and the overview lists the instance
+// with the delete's reason.
+func TestDeprovision_KeepsADoubleClaimedDeploymentThatReappears(t *testing.T) {
+	t.Parallel()
+
+	vaultClient, _ := claimFaultVault(t)
+	ctx := context.Background()
+	name := writeTwoLiveClaims(ctx, t, vaultClient)
+
+	// The claim check's read is the first, and the director has the
+	// deployment again on every later read.
+	var reads atomic.Int32
+
+	director := cleanupGuardDirector()
+	director.GetDeploymentFn = func(asked string) (*bosh.DeploymentDetail, error) {
+		if reads.Add(1) == 1 {
+			return deploymentNotFound(asked)
+		}
+
+		return &bosh.DeploymentDetail{Name: asked}, nil
+	}
+
+	deleter := doubleClaimDeprovisioner(ctx, t, director, vaultClient)
+
+	status, body := deleteInstance(ctx, t, deleter, doubleClaimDebtor, collidingShortPlan)
+	if status != http.StatusAccepted {
+		t.Fatalf("the delete of %s was answered %d %s, want 202", doubleClaimDebtor, status, body)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	deleter.WaitForBackground(waitCtx)
+
+	if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+		t.Fatalf("the deprovision deleted %v, a deployment the director had again", deleted)
+	}
+
+	if reads.Load() < 2 {
+		t.Fatalf("the director was asked for %s %d times, want the deprovision to ask again", name, reads.Load())
+	}
+
+	_, indexed, err := vaultClient.FindInstance(ctx, doubleClaimDebtor)
+	if err != nil || !indexed {
+		t.Fatalf("the index entry of %s is %v, %v, want it kept", doubleClaimDebtor, indexed, err)
+	}
+
+	recorded, err := deleter.RecordedOperation(ctx, doubleClaimDebtor)
+	if err != nil || recorded.Action != outcomeDeprovision || recorded.State != outcomeStateFailed || !strings.Contains(recorded.Description, "Deployment "+name+", which two service instances claim, exists again") {
+		t.Fatalf("the record of %s is %+v, %v, want a failed deprovision that says the deployment exists again", doubleClaimDebtor, recorded, err)
+	}
+
+	requireNoOtherInstanceNamed(t, recorded.Description, name, doubleClaimDebtor, doubleClaimOwner)
+	requireDeleteRow(t, deleter, doubleClaimDebtor, name, "The platform's delete of this instance was refused, because instance abc also claims deployment redis-small-x-abc, through its index entry")
 }

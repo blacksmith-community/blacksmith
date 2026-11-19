@@ -745,6 +745,10 @@ type deprovisioningPhase struct {
 	// provision, whose cleanup may already have sent a delete. Its first
 	// attempt then follows a running delete task rather than sending one.
 	followRunning bool
+	// foundGone is set for a deprovision that went ahead over a double
+	// claim because the director said the deployment was gone. A
+	// deployment the director has again is then not deleted.
+	foundGone doubleClaimFoundGone
 }
 
 // checkDeploymentExists checks if deployment exists and handles cleanup if not.
@@ -777,6 +781,15 @@ func (d *deprovisioningPhase) checkDeploymentExists(ctx context.Context) (bool, 
 		return false, false
 	}
 
+	// The other claimant may have deployed the name since the director
+	// said it was gone, and that deployment is never deleted for this
+	// instance.
+	if d.foundGone.deploymentName != "" {
+		d.refuseReappearedDeployment(ctx)
+
+		return false, false
+	}
+
 	// An empty manifest means the first deploy has not finished yet. The
 	// deployment exists and must be deleted like any other.
 	if deployment.Manifest == "" {
@@ -784,6 +797,25 @@ func (d *deprovisioningPhase) checkDeploymentExists(ctx context.Context) (bool, 
 	}
 
 	return true, true
+}
+
+// refuseReappearedDeployment fails the deprovision of an instance whose
+// delete went ahead over a double claim because the director said the
+// deployment was gone, when the director now has it. Nothing is deleted,
+// the index entry and the credentials stay, and the instance is listed
+// under Attention required with the delete's reason, unless it is listed
+// already. The description names the deployment and not the other
+// instance, whose ID only the log and the overview show.
+func (d *deprovisioningPhase) refuseReappearedDeployment(ctx context.Context) {
+	claim := d.foundGone
+	reason := deleteDoubleClaimReason(claim.claimant, d.deploymentName, claim.where)
+
+	d.broker.holdCleanupAttention(d.instanceID, d.deploymentName, reason)
+	d.logger.Error("Refusing to delete deployment %s for instance %s: the director said it was gone when the delete was accepted, and it has it again, while instance %s claims it too, through %s, so nothing was deleted",
+		d.deploymentName, d.instanceID, claim.claimant, claim.where)
+
+	d.broker.failWithTracking(ctx, d.instanceID, "deprovision",
+		fmt.Sprintf("Deployment %s, which two service instances claim, exists again, so it was not deleted, and an operator must settle which instance it belongs to", d.deploymentName), nil, d.logger)
 }
 
 // handleDeploymentNotFound handles cleanup when deployment doesn't exist.
@@ -1227,7 +1259,11 @@ func (b *Broker) startProvisioningPhase(ctx context.Context, instanceID string, 
 //
 // Both cleanup paths are idempotent (Index removal and timestamp storage can be
 // repeated safely), so there's no harm if both execute.
-func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instance *vaultPkg.Instance, followRunning bool, release func()) { //nolint:contextcheck // the delete monitor outlives ctx and runs under the service context
+//
+// foundGone is the double claim the delete was let through over because
+// the director said the deployment was gone, or the zero value. When it
+// is set and the director has the deployment again, nothing is deleted.
+func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instance *vaultPkg.Instance, followRunning bool, foundGone doubleClaimFoundGone, release func()) { //nolint:contextcheck // the delete monitor outlives ctx and runs under the service context
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting async deprovisioning for instance %s", instanceID)
 
@@ -1272,6 +1308,7 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 		logger:         logger,
 		contextID:      contextID,
 		followRunning:  followRunning,
+		foundGone:      foundGone,
 	}
 
 	// Check if deployment exists
