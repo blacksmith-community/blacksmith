@@ -2,12 +2,14 @@ package testutil_test
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -118,6 +120,8 @@ func TestVaultDevServerNoCleanup(t *testing.T) {
 func TestPickFreePortAvoidsReservedRange(t *testing.T) {
 	t.Parallel()
 
+	// A dev server also listens on the port after its own, so 8199 is
+	// refused for the 8200 that its cluster listener would take.
 	candidates := []int{8200, 8210, 8236, 8199, 9000}
 	idx := 0
 	next := func() (int, error) {
@@ -132,8 +136,8 @@ func TestPickFreePortAvoidsReservedRange(t *testing.T) {
 		t.Fatalf("PickFreePort: %v", err)
 	}
 
-	if port != 8199 {
-		t.Errorf("expected first port outside 8200-8236 (8199), got %d", port)
+	if port != 9000 {
+		t.Errorf("expected the first port that keeps it and the next port outside 8200-8236 (9000), got %d", port)
 	}
 
 	// The real source must never land in the reserved range either.
@@ -143,9 +147,124 @@ func TestPickFreePortAvoidsReservedRange(t *testing.T) {
 			t.Fatalf("PickFreePort(nil): %v", err)
 		}
 
-		if p >= 8200 && p <= 8236 {
-			t.Fatalf("port %d is in the reserved range", p)
+		if p+1 >= 8200 && p <= 8236 {
+			t.Fatalf("port %d or the port after it is in the reserved range", p)
 		}
+	}
+}
+
+// sequentialPorts hands out free ports the way macOS does, in sequence from
+// where its last draw left off, and refuses a port that is held.
+type sequentialPorts struct {
+	mu   sync.Mutex
+	next int
+	held map[int]bool
+}
+
+func newSequentialPorts(start int, held ...int) *sequentialPorts {
+	ports := &sequentialPorts{next: start, held: map[int]bool{}}
+	for _, port := range held {
+		ports.held[port] = true
+	}
+
+	return ports
+}
+
+var errPortHeld = errors.New("port is held")
+
+func (s *sequentialPorts) listen(port int) (net.Listener, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if port == 0 {
+		for s.held[s.next] {
+			s.next++
+		}
+
+		port = s.next
+		s.next++
+	} else if s.held[port] {
+		return nil, errPortHeld
+	}
+
+	s.held[port] = true
+
+	return &heldPort{ports: s, port: port}, nil
+}
+
+func (s *sequentialPorts) isHeld(port int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.held[port]
+}
+
+// heldPort is a listener that holds a port of sequentialPorts until closed.
+type heldPort struct {
+	ports *sequentialPorts
+	port  int
+}
+
+func (h *heldPort) Accept() (net.Conn, error) { return nil, errPortHeld }
+
+func (h *heldPort) Close() error {
+	h.ports.mu.Lock()
+	defer h.ports.mu.Unlock()
+
+	delete(h.ports.held, h.port)
+
+	return nil
+}
+
+func (h *heldPort) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: h.port} }
+
+// A dev server listens on its port and, for cluster traffic, on the port
+// after it. Where the kernel hands out free ports in sequence, a plain pick
+// hands the dev server that starts next the cluster port of the one before
+// it, so each pick must move the kernel past its cluster port.
+func TestPickLoopbackPortMovesPastTheClusterPort(t *testing.T) {
+	t.Parallel()
+
+	ports := newSequentialPorts(40000)
+	previous := 0
+
+	for range 5 {
+		port, err := testutil.PickLoopbackPort(ports.listen)
+		if err != nil {
+			t.Fatalf("PickLoopbackPort: %v", err)
+		}
+
+		if previous != 0 && port == previous+1 {
+			t.Fatalf("port %d is the cluster port of the port %d picked before it", port, previous)
+		}
+
+		if ports.isHeld(port) || ports.isHeld(port+1) {
+			t.Fatalf("the pick of port %d left it or its cluster port held", port)
+		}
+
+		previous = port
+	}
+}
+
+// A port whose cluster port another server holds is refused.
+func TestPickLoopbackPortRefusesAHeldClusterPort(t *testing.T) {
+	t.Parallel()
+
+	// 40000 is drawn first, but 40001 is held, so 40002 comes second and
+	// the draw is refused. The next draw is 40003 with 40004 after it.
+	ports := newSequentialPorts(40000, 40001)
+
+	port, err := testutil.PickLoopbackPort(ports.listen)
+	if err != nil {
+		t.Fatalf("PickLoopbackPort: %v", err)
+	}
+
+	if port != 40003 {
+		t.Errorf("expected 40003, the first port whose cluster port is free, got %d", port)
+	}
+
+	if !ports.isHeld(40001) {
+		t.Error("the pick released the port another server holds")
 	}
 }
 

@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -37,6 +38,7 @@ const (
 	vaultBinEnv         = "BLACKSMITH_TEST_VAULT_BIN"
 	reservedPortLow     = 8200
 	reservedPortHigh    = 8236
+	clusterPortOffset   = 1
 	maxStartAttempts    = 3
 	maxPortPicks        = 100
 	readinessDeadline   = 30 * time.Second
@@ -105,15 +107,77 @@ func findVaultBinary() (string, error) {
 	return "", ErrVaultBinaryNotFound
 }
 
-// loopbackPort asks the kernel for a free loopback port.
+// loopbackPort asks the kernel for a free loopback port whose next port,
+// which a dev server takes for its cluster listener, is free too.
 func loopbackPort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("failed to find a free port: %w", err)
+	return pickLoopbackPort(listenLoopback)
+}
+
+// pickLoopbackPort draws a port from listen, where port 0 lets the kernel
+// choose, until a draw keeps the port after it free as well.
+func pickLoopbackPort(listen func(port int) (net.Listener, error)) (int, error) {
+	for range maxPortPicks {
+		port, ok, err := drawLoopbackPair(listen)
+		if err != nil {
+			return 0, err
+		}
+
+		if ok {
+			return port, nil
+		}
 	}
 
-	defer func() { _ = l.Close() }()
+	return 0, fmt.Errorf("%w: no port with a free next port after %d picks", ErrVaultNotReady, maxPortPicks)
+}
 
+// drawLoopbackPair asks listen for a free port, and then for a second one
+// while it holds the first. The kernel never hands out a held port, and
+// macOS hands its free ports out in sequence, so the second draw moves the
+// kernel past the first port's cluster port, and the dev server that starts
+// next is not handed it. The draw is kept when the second port is the
+// cluster port or the cluster port binds. A draw that is refused closes
+// everything it held, so parallel draws never starve each other.
+func drawLoopbackPair(listen func(port int) (net.Listener, error)) (int, bool, error) {
+	first, err := listen(0)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to find a free port: %w", err)
+	}
+
+	defer func() { _ = first.Close() }()
+
+	port, err := listenerPort(first)
+	if err != nil {
+		return 0, false, err
+	}
+
+	second, err := listen(0)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to find a free port: %w", err)
+	}
+
+	defer func() { _ = second.Close() }()
+
+	secondPort, err := listenerPort(second)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if secondPort == port+clusterPortOffset {
+		return port, true, nil
+	}
+
+	cluster, err := listen(port + clusterPortOffset)
+	if err != nil {
+		return 0, false, nil //nolint:nilerr // a taken cluster port only refuses this draw
+	}
+
+	_ = cluster.Close()
+
+	return port, true, nil
+}
+
+// listenerPort returns the TCP port a listener holds.
+func listenerPort(l net.Listener) (int, error) {
 	addr, ok := l.Addr().(*net.TCPAddr)
 	if !ok {
 		return 0, fmt.Errorf("%w: unexpected listener address %v", ErrVaultNotReady, l.Addr())
@@ -122,8 +186,22 @@ func loopbackPort() (int, error) {
 	return addr.Port, nil
 }
 
-// pickFreePort draws ports from next (the kernel by default) until one falls
-// outside the 8200-8236 range that live Vault systems use.
+// listenLoopback listens on the loopback port, where 0 lets the kernel
+// choose.
+func listenLoopback(port int) (net.Listener, error) {
+	var config net.ListenConfig
+
+	l, err := config.Listen(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on loopback port %d: %w", port, err)
+	}
+
+	return l, nil
+}
+
+// pickFreePort draws ports from next (loopbackPort by default) until one falls
+// outside the 8200-8236 range that live Vault systems use, along with the
+// port after it that the dev server's cluster listener takes.
 func pickFreePort(next func() (int, error)) (int, error) {
 	if next == nil {
 		next = loopbackPort
@@ -135,7 +213,7 @@ func pickFreePort(next func() (int, error)) (int, error) {
 			return 0, err
 		}
 
-		if port < reservedPortLow || port > reservedPortHigh {
+		if port+clusterPortOffset < reservedPortLow || port > reservedPortHigh {
 			return port, nil
 		}
 	}

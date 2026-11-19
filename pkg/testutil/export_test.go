@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"net"
 	"os/exec"
 	"syscall"
 	"time"
@@ -11,6 +12,11 @@ import (
 
 // PickFreePort exposes pickFreePort.
 func PickFreePort(next func() (int, error)) (int, error) { return pickFreePort(next) }
+
+// PickLoopbackPort exposes pickLoopbackPort.
+func PickLoopbackPort(listen func(port int) (net.Listener, error)) (int, error) {
+	return pickLoopbackPort(listen)
+}
 
 // DevServerEnv exposes devServerEnv.
 func DevServerEnv(environ []string, home string) []string { return devServerEnv(environ, home) }
