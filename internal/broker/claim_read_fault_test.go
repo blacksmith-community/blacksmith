@@ -126,9 +126,7 @@ func TestClaimCheck_FailsClosedOnAFailedRead(t *testing.T) {
 					t.Fatalf("the %s of %s was answered %d %s, want 500 saying %q and %q", request, intruder, status, body, claimCheckFailed, entry.failed)
 				}
 
-				if named := strings.NewReplacer(name, "", intruder, "").Replace(body); strings.Contains(named, owner) {
-					t.Fatalf("the answer %s names instance %s", body, owner)
-				}
+				requireNoOtherInstanceNamed(t, body, name, intruder, owner, longerClaimant)
 
 				requireNothingWritten(ctx, t, vaultClient, intruder)
 
@@ -136,6 +134,30 @@ func TestClaimCheck_FailsClosedOnAFailedRead(t *testing.T) {
 					t.Fatalf("the %s of %s sent %v to the director", request, intruder, sent)
 				}
 			})
+		}
+	}
+}
+
+// requireNoOtherInstanceNamed checks that body, the answer to a request
+// for instance asked, names none of the instances in others. The answer
+// may name the deployment, so only that whole name is taken out before
+// each other instance's ID is looked for, and a fragment of the name such
+// as small-x-abc still counts. An ID that is part of the one asked for, as
+// abc is part of x-abc, is looked for once that ID is taken out as well.
+func requireNoOtherInstanceNamed(t *testing.T, body, deploymentName, asked string, others ...string) {
+	t.Helper()
+
+	withoutName := strings.ReplaceAll(body, deploymentName, "")
+	withoutAsked := strings.ReplaceAll(withoutName, asked, "")
+
+	for _, other := range others {
+		rest := withoutName
+		if strings.Contains(asked, other) {
+			rest = withoutAsked
+		}
+
+		if strings.Contains(rest, other) {
+			t.Fatalf("the answer %s names instance %s", body, other)
 		}
 	}
 }

@@ -152,9 +152,7 @@ func TestDeprovision_RefusesWhileItsOwnRecordClaimsAnotherInstancesName(t *testi
 				t.Fatalf("the delete of %s was answered %d %s, want 500 saying %q", doubleClaimDebtor, status, body, entry.description)
 			}
 
-			if named := strings.NewReplacer(name, "", doubleClaimDebtor, "").Replace(body); strings.Contains(named, doubleClaimOwner) {
-				t.Fatalf("the answer %s names instance %s", body, doubleClaimOwner)
-			}
+			requireNoOtherInstanceNamed(t, body, name, doubleClaimDebtor, doubleClaimOwner)
 
 			if writes := proxy.Writes()[written:]; len(writes) != 0 {
 				t.Fatalf("the refused delete wrote %v", writes)
