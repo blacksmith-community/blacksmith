@@ -109,6 +109,12 @@ func (b *Broker) SetUpdateTaskWait(wait time.Duration) {
 	b.updateTaskWait = wait
 }
 
+// SetUpdateCredentialsBound replaces the bound on the credential refresh
+// after an update's deploy succeeded.
+func (b *Broker) SetUpdateCredentialsBound(d time.Duration) {
+	b.updateCredentialsBound = d
+}
+
 // SetCredentialSweepPassTimeout replaces the deadline of one sweep pass.
 func (b *Broker) SetCredentialSweepPassTimeout(timeout time.Duration) {
 	b.credentialSweep.mu.Lock()

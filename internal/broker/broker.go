@@ -261,6 +261,10 @@ type Broker struct {
 	// first wait before an update reads its BOSH task again after a read
 	// failed.
 	updateTaskWait time.Duration
+	// updateCredentialsBound, when positive, replaces
+	// updateCredentialsTimeout as the bound on the credential refresh
+	// after an update's deploy succeeded.
+	updateCredentialsBound time.Duration
 
 	// unknownOutcomePasses holds an *unknownOutcomePass for each instance
 	// whose unknown outcome a poll has tried to settle.

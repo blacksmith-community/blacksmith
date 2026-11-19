@@ -32,12 +32,20 @@ const (
 	// logs it again each time the stall lasts that long once more.
 	updateTaskStall = 10 * time.Minute
 
+	// updateCredentialsTimeout bounds the credential refresh after an
+	// update's deploy succeeded. The refresh reads the director and
+	// CredHub while the update holds the settle lock and the claim, so a
+	// call that hangs would otherwise hold both for good, and a refresh
+	// that runs out leaves the stored credentials in place.
+	updateCredentialsTimeout = 5 * time.Minute
+
 	// updatePrepareTimeout bounds the steps an update takes before its
 	// deploy, which are the read of the live manifest, its save for a
 	// rollback, and the release uploads. Nothing has changed on the
 	// deployment until the deploy is sent, so a failure there gives the
-	// claim up safely. Nothing bounds the deploy and what follows it,
-	// because the claim must be held while BOSH may still run a task.
+	// claim up safely. Nothing bounds the deploy or the wait for its
+	// task, because the claim must be held while BOSH may still run a
+	// task.
 	updatePrepareTimeout = taskMonitorTimeout
 )
 
@@ -323,6 +331,16 @@ func (p *updatePhase) deploy(ctx context.Context, deployed string) (*bosh.Task, 
 	return task, true
 }
 
+// updateCredentialsWait is the bound on the credential refresh after an
+// update's deploy succeeded.
+func (b *Broker) updateCredentialsWait() time.Duration {
+	if b.updateCredentialsBound > 0 {
+		return b.updateCredentialsBound
+	}
+
+	return updateCredentialsTimeout
+}
+
 // updateRetryWait is the first wait before an update reads its task again
 // or tries a settle write again, after one failed.
 func (b *Broker) updateRetryWait() time.Duration {
@@ -485,7 +503,11 @@ func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed stri
 
 	p.storeDeployedManifest(settleCtx, deployed)
 
-	err = p.broker.processCredentials(settleCtx, p.instanceID, osbapi.ProvisionRequest{ServiceID: p.target.instance.ServiceID, PlanID: p.plan.ID}, p.logger)
+	credentialsCtx, cancelCredentials := context.WithTimeout(settleCtx, p.broker.updateCredentialsWait())
+	err = p.broker.processCredentials(credentialsCtx, p.instanceID, osbapi.ProvisionRequest{ServiceID: p.target.instance.ServiceID, PlanID: p.plan.ID}, p.logger)
+
+	cancelCredentials()
+
 	if err != nil {
 		p.logger.Error("Instance %s: the credentials were not refreshed after its update, so the stored ones stay: %s", p.instanceID, err)
 	}

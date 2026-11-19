@@ -280,7 +280,7 @@ The broker merges the request over the stored parameters. A key in the request s
 
 - **Success**
 
-  Once the deploy task succeeds, the broker commits the new parameters, the deployed manifest, and the context, and the poll answers `succeeded`.
+  Once the deploy task succeeds, the broker commits the new parameters, the deployed manifest, and the context, and the poll answers `succeeded`. It also refreshes the instance's stored credentials, and when that refresh takes more than five minutes, the broker keeps the stored ones and settles the update anyway.
 
 - **Failure**
 
