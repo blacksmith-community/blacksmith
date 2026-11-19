@@ -205,18 +205,34 @@ func newTestScheduler(t *testing.T, sc instanceScanner, cache *Cache, list Insta
 func waitScan(t *testing.T, s *Scheduler, id string) {
 	t.Helper()
 
+	waitRun(t, currentRun(t, s, id))
+}
+
+// currentRun returns the run the scheduler holds now, and fails unless it is
+// the scan with this id. A test that releases a scan, and expects a queued
+// scan to start behind it, takes the run before the release, because the
+// queued scan replaces the held run as soon as the first one ends.
+func currentRun(t *testing.T, s *Scheduler, scanID string) *fleetRun {
+	t.Helper()
+
 	s.mu.Lock()
 	run := s.run
 	s.mu.Unlock()
 
-	if run == nil || run.id != id {
-		t.Fatalf("scan %q is not the current scan", id)
+	if run == nil || run.id != scanID {
+		t.Fatalf("scan %q is not the current scan", scanID)
 	}
+
+	return run
+}
+
+func waitRun(t *testing.T, run *fleetRun) {
+	t.Helper()
 
 	select {
 	case <-run.done:
 	case <-time.After(testWait):
-		t.Fatalf("scan %s never finished", id)
+		t.Fatalf("scan %s never finished", run.id)
 	}
 }
 
@@ -996,8 +1012,12 @@ func TestTimedScanFollowsSubsetRun(t *testing.T) {
 		t.Fatal("b was scanned while the subset run held the slot")
 	}
 
+	// The timed scan takes over from the subset run the moment it ends, so
+	// the subset run is taken before its gate opens.
+	held := currentRun(t, s, subset)
+
 	close(sc.gates["a"])
-	waitScan(t, s, subset)
+	waitRun(t, held)
 
 	if second := fa.next(t); second != 60*time.Minute {
 		t.Errorf("wait after the full scan = %s, want 60m", second)
