@@ -119,11 +119,16 @@ const checkBound = 5 * time.Second
 func runChecks(t *testing.T, tester *ConnectionTester, req *RegistrationTest) []ConnectionCheck {
 	t.Helper()
 
-	return runChecksWithin(t, context.Background(), tester, req)
+	return runChecksWithin(t, context.Background(), checkBound, tester, req)
 }
 
-// runChecksWithin is runChecks for a caller whose context is ctx.
-func runChecksWithin(t *testing.T, ctx context.Context, tester *ConnectionTester, req *RegistrationTest) []ConnectionCheck {
+// triggerBackstop is how long a run that the test itself ends may take. The
+// test ends it, so this only stops a run that is really stuck.
+const triggerBackstop = 2 * time.Minute
+
+// runChecksWithin is runChecks for a caller whose context is ctx, and who
+// allows the run limit.
+func runChecksWithin(t *testing.T, ctx context.Context, limit time.Duration, tester *ConnectionTester, req *RegistrationTest) []ConnectionCheck {
 	t.Helper()
 
 	done := make(chan []ConnectionCheck, 1)
@@ -134,8 +139,8 @@ func runChecksWithin(t *testing.T, ctx context.Context, tester *ConnectionTester
 
 	select {
 	case checks = <-done:
-	case <-time.After(checkBound):
-		t.Fatalf("the connection test was still running after %s", checkBound)
+	case <-time.After(limit):
+		t.Fatalf("the connection test was still running after %s", limit)
 	}
 
 	encoded, err := json.Marshal(checks)
@@ -683,7 +688,10 @@ func TestConnectionTestTimeoutCoversTheTokenRequest(t *testing.T) {
 
 	api, _ := newFakeAPI(t, uaa.URL)
 
-	checks := runChecksWithin(t, deadline, &ConnectionTester{RootCAs: trust(api), Timeout: checkBound}, probe(api.URL))
+	// Neither the tester's own timeout nor the run limit is a margin here.
+	// A stall in the first three checks must not pass either one before the
+	// token request, so both are backstops and the deadline ends the run.
+	checks := runChecksWithin(t, deadline, triggerBackstop, &ConnectionTester{RootCAs: trust(api), Timeout: triggerBackstop}, probe(api.URL))
 
 	expectOutcome(t, checks, tokenFails)
 }
