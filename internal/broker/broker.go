@@ -132,6 +132,28 @@ var (
 	defaultRetryBaseDelay = 50 * time.Millisecond
 )
 
+// rabbitMQUserRetryBaseDelay is the wait before the first retry of a
+// failed create or delete of a binding's RabbitMQ user. Each later wait
+// doubles it.
+const rabbitMQUserRetryBaseDelay = 1 * time.Second
+
+// rabbitMQUserRetryOverride, when positive, replaces
+// rabbitMQUserRetryBaseDelay in nanoseconds.
+//
+//nolint:gochecknoglobals // a test seam, set only through export_test.go
+var rabbitMQUserRetryOverride atomic.Int64
+
+// rabbitMQUserRetryDelay returns the wait before the first retry of a
+// RabbitMQ user's create or delete.
+func rabbitMQUserRetryDelay() time.Duration {
+	override := rabbitMQUserRetryOverride.Load()
+	if override > 0 {
+		return time.Duration(override)
+	}
+
+	return rabbitMQUserRetryBaseDelay
+}
+
 // SetDefaultDeleteTimeout allows tests to override the default timeout
 func SetDefaultDeleteTimeout(timeout time.Duration) {
 	defaultDeleteTimeout = timeout
@@ -5532,17 +5554,14 @@ func (b *Broker) deleteRabbitMQUser(ctx context.Context, bindingID string, credM
 	logger.Debug("Calling RabbitMQ API to delete user", "apiUrl", apiUrl)
 
 	// Wrap the delete operation with retry logic
-	const (
-		maxRetries = 3
-		baseDelay  = 1 * time.Second
-	)
+	const maxRetries = 3
 
 	// DeletetUserRabbitMQ already takes a 404 answer for a user that is
 	// gone and returns nil, so every error here is a failed delete, even
 	// one whose text happens to contain "404".
 	err = common.WithRetry(ctx, func() error {
 		return DeletetUserRabbitMQ(ctx, bindingID, adminUsername, adminPassword, apiUrl, b.Config, credMap)
-	}, maxRetries, baseDelay)
+	}, maxRetries, rabbitMQUserRetryDelay())
 	if err != nil {
 		logger.Error("Failed to delete RabbitMQ user after retries", "bindingID", bindingID, "error", err)
 
@@ -5784,15 +5803,12 @@ func (b *Broker) createRabbitMQUser(ctx context.Context, dynamicCreds *rabbitMQD
 	logger.Debug("Creating dynamic RabbitMQ user", "username", dynamicCreds.username)
 
 	// Wrap the create operation with retry logic
-	const (
-		maxRetries = 3
-		baseDelay  = 1 * time.Second
-	)
+	const maxRetries = 3
 
 	err := common.WithRetry(ctx, func() error {
 		return CreateUserPassRabbitMQ(ctx, dynamicCreds.username, dynamicCreds.password,
 			adminCreds.username, adminCreds.password, adminCreds.apiURL, b.Config, map[string]interface{}{})
-	}, maxRetries, baseDelay)
+	}, maxRetries, rabbitMQUserRetryDelay())
 	if err != nil {
 		return fmt.Errorf("failed to create RabbitMQ user after retries: %w", err)
 	}

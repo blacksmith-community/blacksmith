@@ -355,6 +355,19 @@ func SetRecordWriteTimeout(d time.Duration) func() {
 	return func() { recordTimeoutOverride.Store(previous) }
 }
 
+// RabbitMQUserRetryBaseDelay is the production wait before the first retry
+// of a RabbitMQ user's create or delete.
+const RabbitMQUserRetryBaseDelay = rabbitMQUserRetryBaseDelay
+
+// SetRabbitMQUserRetryBaseDelay replaces the wait before the first retry of
+// a RabbitMQ user's create or delete, and returns a function that restores
+// the previous one.
+func SetRabbitMQUserRetryBaseDelay(d time.Duration) func() {
+	previous := rabbitMQUserRetryOverride.Swap(int64(d))
+
+	return func() { rabbitMQUserRetryOverride.Store(previous) }
+}
+
 // UnknownOutcomePassTimeout is the production bound on one pass of the
 // unknown-outcome resolver.
 const UnknownOutcomePassTimeout = unknownOutcomePassTimeout

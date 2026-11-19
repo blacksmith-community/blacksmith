@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sync/atomic"
+	"time"
 
 	"blacksmith/internal/broker"
 	"blacksmith/internal/config"
@@ -52,6 +53,10 @@ var _ = Describe("Deleting a binding's RabbitMQ user", func() {
 			"hostname":       serverURL.Host,
 		})
 	}
+
+	It("waits 1 second before the first retry outside the tests", func() {
+		Expect(broker.RabbitMQUserRetryBaseDelay).To(Equal(time.Second), "the production wait before a RabbitMQ user retry changed")
+	})
 
 	It("keeps a failure whose text contains 404 as an error", func() {
 		status = http.StatusForbidden

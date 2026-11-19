@@ -23,6 +23,7 @@ var _ = BeforeSuite(func() {
 	// Speed up tests by reducing timeouts and retry delays
 	broker.SetDefaultDeleteTimeout(1 * time.Second)
 	broker.SetDefaultRetryBaseDelay(10 * time.Millisecond)
+	broker.SetRabbitMQUserRetryBaseDelay(10 * time.Millisecond)
 
 	var err error
 	suite.vault, err = testutil.NewVaultDevServer(nil)
