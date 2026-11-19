@@ -180,6 +180,11 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 		return err
 	}
 
+	err = b.sweepSettledRollbackManifests(ctx, store, candidates, logger)
+	if err != nil {
+		return err
+	}
+
 	operations, migrations := sortReadoptCandidates(candidates, logger)
 	cleanups := owedCleanups(candidates)
 
@@ -446,6 +451,59 @@ func readoptReadCredentials(ctx context.Context, store readoptStore, candidates 
 
 			return nil
 		})
+	})
+}
+
+// sweepSettledRollbackManifests deletes the rollback manifest an update
+// saved when its record already says the update settled. A restart
+// between the write that settles an update and the delete of its saved
+// manifest leaves the manifest behind, and re-adoption skips a settled
+// record, so nothing else would delete it. It runs before the servers
+// start, so no update accepted since has saved a manifest of its own. A
+// delete that fails is logged, and the next start tries it again.
+func (b *Broker) sweepSettledRollbackManifests(ctx context.Context, store readoptStore, candidates []*readoptCandidate, logger logger.Logger) error {
+	var settled []*readoptCandidate
+
+	for _, candidate := range candidates {
+		state := candidate.recorded.State
+		if candidate.parsed && candidate.recorded.Action == operationTypeUpdate &&
+			(state == internalVault.TaskStateSucceeded || state == recordedStateFailed || state == internalVault.TaskStateRollbackFailed) {
+			settled = append(settled, candidate)
+		}
+	}
+
+	return readoptInParallel(ctx, len(settled), func(index int) error {
+		instanceID := settled[index].instanceID
+		path := instanceID + rollbackManifestSuffix
+
+		var saved map[string]interface{}
+
+		var exists bool
+
+		err := readoptRetryRead(ctx, path, logger, func() error {
+			var readErr error
+
+			exists, readErr = store.Get(ctx, path, &saved)
+
+			return readErr //nolint:wrapcheck // readoptRetryRead logs the read with its path
+		})
+		if err != nil || !exists {
+			return err
+		}
+
+		deleteCtx, cancel := recordContext(ctx)
+		defer cancel()
+
+		err = b.Vault.Delete(deleteCtx, path)
+		if err != nil {
+			logger.Warning("Instance %s: its update settled, and the manifest saved for its rollback could not be deleted, so the next start tries again: %s", instanceID, err)
+
+			return nil
+		}
+
+		logger.Info("Instance %s: deleted the manifest saved for the rollback of its settled update", instanceID)
+
+		return nil
 	})
 }
 
