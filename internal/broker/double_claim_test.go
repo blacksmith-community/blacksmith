@@ -370,9 +370,9 @@ func doubleClaimDeprovisioner(ctx context.Context, t *testing.T, director *testu
 	deprovisioner.Guard = mutation.NewGuard(time.Now)
 
 	serviceCtx, stopService := context.WithCancel(context.WithoutCancel(ctx))
-	t.Cleanup(stopService)
-
 	deprovisioner.ServiceContext = serviceCtx
+
+	t.Cleanup(func() { stopAndWaitForBackground(ctx, deprovisioner, stopService) })
 
 	return deprovisioner
 }

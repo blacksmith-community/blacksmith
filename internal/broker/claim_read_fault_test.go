@@ -183,9 +183,9 @@ func sendWithFailedRead(ctx context.Context, t *testing.T, entry claimReadFault,
 	// A provision that got past the check would start its deploy, which
 	// stops with the spec.
 	serviceCtx, stopService := context.WithCancel(context.WithoutCancel(ctx))
-	t.Cleanup(stopService)
-
 	requester.ServiceContext = serviceCtx
+
+	t.Cleanup(func() { stopAndWaitForBackground(ctx, requester, stopService) })
 
 	if deleting {
 		proxy.FailReadsAfter(entry.path, entry.deleteSkip, http.StatusForbidden, "permission denied", 1)

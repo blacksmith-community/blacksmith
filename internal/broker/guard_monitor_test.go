@@ -53,10 +53,11 @@ func monitoredDeprovision(t *testing.T, instanceID string) monitoredRun {
 	fixture.director.WaitForTaskFn = fixture.director.GetTaskFn
 
 	serviceCtx, shutdown := context.WithCancel(context.Background())
-	t.Cleanup(shutdown)
 
 	brokerInstance := guardedBroker(t, fixture.director, fixture.vault, guard)
 	brokerInstance.ServiceContext = serviceCtx
+
+	t.Cleanup(func() { stopAndWaitForBackground(t.Context(), brokerInstance, shutdown) })
 
 	async, err := fixture.deprovision(t, brokerInstance)
 	if err != nil || !async {

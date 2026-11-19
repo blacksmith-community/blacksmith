@@ -61,6 +61,22 @@ func stopBrokerGoroutines(stopService context.CancelFunc) {
 	expectNoBrokerGoroutines()
 }
 
+// stopAndWaitForBackground ends the service context of brokerInstance and
+// waits for the goroutines it tracks, so none outlives the test that
+// started it and keeps writing to a Vault the test has stopped. The suite
+// fails a spec while any goroutine of package broker runs, so a plain
+// test's leftover goroutine would fail a spec that runs beside it in the
+// same process. The wait does not end with ctx, which a test has often
+// canceled by the time its cleanups run.
+func stopAndWaitForBackground(ctx context.Context, brokerInstance *broker.Broker, stopService context.CancelFunc) {
+	stopService()
+
+	waitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backgroundStopTimeout)
+	defer cancel()
+
+	brokerInstance.WaitForBackground(waitCtx)
+}
+
 // shortenVaultRetryWaits keeps the retries of the API client of v and cuts
 // the wait between them to a millisecond, so a spec against an unreachable
 // or failing Vault does not wait out the client's backoff of a second or
