@@ -355,6 +355,19 @@ func SetRecordWriteTimeout(d time.Duration) func() {
 	return func() { recordTimeoutOverride.Store(previous) }
 }
 
+// UnknownOutcomePassTimeout is the production bound on one pass of the
+// unknown-outcome resolver.
+const UnknownOutcomePassTimeout = unknownOutcomePassTimeout
+
+// SetUnknownOutcomePassTimeout shortens or lengthens the bound on the
+// unknown-outcome resolver passes started from now on, and returns a
+// function that restores the previous bound.
+func SetUnknownOutcomePassTimeout(d time.Duration) func() {
+	previous := unknownOutcomePassOverride.Swap(int64(d))
+
+	return func() { unknownOutcomePassOverride.Store(previous) }
+}
+
 // SetFailedDeploymentCleanupTimeout shortens or lengthens the bound on the
 // director calls of a failed deployment's cleanup, and returns a function
 // that restores the previous bound.

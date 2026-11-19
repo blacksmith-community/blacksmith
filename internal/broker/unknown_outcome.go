@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -75,6 +76,22 @@ func requestNoun(action string) string {
 // pass, so a poll answers in about that long however slow the director
 // is.
 const unknownOutcomePassTimeout = 10 * time.Second
+
+// unknownOutcomePassOverride, when positive, replaces
+// unknownOutcomePassTimeout in nanoseconds.
+//
+//nolint:gochecknoglobals // a test seam, set only through export_test.go
+var unknownOutcomePassOverride atomic.Int64
+
+// unknownOutcomePassBound returns how long one resolver pass may take.
+func unknownOutcomePassBound() time.Duration {
+	override := unknownOutcomePassOverride.Load()
+	if override > 0 {
+		return time.Duration(override)
+	}
+
+	return unknownOutcomePassTimeout
+}
 
 // unknownOutcomeAlarmAge is how long an outcome stays unknown before each
 // resolver pass over it logs an error for an operator.
@@ -210,7 +227,7 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 
 	defer pass.running.Unlock()
 
-	passCtx, cancel := context.WithTimeout(boshapi.WithoutRetries(ctx), unknownOutcomePassTimeout)
+	passCtx, cancel := context.WithTimeout(boshapi.WithoutRetries(ctx), unknownOutcomePassBound())
 	defer cancel()
 
 	// A pass that ran while this poll read the record may have settled

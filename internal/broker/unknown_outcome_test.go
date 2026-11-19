@@ -48,6 +48,11 @@ const (
 	outcomeDirectorAddress  = "https://director.example:25555"
 )
 
+// outcomePassBound is the bound a spec gives the resolver pass when it
+// lets the bound expire, in place of the production 10 seconds. It leaves
+// a held pass time to read the record and reach the director.
+const outcomePassBound = 2 * time.Second
+
 // errEventsDown is what a read of the events saw when the endpoint was down.
 var errEventsDown = errors.New("events endpoint down")
 
@@ -2285,8 +2290,14 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(recorded().State).To(Equal(outcomeStateUnknown))
 		})
 
+		It("bounds a resolver pass at 10 seconds unless a spec shortens it", func() {
+			Expect(broker.UnknownOutcomePassTimeout).To(Equal(10*time.Second), "the production bound on a resolver pass changed")
+		})
+
 		It("a LastOperation poll answers within 10 seconds while the context-ID lookup hangs", func() {
 			contextID := loseDelete()
+
+			cleanups = append(cleanups, broker.SetUnknownOutcomePassTimeout(outcomePassBound))
 
 			lookupFailure := &boshapi.APIError{StatusCode: http.StatusServiceUnavailable, Method: http.MethodGet, Path: taskListPath}
 
@@ -2342,7 +2353,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(lookup.hasDeadline).To(BeTrue(), "the lookup ran without a deadline")
 			// The pass's deadline starts once it holds the instance's lock,
 			// a record read or two after the poll began.
-			Expect(lookup.deadline.Sub(started)).To(BeNumerically("<=", 10*time.Second+500*time.Millisecond), "the lookup's deadline is more than 10 seconds away")
+			Expect(lookup.deadline.Sub(started)).To(BeNumerically("<=", outcomePassBound+500*time.Millisecond), "the lookup's deadline is further away than the pass's bound")
 
 			// A poll while the pass runs answers at once, with the error
 			// the last pass ended with.
@@ -2357,8 +2368,8 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			var hung osbapi.LastOperationResponse
 
-			Eventually(answered, 11*time.Second).Should(Receive(&hung), "the poll whose lookup hangs did not answer")
-			Expect(time.Since(started)).To(BeNumerically("<=", 10*time.Second+500*time.Millisecond))
+			Eventually(answered, outcomePassBound+time.Second).Should(Receive(&hung), "the poll whose lookup hangs did not answer")
+			Expect(time.Since(started)).To(BeNumerically("<=", outcomePassBound+500*time.Millisecond))
 			Expect(hung.State).To(Equal(osbapi.StateInProgress), "the poll whose lookup hung answered %+v", hung)
 			Expect(hung.Description).To(ContainSubstring(contextID))
 			Expect(hung.Description).To(ContainSubstring(context.DeadlineExceeded.Error()))
@@ -2369,6 +2380,8 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 		It("a LastOperation poll answers within 10 seconds while the read of the task found hangs", func() {
 			contextID := loseDelete()
+
+			cleanups = append(cleanups, broker.SetUnknownOutcomePassTimeout(outcomePassBound))
 
 			director.onFindTaskByContextID = func(context.Context, string) (*bosh.Task, error) {
 				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment, ContextID: contextID}, nil
@@ -2417,8 +2430,8 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			var response osbapi.LastOperationResponse
 
-			Eventually(answered, 11*time.Second).Should(Receive(&response), "the poll whose task read hangs did not answer")
-			Expect(time.Since(started)).To(BeNumerically("<=", 10*time.Second+500*time.Millisecond))
+			Eventually(answered, outcomePassBound+time.Second).Should(Receive(&response), "the poll whose task read hangs did not answer")
+			Expect(time.Since(started)).To(BeNumerically("<=", outcomePassBound+500*time.Millisecond))
 			Expect(response.State).To(Equal(osbapi.StateInProgress), "the poll whose task read hung answered %+v", response)
 			Expect(response.Description).To(ContainSubstring(fmt.Sprintf("task %d", deleteTaskID)))
 			Expect(response.Description).To(ContainSubstring("could not be read"))
@@ -3466,6 +3479,8 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		It("a pass reads the record again under its own bound", func() {
 			contextID := loseDeploy()
 
+			cleanups = append(cleanups, broker.SetUnknownOutcomePassTimeout(outcomePassBound))
+
 			unknown := recorded()
 			proxy := useProxy()
 
@@ -3486,7 +3501,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			var response osbapi.LastOperationResponse
 
-			Eventually(answered, 15*time.Second).Should(Receive(&response), "the pass waited on a held read of the record past its bound")
+			Eventually(answered, outcomePassBound+5*time.Second).Should(Receive(&response), "the pass waited on a held read of the record past its bound")
 			Expect(response.State).To(Equal(osbapi.StateInProgress), "a pass whose read of the record was held answered %+v", response)
 			Expect(response.Description).To(ContainSubstring(contextID))
 			Expect(director.Calls("FindTaskByContextID")).ToNot(ContainElement(contextID), "the pass asked the director without the record")
@@ -3494,6 +3509,8 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 		It("a pass that stamps a record answers within its own bound when the stamp write hangs", func() {
 			loseDeploy()
+
+			cleanups = append(cleanups, broker.SetUnknownOutcomePassTimeout(outcomePassBound))
 
 			record := readRecord()
 			delete(record, "unknown_since")
@@ -3523,7 +3540,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			var response osbapi.LastOperationResponse
 
-			Eventually(answered, 15*time.Second).Should(Receive(&response), "the pass waited on a held stamp write past its bound")
+			Eventually(answered, outcomePassBound+5*time.Second).Should(Receive(&response), "the pass waited on a held stamp write past its bound")
 			Expect(response.State).To(Equal(osbapi.StateInProgress), "a pass whose stamp write hung answered %+v", response)
 			Expect(director.Calls("FindTaskByContextID")).To(BeEmpty(), "the pass asked the director while it could not stamp the record")
 
