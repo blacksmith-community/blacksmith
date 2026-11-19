@@ -51,7 +51,7 @@ func updatePlans() map[string]services.Plan {
 	service := &services.Service{ID: recordedNameService, Name: recordedNameService}
 	template := func() map[string]interface{} {
 		return map[string]interface{}{
-			"meta": map[string]interface{}{"sizes": map[string]interface{}{routedPlan: "vm-small"}},
+			"meta": map[string]interface{}{sizesKey: map[string]interface{}{routedPlan: "vm-small"}},
 			manifestInstanceGroupsKey: []interface{}{map[string]interface{}{
 				manifestNameKey: recordedNameService, "instances": 1,
 				"jobs": []interface{}{map[string]interface{}{
@@ -63,7 +63,7 @@ func updatePlans() map[string]services.Plan {
 	}
 
 	sized := template()
-	sized["vm_type"] = "(( grab meta.sizes[meta.params.size] ))"
+	sized["vm_type"] = sizedVMType
 
 	// The pinned plan names its releases and stemcell at versions older
 	// than the live deployment's, as a template does once an upgrade has

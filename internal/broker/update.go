@@ -48,6 +48,15 @@ const (
 	updateReasonDeploymentName    = "deployment_name"
 )
 
+// updateRenderFailedDescription is the answer to an update whose requested
+// manifest doesn't render. The platform shows it to the tenant, so it
+// quotes nothing of graft's error, which can quote a parameter's value.
+const updateRenderFailedDescription = "The plan can't render a manifest from the request parameters, so the update was refused"
+
+// errUpdateRenderFailed reports that the requested manifest didn't
+// render. Its text holds nothing of graft's error.
+var errUpdateRenderFailed = errors.New("the requested manifest did not render")
+
 // ErrUpdateNoVault is returned when the broker has no Vault to read the
 // instance from, so an update can't be checked.
 var ErrUpdateNoVault = errors.New("the broker has no Vault, so it can't check the update")
@@ -399,6 +408,10 @@ func (b *Broker) acceptUpdate(ctx context.Context, instanceID string, target upd
 		return refuse(updateReasonLiteralRefused, fmt.Errorf("%w: %s", osbapi.ErrInvalidParameters, refusedParamsDescription))
 	}
 
+	if errors.Is(err, errUpdateRenderFailed) {
+		return refuse(updateReasonInvalidParameters, fmt.Errorf("%w: %s", osbapi.ErrInvalidParameters, updateRenderFailedDescription))
+	}
+
 	if errors.Is(err, errUpdateRenamesDeployment) {
 		return refuse(updateReasonDeploymentName, unprocessable("The update would rename the service instance's deployment, so it was refused"))
 	}
@@ -523,8 +536,14 @@ func (b *Broker) renderUpdate(ctx context.Context, instanceID string, plan servi
 	// GenManifest takes no context, so each render runs to its end under
 	// manifestMu, as a provision's render does.
 	requested, err := renderInstanceManifest(plan, instanceID, defaults, request.parameters) //nolint:contextcheck // GenManifest takes no context
-	if err != nil {
+	if errors.Is(err, graft.ErrLiteralRefused) {
 		return updateRenders{}, err
+	}
+
+	if err != nil {
+		logger.Error("Instance %s: its requested manifest did not render from the parameter keys %s, because %s", instanceID, parameterKeys(request.parameters), renderFailure(err))
+
+		return updateRenders{}, errUpdateRenderFailed
 	}
 
 	requestedDoc, err := comparableManifest(requested)
@@ -540,7 +559,7 @@ func (b *Broker) renderUpdate(ctx context.Context, instanceID string, plan servi
 
 	current, err := renderInstanceManifest(plan, instanceID, defaults, target.parameters) //nolint:contextcheck // GenManifest takes no context
 	if err != nil {
-		logger.Warning("Instance %s: its current manifest could not be rendered from its stored parameters, so the update is treated as a change: %s", instanceID, err)
+		logger.Warning("Instance %s: its current manifest could not be rendered from the stored parameter keys %s, because %s, so the update is treated as a change", instanceID, parameterKeys(target.parameters), renderFailure(err))
 
 		return updateRenders{requested: requested}, nil
 	}
@@ -551,6 +570,38 @@ func (b *Broker) renderUpdate(ctx context.Context, instanceID string, plan servi
 	}
 
 	return updateRenders{requested: requested, equal: reflect.DeepEqual(currentDoc, requestedDoc)}, nil
+}
+
+// renderFailure names the class of a failed render for the log. Graft's
+// own text can quote a parameter's value, so it's left out.
+func renderFailure(err error) string {
+	var evaluation *graft.PartialEvaluationError
+
+	switch {
+	case errors.Is(err, graft.ErrLiteralRefused):
+		return "graft refused a parameter where the plan reads code, a path, or a name"
+	case errors.As(err, &evaluation):
+		return "graft could not evaluate the merged manifest"
+	default:
+		return "graft could not merge the manifests"
+	}
+}
+
+// parameterKeys lists the top-level keys of parameters, sorted, for a
+// log line that must name no value.
+func parameterKeys(parameters map[string]interface{}) string {
+	if len(parameters) == 0 {
+		return "(none)"
+	}
+
+	keys := make([]string, 0, len(parameters))
+	for key := range parameters {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return strings.Join(keys, ", ")
 }
 
 // renderInstanceManifest renders plan for instanceID with parameters, as

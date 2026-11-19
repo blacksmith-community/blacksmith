@@ -194,7 +194,7 @@ func (p *updatePhase) prepare(ctx context.Context) (string, bool) {
 	})
 	if err != nil {
 		p.logger.Error("Instance %s: failed to upload the releases of its update: %s", p.instanceID, err)
-		p.fail(ctx, "Release upload failed: "+err.Error(), 0)
+		p.fail(ctx, "The broker could not upload the releases the update deploys, so nothing was deployed. Send the update again", 0)
 
 		return "", false
 	}
@@ -308,7 +308,7 @@ func (p *updatePhase) deploy(ctx context.Context, deployed string) (*bosh.Task, 
 		// Any other error means the director started no task, because it
 		// refused the deploy or never received it.
 		p.logger.Error("Instance %s: the director did not take the update's deploy of %s: %s", p.instanceID, p.target.deployment, err)
-		p.fail(ctx, fmt.Sprintf("The director did not take the deploy of %s: %s", p.target.deployment, err), 0)
+		p.fail(ctx, fmt.Sprintf("The director did not take the deploy of %s, so nothing was deployed. Send the update again", p.target.deployment), 0)
 
 		return nil, false
 	}
@@ -409,7 +409,6 @@ func (p *updatePhase) failUnresumable(ctx context.Context, task *bosh.Task) {
 // settle lock. It commits the staged values, the deployed manifest, the
 // credentials, and the plan references.
 func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed string) {
-
 	settleCtx := context.WithoutCancel(ctx)
 
 	unlock, err := p.broker.lockSettle(settleCtx, p.instanceID)

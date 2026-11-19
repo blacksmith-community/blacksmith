@@ -236,7 +236,7 @@ func (p *updatePhase) rollBack(ctx context.Context, saved string) {
 		}
 	case err != nil:
 		p.logger.Error("Instance %s: the director did not take the rollback's deploy of %s: %s", p.instanceID, p.target.deployment, err)
-		p.settleRollback(ctx, nil, "the director did not take its deploy: "+err.Error())
+		p.settleRollback(ctx, nil, "the director did not take its deploy")
 
 		return
 	}
