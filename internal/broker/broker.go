@@ -520,6 +520,13 @@ func (b *Broker) Provision(
 		return osbapi.ProvisionResponse{}, false, err
 	}
 
+	// Parameters the plan's schema refuses get a 400 before anything is
+	// written, as an update's do, rather than a failed deploy later.
+	err = b.refuseInvalidParameters(instanceID, details.ServiceID, details.PlanID, details.Parameters, logger)
+	if err != nil {
+		return osbapi.ProvisionResponse{}, false, err
+	}
+
 	// Record the initial request
 	err = b.recordInitialRequest(ctx, instanceID, details, logger)
 	if err != nil {
