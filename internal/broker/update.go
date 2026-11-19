@@ -68,6 +68,10 @@ type updateRequest struct {
 	parameters  map[string]interface{}
 	changedKeys []string
 	fingerprint string
+	// actor names the platform user who sent the request. The update's
+	// goroutine outlives the request, so its change records name the
+	// user from here.
+	actor string
 }
 
 // Update answers a PATCH of a service instance. It checks the request in
@@ -306,6 +310,7 @@ func (b *Broker) answerUpdateWhileClaimed(ctx context.Context, instanceID string
 	}
 
 	request := mergeUpdateRequest(target, details)
+	request.actor = originatingActor(ctx)
 
 	recorded, err := b.recordedUpdateFingerprint(ctx, instanceID)
 	if err != nil {
@@ -349,6 +354,7 @@ func (b *Broker) recordedUpdateFingerprint(ctx context.Context, instanceID strin
 // answers it. It reports whether a goroutine took the claim over.
 func (b *Broker) acceptUpdate(ctx context.Context, instanceID string, target updateTarget, details osbapi.UpdateRequest, asyncAllowed bool, claim *operationClaim, logger logger.Logger) (osbapi.UpdateResponse, bool, bool, error) {
 	request := mergeUpdateRequest(target, details)
+	request.actor = originatingActor(ctx)
 	refuse := func(reason string, err error) (osbapi.UpdateResponse, bool, bool, error) {
 		b.auditUpdate(ctx, instanceID, target, request, updateOutcomeRefused, reason, 0)
 
@@ -651,7 +657,7 @@ func (b *Broker) commitUpdateValues(ctx context.Context, instanceID string, targ
 
 // auditUpdate writes the change record of an update that reached its
 // checks under the claim. It names the parameter keys and never their
-// values.
+// values, and the actor is the user the request named.
 func (b *Broker) auditUpdate(ctx context.Context, instanceID string, target updateTarget, request updateRequest, outcome, reason string, taskID int) {
 	b.changeStore().Record(ctx, audit.ChangeRecord{
 		Scope:      audit.ScopeInstances,
@@ -665,7 +671,7 @@ func (b *Broker) auditUpdate(ctx context.Context, instanceID string, target upda
 		Old:        target.instance.PlanID,
 		New:        request.planID,
 		Keys:       strings.Join(request.changedKeys, ", "),
-		Actor:      originatingActor(ctx),
+		Actor:      request.actor,
 	})
 }
 

@@ -57,6 +57,7 @@ func (b *Broker) launchUpdate(ctx context.Context, phase *updatePhase, claim *op
 		Parameters:     phase.request.parameters,
 		Context:        phase.context,
 		ChangedKeys:    phase.request.changedKeys,
+		Actor:          phase.request.actor,
 	}
 
 	recordCtx, cancelRecord := recordContext(ctx)

@@ -27,6 +27,10 @@ const (
 	stemcellOSKey   = "os"
 	liveStemcellOS  = "ubuntu-noble"
 	releasesKey     = "releases"
+	// platformCloudFoundry and userIDKey make up the originating identity
+	// of a platform user.
+	platformCloudFoundry = "cloudfoundry"
+	userIDKey            = "user_id"
 )
 
 // liveManifest is the manifest the director holds for the deployment. Its
@@ -442,7 +446,7 @@ func TestUpdate_ChangeRecordNamesTheOriginatingUser(t *testing.T) {
 	fixture := newUpdateFixture(t)
 	instanceID := fixture.provisioned(context.Background(), t, openUpdatePlan, nil)
 	ctx := osbapi.ContextWithOriginatingIdentity(context.Background(), osbapi.OriginatingIdentity{
-		Platform: "cloudfoundry", Value: map[string]any{"user_id": "user-1"},
+		Platform: platformCloudFoundry, Value: map[string]any{userIDKey: "user-1"},
 	})
 
 	_, _, err := fixture.broker.Update(ctx, instanceID, osbapi.UpdateRequest{ServiceID: recordedNameService, PlanID: strictUpdatePlan}, true)
@@ -453,5 +457,38 @@ func TestUpdate_ChangeRecordNamesTheOriginatingUser(t *testing.T) {
 	records := fixture.updateRecords(ctx, t)
 	if len(records) != 1 || records[0].Actor != "cloudfoundry:user-1" || records[0].Scope != audit.ScopeInstances {
 		t.Fatalf("the change records are %+v, want one naming the platform user", records)
+	}
+}
+
+// The change record an update's goroutine leaves when the update settles
+// names the platform user who sent it, though the goroutine outlives the
+// request, and so does the record re-adoption leaves after a restart.
+func TestUpdate_SettledChangeRecordNamesTheOriginatingUser(t *testing.T) {
+	t.Parallel()
+
+	fixture := newUpdateFixture(t)
+	instanceID := fixture.provisioned(context.Background(), t, openUpdatePlan, nil)
+	ctx := osbapi.ContextWithOriginatingIdentity(context.Background(), osbapi.OriginatingIdentity{
+		Platform: platformCloudFoundry, Value: map[string]any{userIDKey: "user-2"},
+	})
+
+	script := &deployScript{}
+	script.script(fixture, outcomeTaskDone)
+
+	response, async, err := fixture.broker.Update(ctx, instanceID, osbapi.UpdateRequest{
+		ServiceID: recordedNameService, Parameters: map[string]any{policyKey: policyNoEvict},
+	}, true)
+	requireAccepted(t, response, async, err)
+
+	fixture.settled(context.Background(), t, instanceID)
+
+	records := fixture.updateRecords(context.Background(), t)
+	if len(records) != 1 || records[0].Outcome != changeSucceeded || records[0].Actor != "cloudfoundry:user-2" {
+		t.Fatalf("the change records are %+v, want one succeeded update naming the platform user", records)
+	}
+
+	staged, _ := readTaskRecord(context.Background(), t, fixture.vault, instanceID)[internalVault.TaskRecordUpdateKey].(map[string]interface{})
+	if staged["actor"] != "cloudfoundry:user-2" {
+		t.Fatalf("the staged update names the actor %v, want the platform user, so re-adoption can name it", staged["actor"])
 	}
 }

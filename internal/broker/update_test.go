@@ -303,7 +303,7 @@ func TestUpdate_ContextOnly_Returns200(t *testing.T) {
 	ctx := context.Background()
 	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, map[string]interface{}{policyKey: policyNoEvict})
 
-	contextData := map[string]interface{}{"platform": "cloudfoundry", orgNameKey: "new-org", "space_name": "new-space", "instance_name": "renamed"}
+	contextData := map[string]interface{}{"platform": platformCloudFoundry, orgNameKey: "new-org", "space_name": "new-space", "instance_name": "renamed"}
 
 	response, async, err := fixture.broker.Update(ctx, instanceID, osbapi.UpdateRequest{ServiceID: recordedNameService, Context: contextData}, false)
 	if err != nil || async || response.Operation != "" {

@@ -34,6 +34,10 @@ type StagedUpdate struct {
 	// ChangedKeys names the parameter keys the update adds, changes, or
 	// removes, for the audit record. It never holds a value.
 	ChangedKeys []string `json:"changed_keys,omitempty"`
+	// Actor names the platform user the request's originating identity
+	// carries, so the change record of an update that settles after a
+	// restart still names who asked for it.
+	Actor string `json:"actor,omitempty"`
 }
 
 // ErrCleanupOwed is returned when an update would replace the record of a

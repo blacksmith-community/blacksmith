@@ -16,6 +16,9 @@ import (
 // interrupted.
 const readoptUpdateContextID = "readopt-update-context"
 
+// readoptUpdateActor is the platform user who sent the interrupted update.
+const readoptUpdateActor = "cloudfoundry:user-3"
+
 // readoptUpdateCase is one point at which a restart interrupts an update.
 type readoptUpdateCase struct {
 	name string
@@ -38,7 +41,7 @@ func interruptedUpdate(ctx context.Context, t *testing.T, fixture *updateFixture
 
 	err := fixture.vault.TrackUpdateAccepted(ctx, instanceID, "Update request accepted", readoptUpdateContextID, openUpdatePlan+"-"+instanceID, internalVault.StagedUpdate{
 		Fingerprint: "readopt-fingerprint", PreviousPlanID: openUpdatePlan, PlanID: openUpdatePlan,
-		Parameters: map[string]interface{}{policyKey: policyLRU}, ChangedKeys: []string{policyKey},
+		Parameters: map[string]interface{}{policyKey: policyLRU}, ChangedKeys: []string{policyKey}, Actor: readoptUpdateActor,
 	})
 	if err != nil {
 		t.Fatalf("failed to record the accepted update: %v", err)
@@ -95,8 +98,8 @@ func (c readoptUpdateCase) requireReadopted(ctx context.Context, t *testing.T, f
 	}
 
 	records := fixture.updateRecords(ctx, t)
-	if len(records) != 1 || records[0].Outcome != c.outcome || records[0].TaskID != c.taskID {
-		t.Fatalf("the change records are %+v, want one %s update naming task %d", records, c.outcome, c.taskID)
+	if len(records) != 1 || records[0].Outcome != c.outcome || records[0].TaskID != c.taskID || records[0].Actor != readoptUpdateActor {
+		t.Fatalf("the change records are %+v, want one %s update naming task %d and the user", records, c.outcome, c.taskID)
 	}
 
 	want := map[string]interface{}{policyKey: policyNoEvict}

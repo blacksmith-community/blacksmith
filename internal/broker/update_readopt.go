@@ -125,7 +125,7 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 		target:     updateTarget{instance: instance, deployment: deployment},
 		request: updateRequest{
 			planID: staged.PlanID, parameters: staged.Parameters,
-			changedKeys: staged.ChangedKeys, fingerprint: staged.Fingerprint,
+			changedKeys: staged.ChangedKeys, fingerprint: staged.Fingerprint, actor: staged.Actor,
 		},
 		context:   staged.Context,
 		plan:      plan,
