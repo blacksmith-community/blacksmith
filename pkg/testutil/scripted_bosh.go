@@ -20,6 +20,7 @@ type ScriptedBOSHDirector struct {
 	GetDeploymentsFn               func() ([]bosh.Deployment, error)
 	GetDeploymentVMsFn             func(deployment string) ([]bosh.VM, error)
 	CreateDeploymentFn             func(manifest string) (*bosh.Task, error)
+	UpdateDeploymentFn             func(name, manifest string) (*bosh.Task, error)
 	DeleteDeploymentFn             func(name string) (*bosh.Task, error)
 	GetTaskFn                      func(taskID int) (*bosh.Task, error)
 	WaitForTaskFn                  func(taskID int) (*bosh.Task, error)
@@ -105,6 +106,18 @@ func (s *ScriptedBOSHDirector) CreateDeployment(ctx context.Context, manifest st
 	}
 
 	return s.IntegrationMockBOSH.CreateDeployment(ctx, manifest)
+}
+
+// UpdateDeployment runs UpdateDeploymentFn when set, and records the
+// deployment's name.
+func (s *ScriptedBOSHDirector) UpdateDeployment(ctx context.Context, name, manifest string) (*bosh.Task, error) {
+	s.record("UpdateDeployment", name)
+
+	if s.UpdateDeploymentFn != nil {
+		return s.UpdateDeploymentFn(name, manifest)
+	}
+
+	return s.IntegrationMockBOSH.UpdateDeployment(ctx, name, manifest)
 }
 
 // DeleteDeployment runs DeleteDeploymentFn when set.

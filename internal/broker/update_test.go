@@ -27,6 +27,7 @@ const (
 	openUpdatePlan   = "update-open"
 	strictUpdatePlan = "update-strict"
 	sizedUpdatePlan  = "update-sized"
+	pinnedUpdatePlan = "update-pinned"
 	updateDirector   = "update-director-uuid"
 )
 
@@ -64,11 +65,23 @@ func updatePlans() map[string]services.Plan {
 	sized := template()
 	sized["vm_type"] = "(( grab meta.sizes[meta.params.size] ))"
 
+	// The pinned plan names its releases and stemcell at versions older
+	// than the live deployment's, as a template does once an upgrade has
+	// moved the instance forward.
+	pinned := template()
+	pinned[releasesKey] = []interface{}{
+		map[string]interface{}{manifestNameKey: recordedNameService, manifestVersion: "1.0"},
+		map[string]interface{}{manifestNameKey: "added", manifestVersion: "3.0"},
+		map[string]interface{}{manifestNameKey: "newer-in-template", manifestVersion: "5.2"},
+	}
+	pinned["stemcells"] = []interface{}{map[string]interface{}{"alias": stemcellAlias, stemcellOSKey: liveStemcellOS, manifestVersion: "1.5"}}
+
 	plans := withParameterSchema(map[string]services.Plan{
 		recordedNameService + "/" + strictUpdatePlan: {ID: strictUpdatePlan, Name: strictUpdatePlan, Type: recordedNameService, Manifest: template(), Service: service},
 	})
 	plans[recordedNameService+"/"+openUpdatePlan] = services.Plan{ID: openUpdatePlan, Name: openUpdatePlan, Type: recordedNameService, Manifest: template(), Service: service}
 	plans[recordedNameService+"/"+sizedUpdatePlan] = services.Plan{ID: sizedUpdatePlan, Name: sizedUpdatePlan, Type: recordedNameService, Manifest: sized, Service: service}
+	plans[recordedNameService+"/"+pinnedUpdatePlan] = services.Plan{ID: pinnedUpdatePlan, Name: pinnedUpdatePlan, Type: recordedNameService, Manifest: pinned, Service: service}
 
 	return plans
 }
@@ -188,7 +201,8 @@ func (f *updateFixture) storedParameters(ctx context.Context, t *testing.T, inst
 
 	_, err := f.vault.Get(ctx, instanceID, &root)
 	if err == nil {
-		_, err = f.vault.Get(ctx, instanceID+"/"+openUpdatePlan+"-"+instanceID, &details)
+		planID, _ := root[recordedPlanKey].(string)
+		_, err = f.vault.Get(ctx, instanceID+"/"+planID+"-"+instanceID, &details)
 	}
 
 	if err != nil {
@@ -271,7 +285,7 @@ func TestUpdate_NoEffect_Returns200(t *testing.T) {
 	}
 
 	records := fixture.updateRecords(ctx, t)
-	if len(records) != 1 || records[0].Outcome != "no-op" || records[0].Keys != noteKey || records[0].Action != "update" {
+	if len(records) != 1 || records[0].Outcome != "no-op" || records[0].Keys != noteKey || records[0].Action != updateFailureAction {
 		t.Fatalf("the change records are %+v, want one no-op update naming the key", records)
 	}
 

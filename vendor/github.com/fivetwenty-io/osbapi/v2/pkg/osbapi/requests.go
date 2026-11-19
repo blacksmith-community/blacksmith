@@ -20,9 +20,16 @@ type LastOperationRequest struct {
 }
 
 // LastOperationResponse represents the last operation polling response.
+//
+// InstanceUsable and UpdateRepeatable are optional per OSB API v2.17 and a
+// broker may set them only when State is StateFailed. InstanceUsable applies
+// to update and deprovision, and UpdateRepeatable applies to update. A nil
+// pointer is omitted from the JSON, which is distinct from an explicit false.
 type LastOperationResponse struct {
-	State       OperationState `json:"state"`
-	Description string         `json:"description,omitempty"`
+	State            OperationState `json:"state"`
+	Description      string         `json:"description,omitempty"`
+	InstanceUsable   *bool          `json:"instance_usable,omitempty"`
+	UpdateRepeatable *bool          `json:"update_repeatable,omitempty"`
 }
 
 // OperationState represents the state of an asynchronous operation.

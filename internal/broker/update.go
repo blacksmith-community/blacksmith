@@ -45,7 +45,6 @@ const (
 	updateReasonLiteralRefused    = "literal_refused"
 	updateReasonAsyncRequired     = "async_required"
 	updateReasonDeploymentName    = "deployment_name"
-	updateReasonDeployUnsupported = "deploy_not_supported"
 )
 
 // ErrUpdateNoVault is returned when the broker has no Vault to read the
@@ -105,7 +104,7 @@ func (b *Broker) Update(
 		return osbapi.UpdateResponse{}, false, err
 	}
 
-	target, err := b.readUpdateTarget(ctx, instanceID, details, logger)
+	target, err := b.readUpdateTarget(ctx, instanceID, details, false, logger)
 	if err != nil {
 		return osbapi.UpdateResponse{}, false, err
 	}
@@ -134,7 +133,7 @@ func (b *Broker) Update(
 	// The checks run again under the claim, so nothing that settled
 	// between the first read and the claim, such as a deprovision, is
 	// missed.
-	target, err = b.readUpdateTarget(ctx, instanceID, details, logger)
+	target, err = b.readUpdateTarget(ctx, instanceID, details, true, logger)
 	if err != nil {
 		return osbapi.UpdateResponse{}, false, err
 	}
@@ -175,7 +174,7 @@ func (b *Broker) refuseUpdateWhileTaskRuns(ctx context.Context, instanceID, depl
 // hasn't succeeded, and one that still owes a failed provision's cleanup
 // get a 422 that says so. A request for another service gets a 400, and
 // an operation still running gets a 422 ConcurrencyError.
-func (b *Broker) readUpdateTarget(ctx context.Context, instanceID string, details osbapi.UpdateRequest, logger logger.Logger) (updateTarget, error) {
+func (b *Broker) readUpdateTarget(ctx context.Context, instanceID string, details osbapi.UpdateRequest, underClaim bool, logger logger.Logger) (updateTarget, error) {
 	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
 	if err != nil {
 		logger.Error("Instance %s: its index entry could not be read for its update: %s", instanceID, err)
@@ -203,9 +202,16 @@ func (b *Broker) readUpdateTarget(ctx context.Context, instanceID string, detail
 		return updateTarget{}, fmt.Errorf("failed to read the task record of instance %s: %w", instanceID, err)
 	}
 
-	err = updateRecordAnswer(instanceID, internalVault.UpdateRefusal(instanceID, record), logger)
-	if err != nil {
-		return updateTarget{}, err
+	// Before the claim, an operation still in flight is left to the claim
+	// step, which answers a repeat of the update in progress with 202 and
+	// anything else with 422 ConcurrencyError. Under the claim, it is
+	// refused, because no operation this update could answer for holds it.
+	refusal := internalVault.UpdateRefusal(instanceID, record)
+	if underClaim || !updateRefusalIsBusy(refusal) {
+		err = updateRecordAnswer(instanceID, refusal, logger)
+		if err != nil {
+			return updateTarget{}, err
+		}
 	}
 
 	if details.ServiceID != instance.ServiceID {
@@ -254,6 +260,23 @@ func updateRecordAnswer(instanceID string, refusal error, logger logger.Logger) 
 	}
 
 	return fmt.Errorf("%w: another operation on the service instance is still in progress", osbapi.ErrConcurrencyError)
+}
+
+// updateRefusalIsBusy reports whether refusal says only that another
+// operation is still in flight, rather than that the instance can't be
+// updated whatever happens next.
+func updateRefusalIsBusy(refusal error) bool {
+	if refusal == nil {
+		return false
+	}
+
+	for _, final := range []error{internalVault.ErrCleanupOwed, internalVault.ErrInstanceDeleted, internalVault.ErrInstanceNotReady} {
+		if errors.Is(refusal, final) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // unprocessable is a plain 422 whose description the platform shows.
@@ -324,7 +347,7 @@ func (b *Broker) recordedUpdateFingerprint(ctx context.Context, instanceID strin
 
 // acceptUpdate runs the checks an update makes under its claim, and
 // answers it. It reports whether a goroutine took the claim over.
-func (b *Broker) acceptUpdate(ctx context.Context, instanceID string, target updateTarget, details osbapi.UpdateRequest, asyncAllowed bool, _ *operationClaim, logger logger.Logger) (osbapi.UpdateResponse, bool, bool, error) {
+func (b *Broker) acceptUpdate(ctx context.Context, instanceID string, target updateTarget, details osbapi.UpdateRequest, asyncAllowed bool, claim *operationClaim, logger logger.Logger) (osbapi.UpdateResponse, bool, bool, error) {
 	request := mergeUpdateRequest(target, details)
 	refuse := func(reason string, err error) (osbapi.UpdateResponse, bool, bool, error) {
 		b.auditUpdate(ctx, instanceID, target, request, updateOutcomeRefused, reason, 0)
@@ -387,9 +410,9 @@ func (b *Broker) acceptUpdate(ctx context.Context, instanceID string, target upd
 		return refuse(updateReasonAsyncRequired, osbapi.ErrAsyncRequired)
 	}
 
-	logger.Warning("Refusing the update of instance %s: an update that changes the deployment is not supported yet", instanceID)
+	phase := &updatePhase{broker: b, instanceID: instanceID, target: target, request: request, context: details.Context, plan: plan, rendered: renders.requested, logger: logger}
 
-	return refuse(updateReasonDeployUnsupported, unprocessable("Updates that change the service instance's deployment are not supported yet"))
+	return b.launchUpdate(ctx, phase, claim)
 }
 
 // mergeUpdateRequest merges the request's parameters over the stored

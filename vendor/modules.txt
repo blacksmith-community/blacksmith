@@ -230,7 +230,7 @@ github.com/fivetwenty-io/graft/pkg/graft/tree
 github.com/fivetwenty-io/graft/pkg/query/value
 github.com/fivetwenty-io/graft/pkg/sortkeys
 github.com/fivetwenty-io/graft/pkg/yaml
-# github.com/fivetwenty-io/osbapi/v2 v2.0.5
+# github.com/fivetwenty-io/osbapi/v2 v2.0.6
 ## explicit; go 1.26.0
 github.com/fivetwenty-io/osbapi/v2/internal/server
 github.com/fivetwenty-io/osbapi/v2/pkg/broker

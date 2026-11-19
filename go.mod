@@ -9,7 +9,7 @@ require (
 	github.com/fivetwenty-io/boshapi v0.283.10
 	github.com/fivetwenty-io/capi/v3 v3.236.1
 	github.com/fivetwenty-io/graft v1.49.1
-	github.com/fivetwenty-io/osbapi/v2 v2.0.5
+	github.com/fivetwenty-io/osbapi/v2 v2.0.6
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/vault/api v1.23.0
