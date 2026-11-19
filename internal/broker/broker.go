@@ -234,8 +234,8 @@ type Broker struct {
 	// of ReadoptInFlightOperations reads.
 	readoptVault readoptStore
 
-	// cleanupAttention holds an interfaces.CleanupAttention for each
-	// instance whose owed cleanup was refused, keyed by instance ID.
+	// cleanupAttention holds an attentionRow for each instance whose owed
+	// cleanup or delete was refused, keyed by instance ID.
 	cleanupAttention sync.Map
 
 	// sweep is the state the sweep of owed cleanups keeps between passes.
