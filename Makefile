@@ -74,6 +74,25 @@ test: ## Run all tests, with the broker and vault Ginkgo suites on several proce
 	fi
 	@echo "$(GREEN)✓ Tests complete$(RESET)"
 
+# make test-timing writes its raw output to TIMING_DIR, a new temporary
+# directory unless set, so a later run can be compared with this one.
+# TIMING_TOP sets how many entries each list shows.
+TIMING_TOP ?= 15
+
+.PHONY: test-timing
+test-timing: ## Time the Go and UI suites and print their slowest packages, tests, and UI files
+	@dir="$${TIMING_DIR:-$$(mktemp -d)}"; mkdir -p "$$dir" || exit 1; \
+	echo "$(GREEN)Timing the Go suite with go test -json...$(RESET)"; \
+	go test -count=1 -json $(shell go list ./... | grep -v vendor | grep -v tmp) >"$$dir/go-test.json" 2>"$$dir/go-test.stderr"; go_status=$$?; \
+	echo "$(GREEN)Timing the UI suite with bun test...$(RESET)"; \
+	bun test tests/ui --reporter=junit --reporter-outfile="$$dir/ui-junit.xml" >"$$dir/ui-test.log" 2>&1; ui_status=$$?; \
+	if [ -s "$$dir/ui-junit.xml" ]; then set -- -ui "$$dir/ui-junit.xml"; else set --; fi; \
+	go run ./hack/testtiming -go "$$dir/go-test.json" -top $(TIMING_TOP) "$$@" || exit 1; \
+	echo "The raw timings are in $$dir"; \
+	if [ $$go_status -ne 0 ] || [ $$ui_status -ne 0 ]; then \
+		echo "Some tests failed: go test exited $$go_status and bun test exited $$ui_status, so see $$dir"; exit 1; \
+	fi
+
 .PHONY: test-short
 test-short: ## Run tests in short mode
 	@echo "$(GREEN)Running short tests...$(RESET)"
