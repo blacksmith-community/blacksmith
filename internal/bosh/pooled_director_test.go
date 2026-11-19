@@ -1386,11 +1386,22 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 func TestPooledDirector_GracefulShutdown(t *testing.T) {
 	t.Parallel()
 
+	// The director holds each request until the test releases it, and
+	// signals once it has been called. The pool calls the director only
+	// for a request that holds a slot, so three signals mean three active
+	// connections, and nothing ends until the test says so.
 	mockDirector := &MockDirector{
-		delay: 100 * time.Millisecond,
+		entered: make(chan struct{}, 3),
+		hold:    make(chan struct{}),
 	}
 	pooled := bosh.NewPooledDirector(mockDirector, 3, 5*time.Second, nil)
 	t.Cleanup(pooled.Stop)
+
+	// Release the held requests even when the test fails early.
+	var releaseOnce sync.Once
+
+	release := func() { releaseOnce.Do(func() { close(mockDirector.hold) }) }
+	t.Cleanup(release)
 
 	// Start several long-running operations
 	// Use CreateDeployment which still uses pooling (read operations don't use pooling)
@@ -1405,8 +1416,13 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 		}()
 	}
 
-	// Give them time to start
-	time.Sleep(50 * time.Millisecond)
+	for range 3 {
+		select {
+		case <-mockDirector.entered:
+		case <-time.After(20 * time.Second):
+			t.Fatal("the three requests never reached the director")
+		}
+	}
 
 	// Check active connections
 	stats, err := pooled.GetPoolStats()
@@ -1419,6 +1435,7 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 	}
 
 	// Wait for completion
+	release()
 	waitGroup.Wait()
 
 	// Verify clean shutdown
