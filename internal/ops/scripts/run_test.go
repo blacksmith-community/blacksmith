@@ -79,6 +79,8 @@ const runSlotCount = 4
 // holding the run, so it is far past the second or so a script takes when
 // the host is idle, and a loaded host cannot reach it. The kill path of
 // exec waits 11 seconds on purpose, which a tighter limit would cut off.
+// The first run of each planted tool, which macOS can hold for seconds,
+// happens in plantTool before the backstop starts.
 const runBackstop = 2 * time.Minute
 
 var runSlots = make(chan struct{}, runSlotCount)
@@ -248,10 +250,7 @@ func (r *runTree) linkFlock(t *testing.T) {
 	plant := r.path("usr/bin/flock")
 
 	if runtime.GOOS != osLinux {
-		err := os.WriteFile(plant, []byte("#!/bin/sh\nexit 0\n"), 0o755) //nolint:gosec // a test tool
-		if err != nil {
-			t.Fatal(err)
-		}
+		plantTool(t, plant, "#!/bin/sh\nexit 0\n")
 
 		return
 	}
@@ -264,6 +263,57 @@ func (r *runTree) linkFlock(t *testing.T) {
 	err = os.Symlink(path, plant)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// warmToolEnv is set only when plantTool runs a tool on its own, and a
+// tool that sees it exits before it does anything.
+const warmToolEnv = "RC_TEST_WARM_TOOL"
+
+// plantTool writes script, which starts with its #! line, as an executable
+// at plant. Whatever was at plant is removed first, so a link to a real
+// tool is replaced and never written through.
+//
+// macOS checks a new executable file the first time anything runs it, and
+// that check waits behind every other new executable on the host. A whole
+// module go test starts dozens of new test binaries at once, and a fresh
+// shell script then took as long as 15 seconds to start, where an idle
+// host takes about 0.15 seconds and a second run of the same file takes 5
+// milliseconds. A tool that a script ran for the first time would put that
+// wait inside the script's run, with no bound the tests control. On macOS,
+// plantTool therefore runs the tool once itself, with warmToolEnv set so
+// that the tool exits at once, and the check is over before any script
+// calls the tool.
+func plantTool(t *testing.T, plant, script string) {
+	t.Helper()
+
+	shebang, body, found := strings.Cut(script, "\n")
+	if !found || !strings.HasPrefix(shebang, "#!") {
+		t.Fatalf("the tool for %s does not start with a #! line", plant)
+	}
+
+	err := os.Remove(plant)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+
+	text := shebang + "\n" + `[ -z "${` + warmToolEnv + `:-}" ] || exit 0` + "\n" + body
+
+	err = os.WriteFile(plant, []byte(text), 0o755) //nolint:gosec // a test tool
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS != osDarwin {
+		return
+	}
+
+	warm := exec.CommandContext(t.Context(), plant) //nolint:gosec // the tool just planted
+	warm.Env = []string{warmToolEnv + "=1"}
+
+	out, err := warm.CombinedOutput()
+	if err != nil || len(out) != 0 {
+		t.Fatalf("the first run of %s failed or printed: %v, %q", plant, err, out)
 	}
 }
 
@@ -1979,19 +2029,8 @@ func TestRunExecRootLaunchesThroughSetsidWait(t *testing.T) {
 		t.Skip("no setsid on this host")
 	}
 
-	plant := tree.path("usr/bin/setsid")
-
-	err = os.Remove(plant)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$1\" > %q\nexec %q \"$@\"\n", tree.path("setsid-first"), real)
-
-	err = os.WriteFile(plant, []byte(script), 0o755) //nolint:gosec // a test tool
-	if err != nil {
-		t.Fatal(err)
-	}
+	plantTool(t, tree.path("usr/bin/setsid"), script)
 
 	command := []byte("exit 3\n")
 
@@ -2032,19 +2071,7 @@ func (r *runTree) fakeGetent(t *testing.T, entry string) {
 		script = fmt.Sprintf("#!/bin/sh\n[ \"$1 $2\" = 'passwd vcap' ] || exit 2\nprintf '%%s\\n' %q\n", entry)
 	}
 
-	// The plant is removed first, so a link to the real getent is
-	// replaced and never written through.
-	plant := r.path("usr/bin/getent")
-
-	err := os.Remove(plant)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		t.Fatal(err)
-	}
-
-	err = os.WriteFile(plant, []byte(script), 0o755) //nolint:gosec // a test tool
-	if err != nil {
-		t.Fatal(err)
-	}
+	plantTool(t, r.path("usr/bin/getent"), script)
 }
 
 // vcapEntry is a passwd line for vcap with the given numbers and home.
@@ -2070,17 +2097,7 @@ func (r *runTree) fakeVcapTools(t *testing.T, entry string) {
 		wordTimeout: fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nexec %q \"$@\"\n", r.path("timeout-args"), real),
 		"setpriv":   fmt.Sprintf("#!/bin/sh\npwd -P > %q\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n", r.path("setpriv-pwd")),
 	} {
-		plant := r.path("usr/bin", name)
-
-		err := os.Remove(plant)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.Fatal(err)
-		}
-
-		err = os.WriteFile(plant, []byte(script), 0o755) //nolint:gosec // a test tool
-		if err != nil {
-			t.Fatal(err)
-		}
+		plantTool(t, r.path("usr/bin", name), script)
 	}
 }
 

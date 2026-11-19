@@ -400,10 +400,7 @@ func TestRunOursBoundsTheEnvironmentRead(t *testing.T) {
 
 	hang := fmt.Sprintf("#!/bin/sh\n: > %q\nprintf '%%s\\0' %q\nexec sleep 60\n", flag, runMarker)
 
-	err = os.WriteFile(stubs+"/cat", []byte(hang), 0o755) //nolint:gosec // a test tool
-	if err != nil {
-		t.Fatal(err)
-	}
+	plantTool(t, stubs+"/cat", hang)
 
 	script := fmt.Sprintf(`env -i %s sleep 60 &
 m=$!

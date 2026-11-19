@@ -23,18 +23,7 @@ func (r *runTree) plantKill(t *testing.T) string {
 	t.Helper()
 
 	log := r.path("kill-log")
-	plant := r.path("usr/bin/kill")
-
-	// A link to the real kill must go, or the write would go through it.
-	err := os.Remove(plant)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		t.Fatal(err)
-	}
-
-	err = os.WriteFile(plant, []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\n", log)), 0o755) //nolint:gosec // a test tool
-	if err != nil {
-		t.Fatal(err)
-	}
+	plantTool(t, r.path("usr/bin/kill"), fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\n", log))
 
 	return log
 }
@@ -366,19 +355,8 @@ func (r *runTree) plantPassingKill(t *testing.T, pass string) string {
 	}
 
 	log := r.path("kill-log")
-	plant := r.path("usr/bin/kill")
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\ncase $1 in %s) exec %q \"$@\" ;; esac\n", log, pass, realKill)
-
-	// A link to the real kill must go, or the write would go through it.
-	err = os.Remove(plant)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		t.Fatal(err)
-	}
-
-	err = os.WriteFile(plant, []byte(script), 0o755) //nolint:gosec // a test tool
-	if err != nil {
-		t.Fatal(err)
-	}
+	plantTool(t, r.path("usr/bin/kill"), script)
 
 	return log
 }

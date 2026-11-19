@@ -510,10 +510,7 @@ func TestRunWithoutFlockRefusesExecAndCleanup(t *testing.T) {
 			}
 
 			if plant != "" {
-				err = os.WriteFile(tree.path("usr/bin/flock"), []byte(plant), 0o755) //nolint:gosec // a test tool
-				if err != nil {
-					t.Fatal(err)
-				}
+				plantTool(t, tree.path("usr/bin/flock"), plant)
 			}
 
 			code, _, _ = tree.execRoot(t, "30", digestOf(command))
