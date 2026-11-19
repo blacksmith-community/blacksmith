@@ -176,3 +176,33 @@ func updateMayReplace(instanceID string, current map[string]interface{}) error {
 // TaskStateRollbackFailed is the state of an update whose deploy failed
 // and whose rollback deploy failed too.
 const TaskStateRollbackFailed = "rollback_failed"
+
+// TrackUpdateTask records taskID, the task the director started for the
+// update's deploy with contextID, as TrackProgress does. It writes only
+// while the record holds that update unsettled under contextID, naming no
+// task or taskID already, so a retry of a write that landed lands again,
+// and it never writes over another operation, another deploy, or a
+// settled update. Otherwise it writes nothing and returns an error that
+// wraps ErrTaskRecordReplaced. Every settle of the update checks the task
+// the record names, so a caller tries this write until it lands.
+func (vault *Vault) TrackUpdateTask(ctx context.Context, instanceID, description, contextID string, taskID int) error {
+	guard := func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrTaskRecordReplaced, instanceID)
+		}
+
+		recordedAction, _ := current["action"].(string)
+		recordedTask, _ := recordedTaskID(current)
+		recordedContextID, _ := current[taskRecordContextIDKey].(string)
+		state, _ := current["state"].(string)
+
+		if recordedAction != actionUpdate || recordedContextID != contextID || (recordedTask != 0 && recordedTask != taskID) || settledOrUnknown(state) {
+			return fmt.Errorf("%w: instance %s records the %s state of a %s with task %d and context ID %q, not the update with context ID %q",
+				ErrTaskRecordReplaced, instanceID, state, recordedAction, recordedTask, recordedContextID, contextID)
+		}
+
+		return nil
+	}
+
+	return vault.trackProgressGuarded(ctx, instanceID, actionUpdate, description, "", taskDeployment{}, taskID, nil, false, guard)
+}

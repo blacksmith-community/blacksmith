@@ -177,7 +177,17 @@ func (p *updatePhase) deployFailed(ctx context.Context, task *bosh.Task) {
 
 // recordRollingBack records the rollback before its deploy is sent, so a
 // restart re-attaches to it by its context ID and never starts another.
-// It reports whether the rollback may go ahead.
+// The write is tried until it lands, under the settle lock. When the
+// record refuses it, the record is read again. A record that already
+// names the rollback's context ID took an earlier attempt, and the
+// rollback goes ahead. A record that holds another action or context ID,
+// or has settled the update, has moved on, so nothing rolls back, and the
+// failed deploy still gets its change record and the saved manifest is
+// deleted. A record that still holds the failed deploy unsettled is tried
+// again, after the failed task is recorded when it names another. It
+// reports whether the rollback may go ahead, and false when the broker
+// shuts down first, and re-adoption then runs the one rollback at the
+// next start.
 func (p *updatePhase) recordRollingBack(ctx context.Context, failure string, rollback internalVault.UpdateRollback) bool {
 	settleCtx := context.WithoutCancel(ctx)
 
@@ -187,42 +197,89 @@ func (p *updatePhase) recordRollingBack(ctx context.Context, failure string, rol
 
 		return false
 	}
+	defer unlock()
 
-	recordCtx, cancel := recordContext(settleCtx)
-	err = p.broker.Vault.TrackRollingBack(recordCtx, p.instanceID, rollingBackDescription(rollback), rollback)
+	wait := p.broker.updateRetryWait()
+
+	for {
+		recordCtx, cancel := recordContext(settleCtx)
+		err = p.broker.Vault.TrackRollingBack(recordCtx, p.instanceID, rollingBackDescription(rollback), rollback)
+
+		cancel()
+
+		landed := err == nil || errors.Is(err, internalVault.ErrHistoryNotAppended)
+		movedOn := false
+
+		if errors.Is(err, internalVault.ErrUpdateNotInFlight) {
+			landed, movedOn = p.rollingBackRefused(settleCtx, rollback, err)
+		} else if !landed {
+			p.logger.Error("Instance %s: failed to record the rollback of its update, and tries again in %v: %s", p.instanceID, wait, err)
+		}
+
+		switch {
+		case landed:
+			p.rollback = &rollback
+			p.contextID = rollback.ContextID
+			p.logger.Info("Instance %s: its update failed in task %d, so it redeploys the previous manifest with context ID %s (%s)", p.instanceID, rollback.FailedTaskID, rollback.ContextID, failure)
+
+			return true
+		case movedOn:
+			rollback.Phase, rollback.ContextID, rollback.ManifestDigest = "", "", ""
+
+			auditCtx, cancelAudit := recordContext(settleCtx)
+			p.broker.auditUpdateFailure(auditCtx, p.instanceID, p.target, p.request, updateOutcomeFailed, rollback)
+			cancelAudit()
+			p.dropRollbackManifest(settleCtx)
+
+			return false
+		}
+
+		if !p.retryAfter(&wait) {
+			p.logger.Warning("Instance %s: the broker is shutting down before the rollback of its update was recorded, so re-adoption runs it at the next start", p.instanceID)
+
+			return false
+		}
+	}
+}
+
+// rollingBackRefused reads the record again after it refused the rollback
+// write with refusal, and reports whether an earlier attempt landed, and
+// whether the record has moved on. When neither holds, the write is
+// tried again, after the failed task is recorded when the record names
+// another.
+func (p *updatePhase) rollingBackRefused(ctx context.Context, rollback internalVault.UpdateRollback, refusal error) (bool, bool) {
+	readCtx, cancel := recordContext(ctx)
+	current, err := p.broker.readRecordedOperation(readCtx, p.instanceID)
 
 	cancel()
-	unlock()
 
 	switch {
-	case err == nil, errors.Is(err, internalVault.ErrHistoryNotAppended):
-		p.rollback = &rollback
-		p.contextID = rollback.ContextID
-		p.logger.Info("Instance %s: its update failed in task %d, so it redeploys the previous manifest with context ID %s", p.instanceID, rollback.FailedTaskID, rollback.ContextID)
+	case err != nil:
+		p.logger.Error("Instance %s: the record refused the rollback of its update, and could not be read again, so the write is tried again: %v", p.instanceID, errors.Join(refusal, err))
 
-		return true
-	case errors.Is(err, internalVault.ErrUpdateNotInFlight):
-		// The record has moved on, so nothing is settled over it, but
-		// the failed deploy still gets its change record, and the saved
-		// manifest, which nothing will deploy now, is deleted.
-		p.logger.Error("Instance %s: the record no longer holds its update in flight, so nothing rolls back: %s", p.instanceID, err)
+		return false, false
+	case current.Action == operationTypeUpdate && current.ContextID == rollback.ContextID:
+		return true, false
+	case current.Action != operationTypeUpdate || current.ContextID != rollback.FailedContextID || updateSettledState(current.State):
+		p.logger.Error("Instance %s: its record now holds the %s %s with context ID %q, not its failed update, so nothing rolls back: %s", p.instanceID, current.Action, current.State, current.ContextID, refusal)
 
-		rollback.Phase, rollback.ContextID, rollback.ManifestDigest = "", "", ""
-
-		auditCtx, cancelAudit := recordContext(settleCtx)
-		p.broker.auditUpdateFailure(auditCtx, p.instanceID, p.target, p.request, updateOutcomeFailed, rollback)
-		cancelAudit()
-		p.dropRollbackManifest(settleCtx)
-
-		return false
+		return false, true
 	}
 
-	p.logger.Error("Instance %s: the rollback could not be recorded, so it is not sent: %s", p.instanceID, err)
+	p.logger.Error("Instance %s: its record holds the failed update with task %d, and refused the rollback, so the write is tried again: %s", p.instanceID, current.TaskID, refusal)
 
-	rollback.Phase, rollback.ContextID, rollback.ManifestDigest = "", "", ""
-	p.settleFailure(ctx, recordedStateFailed, failure+", and the rollback could not be recorded, so it was not sent", updateOutcomeFailed, rollback)
+	if current.TaskID != rollback.FailedTaskID {
+		recordCtx, cancelRecord := recordContext(ctx)
+		err = p.broker.Vault.TrackUpdateTask(recordCtx, p.instanceID, fmt.Sprintf("BOSH deployment in progress (task %d)", rollback.FailedTaskID), rollback.FailedContextID, rollback.FailedTaskID)
 
-	return false
+		cancelRecord()
+
+		if err != nil && !errors.Is(err, internalVault.ErrHistoryNotAppended) {
+			p.logger.Error("Instance %s: failed to record the failed task %d before the rollback is tried again: %s", p.instanceID, rollback.FailedTaskID, err)
+		}
+	}
+
+	return false, false
 }
 
 // rollBack deploys the saved manifest exactly as it was, once, and
@@ -315,7 +372,7 @@ func (p *updatePhase) settleFailure(ctx context.Context, state, description, out
 	}
 	defer unlock()
 
-	if !p.settleWrite(settleCtx, outcome, func(recordCtx context.Context) error {
+	if !p.settleWrite(settleCtx, outcome, settleExpect{contextID: p.contextID, state: state}, func(recordCtx context.Context) error {
 		return p.broker.Vault.SettleUpdateFailure(recordCtx, p.instanceID, state, description, p.contextID, rollback) //nolint:wrapcheck // settleWrite matches the vault's sentinels
 	}) {
 		return

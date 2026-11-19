@@ -258,7 +258,7 @@ func (p *updatePhase) progress(ctx context.Context, message string, taskID int) 
 func (p *updatePhase) fail(ctx context.Context, description string, taskID int) {
 	settleCtx := context.WithoutCancel(ctx)
 
-	if !p.settleWrite(settleCtx, updateOutcomeFailed, func(recordCtx context.Context) error {
+	if !p.settleWrite(settleCtx, updateOutcomeFailed, settleExpect{contextID: p.contextID, state: recordedStateFailed, taskID: taskID}, func(recordCtx context.Context) error {
 		return p.broker.Vault.TrackFailed(recordCtx, p.instanceID, operationTypeUpdate, description, p.contextID, taskID) //nolint:wrapcheck // settleWrite matches the vault's sentinels
 	}) {
 		return
@@ -326,9 +326,66 @@ func (p *updatePhase) deploy(ctx context.Context, deployed string) (*bosh.Task, 
 	}
 
 	p.logger.Info("The director accepted the update's deploy of %s as task %d", p.target.deployment, task.ID)
-	p.progress(ctx, fmt.Sprintf("BOSH deployment in progress (task %d)", task.ID), task.ID)
+
+	if !p.recordDeployTask(ctx, task.ID) {
+		return nil, false
+	}
 
 	return task, true
+}
+
+// recordDeployTask records the task the director started for the
+// update's deploy, trying the write until it lands. Every settle of the
+// update checks the task its record names, so a record left naming no
+// task would refuse each one. A record that holds another operation, or
+// has settled, refuses the write, and the update follows its task anyway
+// and settles as that record allows. It reports false only when the
+// broker shuts down before the write lands, and re-adoption then finds the
+// task by the deploy's context ID at the next start.
+func (p *updatePhase) recordDeployTask(ctx context.Context, taskID int) bool {
+	description := fmt.Sprintf("BOSH deployment in progress (task %d)", taskID)
+	wait := p.broker.updateRetryWait()
+
+	for {
+		recordCtx, cancel := recordContext(ctx)
+		err := p.broker.Vault.TrackUpdateTask(recordCtx, p.instanceID, description, p.contextID, taskID)
+
+		cancel()
+
+		switch {
+		case err == nil, errors.Is(err, internalVault.ErrHistoryNotAppended):
+			return true
+		case errors.Is(err, internalVault.ErrTaskRecordReplaced):
+			p.logger.Error("Instance %s: its record no longer holds the update with context ID %s, so the task %d of its deploy was not recorded: %s", p.instanceID, p.contextID, taskID, err)
+
+			return true
+		}
+
+		p.logger.Error("Instance %s: failed to record the task %d of its update's deploy, and tries again in %v: %s", p.instanceID, taskID, wait, err)
+
+		if !p.retryAfter(&wait) {
+			p.logger.Warning("Instance %s: the broker is shutting down before the task %d of its update's deploy was recorded, so re-adoption finds it by context ID %s at the next start", p.instanceID, taskID, p.contextID)
+
+			return false
+		}
+	}
+}
+
+// retryAfter waits out *wait before a write is tried again, and doubles
+// it for the next attempt, up to updateTaskRetryMax. It reports false when
+// the broker shuts down first.
+func (p *updatePhase) retryAfter(wait *time.Duration) bool {
+	timer := time.NewTimer(*wait)
+	defer timer.Stop()
+
+	*wait = min(updateTaskRetryFactor**wait, max(updateTaskRetryMax, *wait))
+
+	select {
+	case <-timer.C:
+		return true
+	case <-p.broker.serviceContext().Done():
+		return false
+	}
 }
 
 // updateCredentialsWait is the bound on the credential refresh after an
@@ -351,17 +408,31 @@ func (b *Broker) updateRetryWait() time.Duration {
 	return updateTaskRetry
 }
 
+// settleExpect is what the record holds once an update's settle write
+// has landed. contextID is the context ID on record, which is the
+// rollback's while one runs, state is the state the write records, and
+// taskID is the task the write checks, or 0 when it checks none.
+type settleExpect struct {
+	contextID string
+	state     string
+	taskID    int
+}
+
 // settleWrite runs write, the write that settles the update's record,
 // until it lands, waiting between attempts as a failed task read does.
 // The record is the only place the update's end is kept, so a failed
 // write that was passed over left the record unsettled, every later
 // update refused, and the saved manifest deleted while a restart still
-// needed it. A write the record refuses because it has moved on isn't
-// tried again. It reports false only when the broker shuts down before
-// the write lands, and the caller then writes no change record and keeps
-// the saved manifest, so re-adoption follows the task again at the next
-// start and settles the update.
-func (p *updatePhase) settleWrite(ctx context.Context, outcome string, write func(context.Context) error) bool {
+// needed it. When the record refuses the write, it is read again. A
+// record that holds another action or another context ID has moved on,
+// and one that already holds expect's state took an earlier attempt that
+// answered with an error, and the write isn't tried again for either. A
+// record that still holds the update unsettled is tried again, after its
+// task is recorded when it names another. It reports false only when the
+// broker shuts down before the write lands, and the caller then writes no
+// change record and keeps the saved manifest, so re-adoption follows the
+// task again at the next start and settles the update.
+func (p *updatePhase) settleWrite(ctx context.Context, outcome string, expect settleExpect, write func(context.Context) error) bool {
 	wait := p.broker.updateRetryWait()
 
 	for {
@@ -370,29 +441,82 @@ func (p *updatePhase) settleWrite(ctx context.Context, outcome string, write fun
 
 		cancel()
 
-		switch {
-		case err == nil, errors.Is(err, internalVault.ErrHistoryNotAppended):
-			return true
-		case errors.Is(err, internalVault.ErrTaskRecordReplaced), errors.Is(err, internalVault.ErrUpdateNotInFlight):
-			p.logger.Error("CRITICAL: the record of instance %s no longer holds its update, so the %s update was not recorded: %s", p.instanceID, outcome, err)
-
+		if err == nil || errors.Is(err, internalVault.ErrHistoryNotAppended) {
 			return true
 		}
 
-		p.logger.Error("Instance %s: failed to record its %s update, and tries again in %v: %s", p.instanceID, outcome, wait, err)
+		if errors.Is(err, internalVault.ErrTaskRecordReplaced) || errors.Is(err, internalVault.ErrUpdateNotInFlight) {
+			if p.settleRefused(ctx, outcome, expect, err) {
+				return true
+			}
+		} else {
+			p.logger.Error("Instance %s: failed to record its %s update, and tries again in %v: %s", p.instanceID, outcome, wait, err)
+		}
 
-		timer := time.NewTimer(wait)
-		wait = min(updateTaskRetryFactor*wait, max(updateTaskRetryMax, wait))
-
-		select {
-		case <-timer.C:
-		case <-p.broker.serviceContext().Done():
-			timer.Stop()
+		if !p.retryAfter(&wait) {
 			p.logger.Warning("Instance %s: the broker is shutting down before its %s update was recorded, so re-adoption settles it at the next start", p.instanceID, outcome)
 
 			return false
 		}
 	}
+}
+
+// settleRefused reads the record again after it refused the settle write
+// with refusal, and reports whether the write is done with, because the
+// record has moved on or already holds what the write records. Otherwise
+// the record still holds the update unsettled, and the write is tried
+// again, after the deploy's task is recorded when the record names
+// another.
+func (p *updatePhase) settleRefused(ctx context.Context, outcome string, expect settleExpect, refusal error) bool {
+	readCtx, cancel := recordContext(ctx)
+	current, err := p.broker.readRecordedOperation(readCtx, p.instanceID)
+
+	cancel()
+
+	switch {
+	case err != nil:
+		p.logger.Error("Instance %s: the record refused its %s update, and could not be read again, so the write is tried again: %v", p.instanceID, outcome, errors.Join(refusal, err))
+
+		return false
+	case current.Action != operationTypeUpdate || current.ContextID != expect.contextID:
+		p.logger.Error("CRITICAL: the record of instance %s now holds the %s with context ID %q, not its update with context ID %q, so the %s update was not recorded: %s", p.instanceID, current.Action, current.ContextID, expect.contextID, outcome, refusal)
+
+		return true
+	case current.State == expect.state:
+		p.logger.Info("Instance %s: its record already holds the %s update, so an earlier write landed", p.instanceID, outcome)
+
+		return true
+	case updateSettledState(current.State):
+		p.logger.Error("Instance %s: its record already settled the update as %s, so the %s update was not recorded: %s", p.instanceID, current.State, outcome, refusal)
+
+		return true
+	}
+
+	p.logger.Error("Instance %s: its record holds the update unsettled with task %d, and refused its %s update, so the write is tried again: %s", p.instanceID, current.TaskID, outcome, refusal)
+
+	if expect.taskID > 0 && current.TaskID != expect.taskID {
+		recordCtx, cancelRecord := recordContext(ctx)
+		err = p.broker.Vault.TrackUpdateTask(recordCtx, p.instanceID, fmt.Sprintf("BOSH deployment in progress (task %d)", expect.taskID), expect.contextID, expect.taskID)
+
+		cancelRecord()
+
+		if err != nil && !errors.Is(err, internalVault.ErrHistoryNotAppended) {
+			p.logger.Error("Instance %s: failed to record the task %d of its update's deploy before the settle is tried again: %s", p.instanceID, expect.taskID, err)
+		}
+	}
+
+	return false
+}
+
+// updateSettledState reports whether a record in state holds a settled
+// update.
+func updateSettledState(state string) bool {
+	switch state {
+	case recordedStateFailed, internalVault.TaskStateSucceeded, internalVault.TaskStateRollbackFailed, internalVault.TaskStateDeleted:
+		return true
+	}
+
+	return false
 }
 
 // followUpdateTask waits for the update's BOSH task to end, and reads it
@@ -514,7 +638,7 @@ func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed stri
 
 	p.broker.storePlanReferences(settleCtx, p.instanceID, &p.plan, p.logger)
 
-	if !p.settleWrite(settleCtx, updateOutcomeSucceeded, func(recordCtx context.Context) error {
+	if !p.settleWrite(settleCtx, updateOutcomeSucceeded, settleExpect{contextID: p.contextID, state: internalVault.TaskStateSucceeded, taskID: task.ID}, func(recordCtx context.Context) error {
 		return p.broker.Vault.TrackSucceeded(recordCtx, p.instanceID, operationTypeUpdate, fmt.Sprintf("Updated by BOSH deployment task %d", task.ID), task.ID) //nolint:wrapcheck // settleWrite matches the vault's sentinels
 	}) {
 		return

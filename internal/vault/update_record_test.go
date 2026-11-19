@@ -247,3 +247,68 @@ func TestTrackUpdateAccepted_ReplacesASettledUpdate(t *testing.T) {
 		}
 	}
 }
+
+// TrackUpdateTask records the deploy's task on the update it belongs to,
+// lands again when the task is already recorded, and refuses a record
+// that holds another context ID, another task, or a settled update.
+func TestTrackUpdateTask_GuardsTheUpdateItRecords(t *testing.T) {
+	t.Parallel()
+
+	client := newDevVault(t)
+	ctx := context.Background()
+
+	accepted := func(t *testing.T) string {
+		t.Helper()
+
+		instanceID := fmt.Sprintf("update-task-%d", time.Now().UnixNano())
+
+		err := recordSucceededMintedProvision(ctx, client, instanceID)
+		if err == nil {
+			err = client.TrackUpdateAccepted(ctx, instanceID, "accepted", "context-update", "index-name", stagedUpdate())
+		}
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return instanceID
+	}
+
+	instanceID := accepted(t)
+
+	for range 2 {
+		err := client.TrackUpdateTask(ctx, instanceID, "BOSH deployment in progress (task 42)", "context-update", 42)
+		if err != nil {
+			t.Fatalf("recording the deploy's task was refused: %v", err)
+		}
+	}
+
+	_, _, record := readRecord(ctx, t, client, instanceID)
+	if fmt.Sprint(record["task"]) != "42" || record["context_id"] != "context-update" || record[vault.TaskRecordUpdateKey] == nil {
+		t.Fatalf("after the task write, the record is %v", record)
+	}
+
+	for name, write := range map[string]func() error{
+		"another context ID": func() error {
+			return client.TrackUpdateTask(ctx, instanceID, "task", "context-other", 42)
+		},
+		"a different task": func() error {
+			return client.TrackUpdateTask(ctx, instanceID, "task", "context-update", 43)
+		},
+		"a settled update": func() error {
+			settledID := accepted(t)
+
+			err := client.TrackFailed(ctx, settledID, "update", "failed", "context-update", 0)
+			if err != nil {
+				return fmt.Errorf("settling the update: %w", err)
+			}
+
+			return client.TrackUpdateTask(ctx, settledID, "task", "context-update", 42)
+		},
+	} {
+		err := write()
+		if !errors.Is(err, vault.ErrTaskRecordReplaced) {
+			t.Errorf("a task write over %s answered %v, want ErrTaskRecordReplaced", name, err)
+		}
+	}
+}

@@ -216,7 +216,7 @@ func TestUpdate_SettleWriteFailsUntilShutdown_LeavesItForReadopt(t *testing.T) {
 	shutdown()
 	fixture.broker.WaitForBackground(ctx)
 
-	if record := readTaskRecord(ctx, t, fixture.vault, instanceID); record["state"] != "in_progress" {
+	if record := readTaskRecord(ctx, t, fixture.vault, instanceID); record["state"] != recordInProgress {
 		t.Fatalf("the record of the update the broker couldn't settle is %v, want it still in progress", record)
 	}
 
