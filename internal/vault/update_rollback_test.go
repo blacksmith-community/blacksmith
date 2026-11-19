@@ -99,8 +99,8 @@ func TestTrackRollingBack_KeepsTheUpdateAndRecordsBothDeploys(t *testing.T) {
 }
 
 // requireRollbackSettled fails the spec unless the record holds the
-// failed rollback of task 78 and refuses a write that holds the update
-// unsettled.
+// failed rollback of task 78, still names the failed deploy's task 77 as
+// its task, and refuses a write that holds the update unsettled.
 func requireRollbackSettled(ctx context.Context, t *testing.T, client *vault.Vault, instanceID string) {
 	t.Helper()
 
@@ -110,6 +110,10 @@ func requireRollbackSettled(ctx context.Context, t *testing.T, client *vault.Vau
 
 	if record["state"] != vault.TaskStateRollbackFailed || recorded["phase"] != vault.UpdatePhaseRollbackFailed || staged["plan_id"] != updatePlan {
 		t.Fatalf("the settled record is %v", record)
+	}
+
+	if task := fmt.Sprint(record["task"]); task != "77" {
+		t.Fatalf("the settled record names task %s, want the failed deploy's task 77", task)
 	}
 
 	if read := vault.StagedRollback(record); read == nil || read.TaskID != 78 || read.FailedTaskID != 77 || read.ContextID != rollbackContextID {

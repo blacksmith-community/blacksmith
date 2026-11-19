@@ -96,13 +96,21 @@ func StagedRollback(record map[string]interface{}) *UpdateRollback {
 // ID on record, which is the rollback's when one ran. It writes only
 // while the record holds that update unsettled, with its outcome unknown,
 // or failed by the resolver of a lost answer, all under the same context
-// ID, and returns an error that wraps ErrUpdateNotInFlight otherwise.
+// ID, and returns an error that wraps ErrUpdateNotInFlight otherwise. The
+// record's task stays the failed deploy's, so a reader of the record or
+// its history still finds it, and it is the failure -1 only when the
+// rollback names no failed task.
 func (vault *Vault) SettleUpdateFailure(ctx context.Context, instanceID, state, description, contextID string, rollback UpdateRollback) error {
 	if state != eventStateFailed && state != TaskStateRollbackFailed {
 		return fmt.Errorf("%w: instance %s, an update cannot settle as %q", ErrUpdateNotInFlight, instanceID, state)
 	}
 
-	return vault.writeUpdateRollback(ctx, instanceID, description, contextID, state, -1, rollback, true)
+	taskID := rollback.FailedTaskID
+	if taskID <= 0 {
+		taskID = -1
+	}
+
+	return vault.writeUpdateRollback(ctx, instanceID, description, contextID, state, taskID, rollback, true)
 }
 
 // writeUpdateRollback writes the update's record in state with taskID and
