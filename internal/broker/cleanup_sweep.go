@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"blacksmith/internal/interfaces"
 	"blacksmith/internal/settings"
 	"blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
@@ -397,9 +396,9 @@ func (b *Broker) forgetSettledSuspects(ctx context.Context, candidates []*readop
 		}
 	}
 
-	for _, entry := range b.CleanupAttention() {
-		if settled(entry.InstanceID) && !b.deleteRefusalHolds(ctx, entry, logger) {
-			b.forgetCleanupAttention(entry.InstanceID)
+	for _, row := range b.attentionRows() {
+		if settled(row.InstanceID) && !b.deleteRefusalHolds(ctx, row, logger) {
+			b.forgetCleanupAttention(row.InstanceID)
 		}
 	}
 }
@@ -410,7 +409,7 @@ func (b *Broker) forgetSettledSuspects(ctx context.Context, candidates []*readop
 // it, and the director has not said it is gone. A check that cannot be
 // made keeps the entry, because the refusal may still hold, and the next
 // pass that would drop it checks again.
-func (b *Broker) deleteRefusalHolds(ctx context.Context, entry interfaces.CleanupAttention, logger logger.Logger) bool {
+func (b *Broker) deleteRefusalHolds(ctx context.Context, entry attentionRow, logger logger.Logger) bool {
 	if !isDeleteRefusal(entry) {
 		return false
 	}

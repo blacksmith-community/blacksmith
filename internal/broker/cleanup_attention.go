@@ -8,26 +8,70 @@ import (
 	"blacksmith/internal/interfaces"
 )
 
+// attentionKind says what noted an entry of the overview.
+type attentionKind int
+
+const (
+	// cleanupRefusal is an entry that a refused cleanup noted.
+	cleanupRefusal attentionKind = iota
+	// deleteRefusal is an entry that a refused delete from the platform
+	// noted.
+	deleteRefusal
+)
+
+// attentionRow is what cleanupAttention holds for an instance. It is
+// the entry the overview shows, along with what noted it, which the
+// overview never shows.
+type attentionRow struct {
+	interfaces.CleanupAttention
+
+	kind attentionKind
+}
+
 // CleanupAttention returns the failed provisions whose owed cleanup the
 // broker refused to run, ordered by instance ID. The overview shows them,
 // so an operator can delete the deployment or clear the record by hand.
 func (b *Broker) CleanupAttention() []interfaces.CleanupAttention {
-	var entries []interfaces.CleanupAttention
+	rows := b.attentionRows()
+	if len(rows) == 0 {
+		return nil
+	}
+
+	entries := make([]interfaces.CleanupAttention, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, row.CleanupAttention)
+	}
+
+	return entries
+}
+
+// attentionRows returns the rows held for the overview, ordered by
+// instance ID.
+func (b *Broker) attentionRows() []attentionRow {
+	var rows []attentionRow
 
 	b.cleanupAttention.Range(func(_, value any) bool {
-		entry, ok := value.(interfaces.CleanupAttention)
+		row, ok := value.(attentionRow)
 		if ok {
-			entries = append(entries, entry)
+			rows = append(rows, row)
 		}
 
 		return true
 	})
 
-	slices.SortFunc(entries, func(a, b interfaces.CleanupAttention) int {
+	slices.SortFunc(rows, func(a, b attentionRow) int {
 		return strings.Compare(a.InstanceID, b.InstanceID)
 	})
 
-	return entries
+	return rows
+}
+
+// newAttentionRow returns a row of kind for the overview, noted now.
+func newAttentionRow(kind attentionKind, instanceID, deploymentName, reason string) attentionRow {
+	return attentionRow{
+		CleanupAttention: interfaces.CleanupAttention{InstanceID: instanceID, DeploymentName: deploymentName, Reason: reason, Since: time.Now().UTC()},
+		kind:             kind,
+	}
 }
 
 // noteCleanupAttention records that the owed cleanup of instanceID was
@@ -35,21 +79,7 @@ func (b *Broker) CleanupAttention() []interfaces.CleanupAttention {
 // unless an entry is already held for the same deployment and reason,
 // and that entry keeps the time it was first noted.
 func (b *Broker) noteCleanupAttention(instanceID, deploymentName, reason string) bool {
-	entry := interfaces.CleanupAttention{InstanceID: instanceID, DeploymentName: deploymentName, Reason: reason, Since: time.Now().UTC()}
-
-	held, loaded := b.cleanupAttention.LoadOrStore(instanceID, entry)
-	if !loaded {
-		return true
-	}
-
-	previous, ok := held.(interfaces.CleanupAttention)
-	if ok && previous.DeploymentName == deploymentName && previous.Reason == reason {
-		return false
-	}
-
-	b.cleanupAttention.Store(instanceID, entry)
-
-	return true
+	return b.noteAttention(newAttentionRow(cleanupRefusal, instanceID, deploymentName, reason))
 }
 
 // holdCleanupAttention records that the owed cleanup of instanceID was
@@ -58,9 +88,45 @@ func (b *Broker) noteCleanupAttention(instanceID, deploymentName, reason string)
 // such as one because Vault could not be read, goes through it, so it
 // never replaces the refusal an operator is already looking at.
 func (b *Broker) holdCleanupAttention(instanceID, deploymentName, reason string) bool {
-	entry := interfaces.CleanupAttention{InstanceID: instanceID, DeploymentName: deploymentName, Reason: reason, Since: time.Now().UTC()}
+	return b.holdAttention(newAttentionRow(cleanupRefusal, instanceID, deploymentName, reason))
+}
 
-	_, loaded := b.cleanupAttention.LoadOrStore(instanceID, entry)
+// noteDeleteRefusal records that the platform's delete of instanceID was
+// refused for reason, as noteCleanupAttention records a cleanup's.
+func (b *Broker) noteDeleteRefusal(instanceID, deploymentName, reason string) bool {
+	return b.noteAttention(newAttentionRow(deleteRefusal, instanceID, deploymentName, reason))
+}
+
+// holdDeleteRefusal records that the platform's delete of instanceID was
+// refused for reason only when no entry is held for it, as
+// holdCleanupAttention records a cleanup's.
+func (b *Broker) holdDeleteRefusal(instanceID, deploymentName, reason string) bool {
+	return b.holdAttention(newAttentionRow(deleteRefusal, instanceID, deploymentName, reason))
+}
+
+// noteAttention holds row for its instance, and reports whether it is
+// new. It is new unless a row of the same kind is already held for the
+// same deployment and reason, and that row keeps its time.
+func (b *Broker) noteAttention(row attentionRow) bool {
+	held, loaded := b.cleanupAttention.LoadOrStore(row.InstanceID, row)
+	if !loaded {
+		return true
+	}
+
+	previous, ok := held.(attentionRow)
+	if ok && previous.kind == row.kind && previous.DeploymentName == row.DeploymentName && previous.Reason == row.Reason {
+		return false
+	}
+
+	b.cleanupAttention.Store(row.InstanceID, row)
+
+	return true
+}
+
+// holdAttention holds row for its instance only when no row is held for
+// it, and reports whether it held it.
+func (b *Broker) holdAttention(row attentionRow) bool {
+	_, loaded := b.cleanupAttention.LoadOrStore(row.InstanceID, row)
 
 	return !loaded
 }
@@ -71,13 +137,9 @@ func (b *Broker) forgetCleanupAttention(instanceID string) {
 	b.cleanupAttention.Delete(instanceID)
 }
 
-// deleteRefusalLead begins the reason of every entry that a refused
-// delete from the platform notes, which tells it from a cleanup's.
-const deleteRefusalLead = "The platform's delete of this instance was refused, "
-
-// isDeleteRefusal reports whether entry was noted by a refused delete.
-func isDeleteRefusal(entry interfaces.CleanupAttention) bool {
-	return strings.HasPrefix(entry.Reason, deleteRefusalLead)
+// isDeleteRefusal reports whether row was noted by a refused delete.
+func isDeleteRefusal(row attentionRow) bool {
+	return row.kind == deleteRefusal
 }
 
 // forgetDeleteRefusals drops the entry of each of instanceIDs that a
@@ -90,8 +152,8 @@ func (b *Broker) forgetDeleteRefusals(deploymentName string, instanceIDs ...stri
 			continue
 		}
 
-		entry, ok := held.(interfaces.CleanupAttention)
-		if ok && entry.DeploymentName == deploymentName && isDeleteRefusal(entry) {
+		row, ok := held.(attentionRow)
+		if ok && row.DeploymentName == deploymentName && isDeleteRefusal(row) {
 			b.cleanupAttention.CompareAndDelete(instanceID, held)
 		}
 	}

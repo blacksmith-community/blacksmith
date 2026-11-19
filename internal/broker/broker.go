@@ -2321,7 +2321,7 @@ func (b *Broker) refuseDeleteOfDoubleClaim(ctx context.Context, instanceID, depl
 
 	gone, err := b.doubleClaimedDeploymentGone(ctx, deploymentName)
 	if err != nil {
-		if b.holdCleanupAttention(instanceID, deploymentName, reason) {
+		if b.holdDeleteRefusal(instanceID, deploymentName, reason) {
 			logger.Error("Refusing deprovision of instance %s, and the director could not say whether deployment %s exists: %s: %s", instanceID, deploymentName, reason, err)
 		} else {
 			logger.Warning("Still refusing deprovision of instance %s, which the overview already lists, and the director could not say whether deployment %s exists: %s: %s",
@@ -2340,7 +2340,7 @@ func (b *Broker) refuseDeleteOfDoubleClaim(ctx context.Context, instanceID, depl
 		return nil
 	}
 
-	if b.holdCleanupAttention(instanceID, deploymentName, reason) {
+	if b.holdDeleteRefusal(instanceID, deploymentName, reason) {
 		logger.Error("Refusing deprovision of instance %s: %s", instanceID, reason)
 	} else {
 		logger.Warning("Still refusing deprovision of instance %s, which the overview already lists: %s", instanceID, reason)
@@ -4784,7 +4784,7 @@ func doubleClaimReason(claimant, deploymentName, where string) string {
 // delete from the platform was refused because its own record claims
 // deploymentName while claimant claims it too, through where.
 func deleteDoubleClaimReason(claimant, deploymentName, where string) string {
-	return fmt.Sprintf(deleteRefusalLead+"because instance %s also claims deployment %s, through %s, so two instances claim one name. The broker deletes nothing for this instance until an operator settles which instance the deployment belongs to",
+	return fmt.Sprintf("The platform's delete of this instance was refused, because instance %s also claims deployment %s, through %s, so two instances claim one name. The broker deletes nothing for this instance until an operator settles which instance the deployment belongs to",
 		claimant, deploymentName, where)
 }
 

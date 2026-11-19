@@ -813,7 +813,7 @@ func (d *deprovisioningPhase) refuseReappearedDeployment(ctx context.Context) {
 	claim := d.foundGone
 	reason := deleteDoubleClaimReason(claim.claimant, d.deploymentName, claim.where)
 
-	if d.broker.noteCleanupAttention(d.instanceID, d.deploymentName, reason) {
+	if d.broker.noteDeleteRefusal(d.instanceID, d.deploymentName, reason) {
 		d.logger.Error("Refusing to delete deployment %s for instance %s: the director said it was gone when the delete was accepted, and it has it again, while instance %s claims it too, through %s, so nothing was deleted",
 			d.deploymentName, d.instanceID, claim.claimant, claim.where)
 	} else {
