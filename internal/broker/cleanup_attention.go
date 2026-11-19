@@ -70,3 +70,29 @@ func (b *Broker) holdCleanupAttention(instanceID, deploymentName, reason string)
 func (b *Broker) forgetCleanupAttention(instanceID string) {
 	b.cleanupAttention.Delete(instanceID)
 }
+
+// deleteRefusalLead begins the reason of every entry that a refused
+// delete from the platform notes, which tells it from a cleanup's.
+const deleteRefusalLead = "The platform's delete of this instance was refused, "
+
+// isDeleteRefusal reports whether entry was noted by a refused delete.
+func isDeleteRefusal(entry interfaces.CleanupAttention) bool {
+	return strings.HasPrefix(entry.Reason, deleteRefusalLead)
+}
+
+// forgetDeleteRefusals drops the entry of each of instanceIDs that a
+// refused delete noted for deploymentName, and leaves every other entry,
+// such as one a cleanup noted, or one noted after it was read.
+func (b *Broker) forgetDeleteRefusals(deploymentName string, instanceIDs ...string) {
+	for _, instanceID := range instanceIDs {
+		held, loaded := b.cleanupAttention.Load(instanceID)
+		if !loaded {
+			continue
+		}
+
+		entry, ok := held.(interfaces.CleanupAttention)
+		if ok && entry.DeploymentName == deploymentName && isDeleteRefusal(entry) {
+			b.cleanupAttention.CompareAndDelete(instanceID, held)
+		}
+	}
+}

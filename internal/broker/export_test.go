@@ -673,6 +673,12 @@ func (b *Broker) SweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 	b.sweepOwedCleanupsOnce(ctx, interval, logger.Get().Named("cleanup-sweep"))
 }
 
+// NoteCleanupAttention lists instanceID under Attention required for
+// deploymentName with reason, as a refused cleanup does.
+func (b *Broker) NoteCleanupAttention(instanceID, deploymentName, reason string) {
+	b.noteCleanupAttention(instanceID, deploymentName, reason)
+}
+
 // SetSweepClock replaces the clock the sweep of owed cleanups reads.
 func (b *Broker) SetSweepClock(clock func() time.Time) {
 	b.sweep.mu.Lock()

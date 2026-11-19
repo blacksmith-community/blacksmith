@@ -2287,7 +2287,10 @@ func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, depl
 // It asks the director first, since that only reads. When the director
 // says the deployment is gone, the double claim can take nothing from
 // either instance, so it returns nil and leaves the delete to its caller,
-// with nothing noted. When the director cannot say, it fails the delete
+// and it drops the rows that refused deletes noted for the deployment,
+// for the instance and for the claimant, as neither refusal holds any
+// longer. A row of either instance that a cleanup noted stays, and that
+// cleanup settles it. When the director cannot say, it fails the delete
 // with nothing written, and the row is noted as for any other refusal,
 // because the double claim is known and may still hold.
 func (b *Broker) refuseDeleteOfDoubleClaim(ctx context.Context, instanceID, deploymentName, claimant, where string, logger logger.Logger) error {
@@ -2308,6 +2311,8 @@ func (b *Broker) refuseDeleteOfDoubleClaim(ctx context.Context, instanceID, depl
 	if gone {
 		logger.Info("Instance %s claims deployment %s too, through %s, and the director has no such deployment, so the double claim does not hold back the deprovision of instance %s",
 			claimant, deploymentName, where, instanceID)
+
+		b.forgetDeleteRefusals(deploymentName, instanceID, claimant)
 
 		return nil
 	}
@@ -4756,7 +4761,7 @@ func doubleClaimReason(claimant, deploymentName, where string) string {
 // delete from the platform was refused because its own record claims
 // deploymentName while claimant claims it too, through where.
 func deleteDoubleClaimReason(claimant, deploymentName, where string) string {
-	return fmt.Sprintf("The platform's delete of this instance was refused, because instance %s also claims deployment %s, through %s, so two instances claim one name. The broker deletes nothing for this instance until an operator settles which instance the deployment belongs to",
+	return fmt.Sprintf(deleteRefusalLead+"because instance %s also claims deployment %s, through %s, so two instances claim one name. The broker deletes nothing for this instance until an operator settles which instance the deployment belongs to",
 		claimant, deploymentName, where)
 }
 

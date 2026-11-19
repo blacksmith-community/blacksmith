@@ -674,3 +674,82 @@ func requireGoneCleanup(ctx context.Context, t *testing.T, refuser *broker.Broke
 		t.Fatalf("the settled cleanup left %+v for an operator, want nothing", attention)
 	}
 }
+
+// goneRowsCase is a delete of x-abc made once the director says the
+// deployment two instances claim is gone, after the deletes of refused
+// were refused while it still existed. other has abc hold a row a cleanup
+// noted, and status is the answer the delete must get.
+type goneRowsCase struct {
+	name    string
+	write   func(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault) string
+	refused []string
+	other   bool
+	status  int
+}
+
+// The rows refused deletes noted for a double claim say that the
+// platform's delete was refused. Once the director says the deployment is
+// gone, neither refusal holds, so the delete that then goes ahead drops
+// the rows refused deletes noted for that deployment, for the instance
+// asked and for the other claimant. A row of the other claimant that a
+// cleanup noted stays, because that cleanup settles it.
+func TestDoubleClaim_DropsTheDeleteRowsOnceTheDeploymentIsGone(t *testing.T) {
+	t.Parallel()
+
+	const cleanupReason = "Request details stored under redis-small-x-abc could not be read"
+
+	cases := []goneRowsCase{
+		{name: "both live instances were refused", write: writeTwoLiveClaims, refused: []string{doubleClaimDebtor, doubleClaimOwner}, status: http.StatusAccepted},
+		{name: "the other claimant holds a cleanup's row", write: writeTwoLiveClaims, refused: []string{doubleClaimDebtor}, other: true, status: http.StatusAccepted},
+		{name: "the instance the index does not have was refused", write: writeDoubleClaim, refused: []string{doubleClaimDebtor}, status: http.StatusGone},
+	}
+
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			vaultClient, _ := claimFaultVault(t)
+			ctx := context.Background()
+			name := entry.write(ctx, t, vaultClient)
+
+			director := cleanupGuardDirector()
+			deleter := doubleClaimDeprovisioner(ctx, t, director, vaultClient)
+
+			for _, asked := range entry.refused {
+				status, body := deleteInstance(ctx, t, deleter, asked, collidingShortPlan)
+				if status != http.StatusInternalServerError {
+					t.Fatalf("the delete of %s was answered %d %s, want 500", asked, status, body)
+				}
+			}
+
+			if entry.other {
+				deleter.NoteCleanupAttention(doubleClaimOwner, name, cleanupReason)
+			}
+
+			held := len(entry.refused)
+			if entry.other {
+				held++
+			}
+
+			if rows := deleter.CleanupAttention(); len(rows) != held {
+				t.Fatalf("the refused deletes left %+v for an operator, want %d rows", rows, held)
+			}
+
+			director.GetDeploymentFn = deploymentNotFound
+
+			status, body := deleteInstance(ctx, t, deleter, doubleClaimDebtor, collidingShortPlan)
+			if status != entry.status {
+				t.Fatalf("the delete of %s was answered %d %s, want %d", doubleClaimDebtor, status, body, entry.status)
+			}
+
+			rows := deleter.CleanupAttention()
+
+			switch {
+			case entry.other && (len(rows) != 1 || rows[0].InstanceID != doubleClaimOwner || rows[0].Reason != cleanupReason):
+				t.Fatalf("the delete left %+v for an operator, want only the cleanup's row for %s", rows, doubleClaimOwner)
+			case !entry.other && len(rows) != 0:
+				t.Fatalf("the delete left %+v for an operator, want nothing", rows)
+			}
+		})
+	}
+}
