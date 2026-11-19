@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"blacksmith/internal/config"
+	"blacksmith/internal/mutation"
 	internalVault "blacksmith/internal/vault"
+	"blacksmith/shield"
 )
 
 // doubleClaimOwner is the instance whose index entry claims the colliding
@@ -97,6 +100,80 @@ func TestCleanupFailedDeployment_RefusesANameAnotherInstanceClaims(t *testing.T)
 			attention := cleaner.CleanupAttention()
 			if len(attention) != 1 || attention[0].InstanceID != doubleClaimDebtor || attention[0].DeploymentName != name || !strings.Contains(attention[0].Reason, entry.reason) {
 				t.Fatalf("the refusal left %+v for an operator, want one row for %s and %s that says %q", attention, doubleClaimDebtor, name, entry.reason)
+			}
+		})
+	}
+}
+
+// A delete of x-abc, which the index does not have, is not answered 410
+// Gone while its own record owes the cleanup of the name abc claims,
+// because the cleanup would then still delete the deployment the 410
+// gave to abc. The delete is answered 500 with a description that names
+// the double claim and not the other instance, nothing is written or
+// deleted, and the overview lists x-abc with the reason the cleanup gives.
+// When its own record cannot be read, the delete is answered 500 as well.
+func TestDeprovision_RefusesWhileItsOwnRecordClaimsAnotherInstancesName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		recordRead  bool
+		description string
+		row         bool
+	}{
+		{name: "the record owes the cleanup of the name", description: "two service instances claim deployment redis-small-x-abc", row: true},
+		{name: "the record cannot be read", recordRead: true, description: "the record of instance x-abc could not be read"},
+	}
+
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			vaultClient, proxy := claimFaultVault(t)
+			ctx := context.Background()
+			name := writeDoubleClaim(ctx, t, vaultClient)
+
+			// The delete reads the record twice before the claim check,
+			// so the third read is the claim check's own.
+			if entry.recordRead {
+				proxy.FailReadsAfter("/data/"+doubleClaimDebtor+"/task", 2, http.StatusForbidden, "permission denied", 1)
+			}
+
+			director := cleanupGuardDirector()
+			deprovisioner := cleanupGuardBroker(director, vaultClient, collidingShortPlan, collidingLongPlan)
+			deprovisioner.Shield = &shield.NoopClient{}
+			deprovisioner.Config = &config.Config{}
+			deprovisioner.Guard = mutation.NewGuard(time.Now)
+
+			written := len(proxy.Writes())
+
+			status, body := deleteInstance(ctx, t, deprovisioner, doubleClaimDebtor, collidingShortPlan)
+			if status != http.StatusInternalServerError || !strings.Contains(body, entry.description) {
+				t.Fatalf("the delete of %s was answered %d %s, want 500 saying %q", doubleClaimDebtor, status, body, entry.description)
+			}
+
+			if named := strings.NewReplacer(name, "", doubleClaimDebtor, "").Replace(body); strings.Contains(named, doubleClaimOwner) {
+				t.Fatalf("the answer %s names instance %s", body, doubleClaimOwner)
+			}
+
+			if writes := proxy.Writes()[written:]; len(writes) != 0 {
+				t.Fatalf("the refused delete wrote %v", writes)
+			}
+
+			if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+				t.Fatalf("the delete of %s deleted %v", doubleClaimDebtor, deleted)
+			}
+
+			requireCleanupStillOwed(ctx, t, vaultClient, doubleClaimDebtor)
+
+			attention := deprovisioner.CleanupAttention()
+
+			switch {
+			case !entry.row && len(attention) != 0:
+				t.Fatalf("the refused delete left %+v for an operator, want nothing", attention)
+			case entry.row && (len(attention) != 1 || attention[0].InstanceID != doubleClaimDebtor || attention[0].DeploymentName != name ||
+				!strings.Contains(attention[0].Reason, "Instance abc also claims deployment redis-small-x-abc, through its index entry, so two instances claim one name")):
+				t.Fatalf("the refused delete left %+v for an operator, want one row for %s that names the double claim", attention, doubleClaimDebtor)
 			}
 		})
 	}
