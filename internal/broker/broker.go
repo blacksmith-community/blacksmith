@@ -2665,7 +2665,7 @@ func (b *Broker) getDeploymentManifestFromVault(instanceID string, logger logger
 		return ""
 	}
 
-	manifestYAML, ok := data["manifest"].(string)
+	manifestYAML, ok := data[manifestField].(string)
 	if !ok {
 		logger.Debug("Manifest data in Vault for instance %s is not a string", instanceID)
 
@@ -3956,6 +3956,9 @@ type recordedOperation struct {
 	// UnknownSince is when the outcome of the operation's director request
 	// became unknown. It is zero unless State is outcome_unknown.
 	UnknownSince time.Time
+	// RollingBack is true while an update's record holds the rollback
+	// that follows its failed deploy, so ContextID is the rollback's.
+	RollingBack bool
 	// CleanupPending is true while a failed provision still owes the
 	// delete of its deployment. The write that records the failure sets
 	// it, and the cleanup clears it once the delete is sent or the
@@ -3991,6 +3994,10 @@ func parseRecordedOperation(instanceID, state string, taskID int, task map[strin
 	recorded.DeploymentName, _ = task[internalVault.TaskRecordDeploymentNameKey].(string)
 	recorded.DeploymentPlanID, _ = task[internalVault.TaskRecordDeploymentPlanIDKey].(string)
 	recorded.CleanupPending, _ = task[internalVault.TaskRecordCleanupPendingKey].(bool)
+
+	if rollback := internalVault.StagedRollback(task); rollback != nil {
+		recorded.RollingBack = rollback.Phase == internalVault.UpdatePhaseRollingBack
+	}
 
 	if since, isString := task[internalVault.TaskRecordUnknownSinceKey].(string); isString && since != "" {
 		recorded.UnknownSince, err = time.Parse(time.RFC3339Nano, since)

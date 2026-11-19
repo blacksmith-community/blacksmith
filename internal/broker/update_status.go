@@ -33,18 +33,20 @@ func (b *Broker) updateStatus(_ context.Context, instanceID, deploymentName stri
 	switch recorded.State {
 	case internalVault.TaskStateSucceeded:
 		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: recorded.Description}, nil
-	case recordedStateFailed:
+	case recordedStateFailed, internalVault.TaskStateRollbackFailed:
 		// A failed update leaves the deployment where BOSH stopped and the
 		// stored values at their last good state, so the instance stays
-		// usable and the same update may be sent again.
-		usable, repeatable := true, true
+		// usable and the same update may be sent again. Once a rollback
+		// failed as well, or a failure was recorded while the rollback
+		// still ran, the broker can no longer vouch for the deployment,
+		// and a repeated update deploys a fresh render that can repair it.
+		usable := recorded.State == recordedStateFailed && !recorded.RollingBack
+		repeatable := true
 
 		return osbapi.LastOperationResponse{
 			State: osbapi.StateFailed, Description: recorded.Description,
 			InstanceUsable: &usable, UpdateRepeatable: &repeatable,
 		}, nil
-	case internalVault.TaskStateRollbackFailed:
-		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
 	case internalVault.TaskStateOutcomeUnknown:
 		logger.Debug("Instance %s: the outcome of its update's deploy with context ID %s is unknown", instanceID, recorded.ContextID)
 

@@ -42,6 +42,9 @@ type updatePhase struct {
 	rendered   string
 	contextID  string
 	logger     logger.Logger
+	// rollback is the rollback the update runs after its deploy failed,
+	// and nil until then. While it is set, contextID is the rollback's.
+	rollback *internalVault.UpdateRollback
 }
 
 // launchUpdate records the accepted update and starts the goroutine that
@@ -106,10 +109,22 @@ func (b *Broker) launchUpdate(ctx context.Context, phase *updatePhase, claim *op
 func (p *updatePhase) run(ctx context.Context) {
 	p.progress(ctx, "Reading the deployment's live release and stemcell versions", 0)
 
-	deployed, err := p.carryLiveVersions(ctx)
+	deployed, live, err := p.carryLiveVersions(ctx)
 	if err != nil {
 		p.logger.Error("Instance %s: %s", p.instanceID, err)
 		p.fail(ctx, "The update was not deployed, because the deployment's live release and stemcell versions could not be read", 0)
+
+		return
+	}
+
+	// The live manifest is what the director last ran, and the claim
+	// keeps anything else from changing it, so it is saved before the
+	// deploy for the rollback the setting may call for if the deploy
+	// fails.
+	err = p.saveRollbackManifest(ctx, live)
+	if err != nil {
+		p.logger.Error("Instance %s: %s", p.instanceID, err)
+		p.fail(ctx, "The update was not deployed, because the deployment's last good manifest could not be saved for a rollback", 0)
 
 		return
 	}
@@ -165,28 +180,30 @@ func (p *updatePhase) fail(ctx context.Context, description string, taskID int) 
 	}
 
 	p.broker.auditUpdate(recordCtx, p.instanceID, p.target, p.request, updateOutcomeFailed, "", taskID)
+	p.dropRollbackManifest(ctx)
 }
 
 // carryLiveVersions returns the requested manifest with the live version
 // of each release and of the stemcell wherever the live one is newer than
 // the version the manifest names, so an update never moves an instance an
-// upgrade moved forward back to the template's versions.
-func (p *updatePhase) carryLiveVersions(ctx context.Context) (string, error) {
+// upgrade moved forward back to the template's versions. It also returns
+// the live manifest as the director answered it.
+func (p *updatePhase) carryLiveVersions(ctx context.Context) (string, string, error) {
 	live, err := p.broker.BOSH.GetDeployment(ctx, p.target.deployment)
 	if err != nil {
-		return "", fmt.Errorf("failed to read the live manifest of deployment %s: %w", p.target.deployment, err)
+		return "", "", fmt.Errorf("failed to read the live manifest of deployment %s: %w", p.target.deployment, err)
 	}
 
 	if live == nil {
-		return "", fmt.Errorf("%w: deployment %s", errNoLiveManifest, p.target.deployment)
+		return "", "", fmt.Errorf("%w: deployment %s", errNoLiveManifest, p.target.deployment)
 	}
 
 	deployed, err := carryLiveVersions(p.rendered, live.Manifest)
 	if err != nil {
-		return "", fmt.Errorf("failed to carry the live versions of deployment %s forward: %w", p.target.deployment, err)
+		return "", "", fmt.Errorf("failed to carry the live versions of deployment %s forward: %w", p.target.deployment, err)
 	}
 
-	return deployed, nil
+	return deployed, live.Manifest, nil
 }
 
 // errNoLiveManifest reports a director that answered a deployment read
@@ -255,9 +272,23 @@ func (b *Broker) followUpdateTask(ctx context.Context, taskID int, logger logger
 
 // settle records the update's end under the instance's settle lock. A
 // succeeded deploy commits the staged values, the deployed manifest, the
-// credentials, and the plan references, and a failed one records the
-// failure and leaves the last good values in place.
+// credentials, and the plan references. A failed one leaves the last good
+// values in place, and records the failure or rolls back once, as the
+// setting at the failure says. A task the rollback ran settles the
+// rollback and never commits anything.
 func (p *updatePhase) settle(ctx context.Context, task *bosh.Task, deployed string) {
+	if p.rollback != nil {
+		p.settleRollback(ctx, task, "")
+
+		return
+	}
+
+	if task.State != taskStateDone {
+		p.deployFailed(ctx, task)
+
+		return
+	}
+
 	settleCtx := context.WithoutCancel(ctx)
 
 	unlock, err := p.broker.lockSettle(settleCtx, p.instanceID)
@@ -267,13 +298,6 @@ func (p *updatePhase) settle(ctx context.Context, task *bosh.Task, deployed stri
 		return
 	}
 	defer unlock()
-
-	if task.State != taskStateDone {
-		p.logger.Error("Instance %s: the update's BOSH task %d ended in state %s", p.instanceID, task.ID, task.State)
-		p.fail(settleCtx, fmt.Sprintf("BOSH deployment task %d is %s", task.ID, task.State), task.ID)
-
-		return
-	}
 
 	err = p.broker.commitUpdateValues(settleCtx, p.instanceID, p.target, p.request, p.context, p.logger)
 	if err != nil {
@@ -301,6 +325,7 @@ func (p *updatePhase) settle(ctx context.Context, task *bosh.Task, deployed stri
 	}
 
 	p.broker.auditUpdate(recordCtx, p.instanceID, p.target, p.request, updateOutcomeSucceeded, "", task.ID)
+	p.dropRollbackManifest(settleCtx)
 	p.logger.Info("Instance %s: its update settled as succeeded by BOSH task %d", p.instanceID, task.ID)
 }
 
@@ -311,8 +336,8 @@ func (p *updatePhase) storeDeployedManifest(ctx context.Context, deployed string
 	defer cancel()
 
 	err := p.broker.Vault.Put(recordCtx, p.instanceID+"/manifest", map[string]interface{}{
-		"manifest":  deployed,
-		"stored_at": time.Now().Format(time.RFC3339),
+		manifestField: deployed,
+		"stored_at":   time.Now().Format(time.RFC3339),
 	})
 	if err != nil {
 		p.logger.Error("Instance %s: failed to store the manifest its update deployed: %s", p.instanceID, err)

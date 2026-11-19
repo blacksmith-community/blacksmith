@@ -813,6 +813,9 @@ func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentN
 		description = fmt.Sprintf("The director lists no task for the delete with context ID %s, and the deployment is still there. Retry the deprovision", operation.ContextID)
 	case operationTypeUpdate:
 		description = fmt.Sprintf("The director lists no task for the update's deploy with context ID %s, so the update was not deployed. Send the update again", operation.ContextID)
+		if operation.RollingBack {
+			description = fmt.Sprintf("The director lists no task for the rollback's deploy with context ID %s, so the previous manifest was not redeployed", operation.ContextID)
+		}
 	}
 
 	logger.Error("Instance %s: %s (the outcome was unknown since %s)", instanceID, description, operation.UnknownSince.Format(time.RFC3339))

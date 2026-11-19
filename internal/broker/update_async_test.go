@@ -436,6 +436,32 @@ func TestUpdate_FailureNeverCleansUpDeployment(t *testing.T) {
 			t.Fatalf("a failed update whose task is %s marked a cleanup as owed: %v", state, record)
 		}
 	}
+
+	// A rollback that restores the deployment, and one that fails, never
+	// delete it either.
+	for _, rollbackState := range []string{outcomeTaskDone, outcomeTaskError} {
+		fixture := newUpdateFixture(t)
+		ctx := context.Background()
+
+		fixture.rollbackOn(ctx, t, true)
+
+		script := &rollbackScript{}
+		script.script(fixture, rollbackState)
+
+		instanceID := fixture.startFailingUpdate(ctx, t)
+
+		if answer := fixture.settled(ctx, t, instanceID); answer.State != osbapi.StateFailed {
+			t.Fatalf("an update whose rollback is %s settled as %+v, want failed", rollbackState, answer)
+		}
+
+		if calls := fixture.director.Calls("DeleteDeployment"); len(calls) != 0 {
+			t.Fatalf("an update whose rollback is %s deleted %v", rollbackState, calls)
+		}
+
+		if record := readTaskRecord(ctx, t, fixture.vault, instanceID); record["cleanup_pending"] != nil {
+			t.Fatalf("an update whose rollback is %s marked a cleanup as owed: %v", rollbackState, record)
+		}
+	}
 }
 
 // The change record of a refused update names the platform user the

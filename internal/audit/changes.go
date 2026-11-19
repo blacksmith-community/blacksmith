@@ -84,6 +84,11 @@ type ChangeRecord struct {
 	// commas. Neither holds a value.
 	Reason string `json:"reason,omitempty"`
 	Keys   string `json:"keys,omitempty"`
+	// RollbackTaskID is the task of the deploy that rolled a failed update
+	// back, and Setting is the rollback setting in effect when the update
+	// failed, with where it came from.
+	RollbackTaskID int    `json:"rollback_task_id,omitempty"`
+	Setting        string `json:"setting,omitempty"`
 }
 
 // KV is the part of Vault the store reads and writes.

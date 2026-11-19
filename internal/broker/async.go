@@ -440,8 +440,8 @@ func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan s
 
 	recordCtx, cancelRecord := recordContext(ctx)
 	err = p.broker.Vault.Put(recordCtx, p.instanceID+"/manifest", map[string]interface{}{
-		"manifest":  manifestStr,
-		"stored_at": time.Now().Format(time.RFC3339),
+		manifestField: manifestStr,
+		"stored_at":   time.Now().Format(time.RFC3339),
 	})
 
 	cancelRecord()

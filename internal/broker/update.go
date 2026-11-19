@@ -17,6 +17,7 @@ import (
 	"blacksmith/internal/audit"
 	"blacksmith/internal/manifest"
 	"blacksmith/internal/services"
+	"blacksmith/internal/settings"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
@@ -659,7 +660,24 @@ func (b *Broker) commitUpdateValues(ctx context.Context, instanceID string, targ
 // checks under the claim. It names the parameter keys and never their
 // values, and the actor is the user the request named.
 func (b *Broker) auditUpdate(ctx context.Context, instanceID string, target updateTarget, request updateRequest, outcome, reason string, taskID int) {
-	b.changeStore().Record(ctx, audit.ChangeRecord{
+	b.changeStore().Record(ctx, updateChangeRecord(instanceID, target, request, outcome, reason, taskID))
+}
+
+// auditUpdateFailure writes the change record of an update whose deploy
+// failed. It names the failed deploy's task, the rollback's task when one
+// ran, and the rollback setting in effect at the failure, and never any
+// manifest content.
+func (b *Broker) auditUpdateFailure(ctx context.Context, instanceID string, target updateTarget, request updateRequest, outcome string, rollback internalVault.UpdateRollback) {
+	record := updateChangeRecord(instanceID, target, request, outcome, "", rollback.FailedTaskID)
+	record.RollbackTaskID = rollback.TaskID
+	record.Setting = fmt.Sprintf("%s=%t (%s)", settings.UpdateRollbackKey, rollback.Setting, rollback.SettingSource)
+
+	b.changeStore().Record(ctx, record)
+}
+
+// updateChangeRecord builds the change record of an update.
+func updateChangeRecord(instanceID string, target updateTarget, request updateRequest, outcome, reason string, taskID int) audit.ChangeRecord {
+	return audit.ChangeRecord{
 		Scope:      audit.ScopeInstances,
 		Target:     instanceID,
 		Instance:   instanceID,
@@ -672,7 +690,7 @@ func (b *Broker) auditUpdate(ctx context.Context, instanceID string, target upda
 		New:        request.planID,
 		Keys:       strings.Join(request.changedKeys, ", "),
 		Actor:      request.actor,
-	})
+	}
 }
 
 // originatingActor names the platform user the request's originating

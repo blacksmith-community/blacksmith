@@ -57,9 +57,7 @@ func (p *updatePhase) resolveLostAnswer(ctx context.Context) (*bosh.Task, bool) 
 
 			return &bosh.Task{ID: recorded.TaskID}, true
 		case recorded.State == recordedStateFailed:
-			// The resolver recorded that the director never started the
-			// deploy, so the deployment is as it was and nothing rolls back.
-			p.broker.auditUpdate(context.WithoutCancel(ctx), p.instanceID, p.target, p.request, updateOutcomeFailed, "", 0)
+			p.neverStarted(ctx)
 
 			return nil, false
 		case recorded.State != internalVault.TaskStateOutcomeUnknown:
@@ -89,6 +87,22 @@ func (p *updatePhase) resolveLostAnswer(ctx context.Context) (*bosh.Task, bool) 
 			return nil, false
 		}
 	}
+}
+
+// neverStarted finishes an update whose deploy the resolver found the
+// director never started. For the update's own deploy, the deployment is
+// as it was, so the failure stands and nothing rolls back. For the
+// rollback's deploy, the update's failed deploy is still in place, so the
+// rollback failed.
+func (p *updatePhase) neverStarted(ctx context.Context) {
+	if p.rollback != nil {
+		p.settleRollback(ctx, nil, "")
+
+		return
+	}
+
+	p.broker.auditUpdate(context.WithoutCancel(ctx), p.instanceID, p.target, p.request, updateOutcomeFailed, "", 0)
+	p.dropRollbackManifest(ctx)
 }
 
 // waitForOutcome waits out the gap between two resolver passes, and
