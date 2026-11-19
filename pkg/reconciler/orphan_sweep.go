@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/inflight"
 	vaultpkg "blacksmith/pkg/vault"
 )
 
@@ -272,10 +273,14 @@ func (r *ReconcilerManager) shouldSweepIndexEntry(ctx context.Context, synchroni
 // request lost its answer. It matches vault.TaskStateOutcomeUnknown.
 const taskRecordOutcomeUnknown = "outcome_unknown"
 
+// taskRecordActionUpdate is the action a task record names for an update.
+const taskRecordActionUpdate = "update"
+
 // taskRecordInFlight reports whether the instance's vault task record shows
 // work in flight. A record whose outcome is unknown is in flight whatever
-// its action and age, and for a tombstone too, because only a LastOperation
-// poll settles it. Otherwise only an entry that is not a tombstone is in
+// its action and age, and for a tombstone too, because only a resolver
+// pass settles it. An update that hasn't settled is in flight whatever its
+// age, because it holds its claim until it settles. Otherwise only an entry that is not a tombstone is in
 // flight, when its record describes a provision that is still running:
 // action "provision", a state other than failed, and an update within
 // OrphanSweepMinimumAge. A missing record means nothing is in flight; any
@@ -308,6 +313,12 @@ func (r *ReconcilerManager) taskRecordInFlight(synchronizer *IndexSynchronizer, 
 		contextID, _ := task["context_id"].(string)
 
 		r.logger.Infof("Orphan sweep: keeping %s, the outcome of its %s with context ID %s is unknown", instanceID, action, contextID)
+
+		return true
+	}
+
+	if action == taskRecordActionUpdate && inflight.UpdateInFlight(state) {
+		r.logger.Infof("Orphan sweep: keeping %s, its update is in flight in state %s", instanceID, state)
 
 		return true
 	}

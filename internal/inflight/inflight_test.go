@@ -52,3 +52,26 @@ func TestReasonDoesNotKeepAnOldDeprovision(t *testing.T) {
 		t.Fatalf("an old entry with an old deprovision record was in flight: %s", reason)
 	}
 }
+
+// An old entry whose update hasn't settled is in flight, because the
+// update holds its claim until it settles, and one whose update has
+// settled is not.
+func TestReasonKeepsAnUpdateInFlight(t *testing.T) {
+	t.Parallel()
+
+	old := time.Now().Add(-3 * inflight.MinimumAge)
+	entry := map[string]interface{}{"created": old.Unix()}
+
+	for state, inFlight := range map[string]bool{"initializing": true, "in_progress": true, "succeeded": false, "failed": false, "rollback_failed": false} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+
+			record := map[string]interface{}{"action": "update", "state": state, "updated_at": old.Unix()}
+
+			reason := inflight.Reason(entry, func() (map[string]interface{}, bool, error) { return record, true, nil })
+			if (reason != "") != inFlight {
+				t.Fatalf("an old entry whose update is %s was in flight %q, want %v", state, reason, inFlight)
+			}
+		})
+	}
+}

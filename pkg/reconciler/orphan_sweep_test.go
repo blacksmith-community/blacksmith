@@ -898,3 +898,34 @@ func TestOrphanSweep_KeepsChangesMadeWhileItAsksTheDirector(t *testing.T) {
 		t.Fatalf("expected entry %s, added during the sweep, to survive the sweep's save", addedID)
 	}
 }
+
+// sweepUpdateAction is the action a task record names for an update.
+const sweepUpdateAction = "update"
+
+// The orphan sweep keeps an entry whose old update hasn't settled, since
+// the update holds its claim and may still be deploying or rolling back,
+// and it removes one whose old update has settled.
+func TestOrphanSweep_KeepsEntryWithUpdateInFlight(t *testing.T) {
+	t.Parallel()
+
+	for state, kept := range map[string]bool{"initializing": true, "in_progress": true, "succeeded": false, "failed": false, "rollback_failed": false} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+
+			fixture := newSweepFixture(t, 3*time.Hour)
+
+			err := fixture.vault.Put(sweepZombieID+"/task", map[string]interface{}{
+				"action": sweepUpdateAction, "state": state, "task": 77, "updated_at": time.Now().Add(-3 * time.Hour).Unix(),
+			})
+			if err != nil {
+				t.Fatalf("failed to write task record: %v", err)
+			}
+
+			fixture.manager.RunReconciliation(context.Background())
+
+			if fixture.indexHas(t, sweepZombieID) != kept {
+				t.Fatalf("an old entry whose update is %s was kept %v, want %v", state, !kept, kept)
+			}
+		})
+	}
+}
