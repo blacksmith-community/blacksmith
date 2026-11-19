@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"blacksmith/internal/broker"
+	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/testutil"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -58,6 +59,18 @@ func expectNoBrokerGoroutines() {
 func stopBrokerGoroutines(stopService context.CancelFunc) {
 	stopService()
 	expectNoBrokerGoroutines()
+}
+
+// shortenVaultRetryWaits keeps the retries of the API client of v and cuts
+// the wait between them to a millisecond, so a spec against an unreachable
+// or failing Vault does not wait out the client's backoff of a second or
+// more between tries.
+func shortenVaultRetryWaits(v *internalVault.Vault) {
+	client, err := v.GetAPIClient()
+	ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+	client.SetMinRetryWait(time.Millisecond)
+	client.SetMaxRetryWait(time.Millisecond)
 }
 
 var _ = AfterSuite(func() {

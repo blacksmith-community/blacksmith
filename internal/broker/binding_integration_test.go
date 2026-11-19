@@ -437,6 +437,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 			BeforeEach(func() {
 				previousVault = brokerInstance.Vault
 				brokerInstance.Vault = internalVault.NewWithTimeout("http://127.0.0.1:1", "", true, 100*time.Millisecond)
+				shortenVaultRetryWaits(brokerInstance.Vault)
 			})
 
 			AfterEach(func() {

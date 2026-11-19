@@ -711,6 +711,7 @@ var _ = Describe("LastOperation", func() {
 				}))
 
 				brokerVault = internalVault.New(failing.URL, suite.vault.RootToken, true)
+				shortenVaultRetryWaits(brokerVault)
 				brokerInstance.Vault = brokerVault
 			}
 
