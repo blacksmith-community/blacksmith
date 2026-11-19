@@ -55,8 +55,8 @@ func claimReadFaults() []claimReadFault {
 			return vaultClient.Index(ctx, holder, map[string]interface{}{serviceIDKey: recordedNameService, recordedPlanKey: collidingLongPlan, recordedDeploymentKey: deploymentName})
 		}},
 		{name: "the list of instances", path: claimListPath, failed: "could not list the instances", claim: owing},
-		{name: "the record read", path: "/data/abc/task", failed: "could not read the record of instance", claim: owing},
-		{name: "the request details read", path: "/data/abc/redis-small-x-abc", failed: "failed to read the request details stored under", claim: func(ctx context.Context, vaultClient *internalVault.Vault, holder, deploymentName string) error {
+		{name: "the record read", path: "/data/abc/task", failed: "could not read the record of another instance that can claim deployment redis-small-x-abc", claim: owing},
+		{name: "the request details read", path: "/data/abc/redis-small-x-abc", failed: "could not read the request details another instance stored under deployment redis-small-x-abc", claim: func(ctx context.Context, vaultClient *internalVault.Vault, holder, deploymentName string) error {
 			err := recordFailedProvisionNaming(ctx, vaultClient, holder, "")
 			if err != nil {
 				return err
@@ -70,7 +70,8 @@ func claimReadFaults() []claimReadFault {
 // A read of the claim check that fails answers 500, with nothing written
 // for the instance asked for and nothing deployed or deleted, whether a
 // provision or a delete of an instance the index does not have asked. The
-// answer's description says the claim check failed and which read did.
+// answer's description says the claim check failed and which read did,
+// and it never names the other instance.
 func TestClaimCheck_FailsClosedOnAFailedRead(t *testing.T) {
 	t.Parallel()
 
@@ -102,6 +103,10 @@ func TestClaimCheck_FailsClosedOnAFailedRead(t *testing.T) {
 
 				if status != http.StatusInternalServerError || !strings.Contains(body, claimCheckFailed) || !strings.Contains(body, entry.failed) {
 					t.Fatalf("the %s of %s was answered %d %s, want 500 saying %q and %q", request, intruder, status, body, claimCheckFailed, entry.failed)
+				}
+
+				if named := strings.NewReplacer(name, "", intruder, "").Replace(body); strings.Contains(named, owner) {
+					t.Fatalf("the answer %s names instance %s", body, owner)
 				}
 
 				requireNothingWritten(ctx, t, vaultClient, intruder)

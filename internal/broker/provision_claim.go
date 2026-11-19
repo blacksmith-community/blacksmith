@@ -36,7 +36,7 @@ func (b *Broker) refuseProvisionOverClaimedName(ctx context.Context, instanceID 
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	claimant, where, err := b.nameClaimant(readCtx, instanceID, requested)
+	claimant, where, err := b.nameClaimant(readCtx, instanceID, requested, logger)
 	if err != nil {
 		logger.Error("Refusing provision of instance %s: %s", instanceID, err)
 
@@ -50,13 +50,31 @@ func (b *Broker) refuseProvisionOverClaimedName(ctx context.Context, instanceID 
 	return nil
 }
 
+// errClaimRecordUnread and errClaimDetailsUnread say that a read of
+// another instance's claim on a deployment name failed. The error the
+// claim check returns ends up in the description of the answer, whose
+// reader may not be allowed to know the other instance exists, so it
+// names the deployment and wraps one of these in place of the read's
+// own error, which names the instance. That error and the instance's ID
+// go to the log at Warning.
+var (
+	errClaimRecordUnread  = errors.New("could not read the record of another instance that can claim deployment")
+	errClaimDetailsUnread = errors.New("could not read the request details another instance stored under deployment")
+)
+
+// errRequestDetailsUnread marks the failed read of the request details
+// stored under a deployment name, apart from a failed read of the record.
+var errRequestDetailsUnread = errors.New("failed to read the request details")
+
 // nameClaimant returns the first instance other than instanceID that
 // claims deploymentName, and says where it claims it, or returns "" when
 // no instance does. It reads the index, then lists the instances in Vault
 // and reads the record of each one whose ID can mint the name. A read
-// that fails returns its error, because a claim it would have found
-// cannot be ruled out.
-func (b *Broker) nameClaimant(ctx context.Context, instanceID, deploymentName string) (string, string, error) {
+// that fails returns an error, because a claim it would have found
+// cannot be ruled out. A failed read of another instance's record names
+// only the deployment in the error, and the instance's ID and the cause
+// are logged at Warning.
+func (b *Broker) nameClaimant(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (string, string, error) {
 	idx, err := b.Vault.GetIndex(ctx, "db")
 	if err != nil {
 		return "", "", fmt.Errorf("could not read the index to check whether another instance claims deployment %s: %w", deploymentName, err)
@@ -80,7 +98,14 @@ func (b *Broker) nameClaimant(ctx context.Context, instanceID, deploymentName st
 
 		claims, err := b.recordClaimsName(ctx, otherID, deploymentName)
 		if err != nil {
-			return "", "", fmt.Errorf("could not read the record of instance %s, which can claim deployment %s: %w", otherID, deploymentName, err)
+			logger.Warning("Instance %s can claim deployment %s, and what it holds could not be read: %s", otherID, deploymentName, err)
+
+			unread := errClaimRecordUnread
+			if errors.Is(err, errRequestDetailsUnread) {
+				unread = errClaimDetailsUnread
+			}
+
+			return "", "", fmt.Errorf("%w %s", unread, deploymentName)
 		}
 
 		if claims {
@@ -142,7 +167,7 @@ func (b *Broker) recordClaimsName(ctx context.Context, otherID, deploymentName s
 
 	found, err := b.Vault.Get(ctx, otherID+"/"+deploymentName, &stored)
 	if err != nil {
-		return false, fmt.Errorf("failed to read the request details stored under %s/%s: %w", otherID, deploymentName, err)
+		return false, fmt.Errorf("%w stored under %s/%s: %w", errRequestDetailsUnread, otherID, deploymentName, err)
 	}
 
 	return found, nil

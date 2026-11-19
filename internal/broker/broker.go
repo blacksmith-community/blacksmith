@@ -2179,7 +2179,7 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 
 	// The minted name can be another instance's, and that instance's
 	// deployment is never deleted for this one.
-	claimant, where, err := b.nameClaimant(readCtx, instanceID, deploymentName)
+	claimant, where, err := b.nameClaimant(readCtx, instanceID, deploymentName, logger)
 	if err != nil {
 		logger.Error("Refusing deprovision of instance %s, which has no index entry: %s", instanceID, err)
 
