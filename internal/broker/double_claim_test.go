@@ -1127,6 +1127,40 @@ func TestDeprovision_KeepsADoubleClaimedDeploymentThatReappears(t *testing.T) {
 	}
 }
 
+// A cleanup that reads a record owing nothing drops only the row of a
+// refused cleanup. The row of a refused delete stays while the double
+// claim holds, because only the sweep's check of the claim settles it.
+func TestCleanupFailedDeployment_KeepsTheRowOfARefusedDelete(t *testing.T) {
+	t.Parallel()
+
+	vaultClient, _ := claimFaultVault(t)
+	ctx := context.Background()
+	name := writeTwoLiveClaims(ctx, t, vaultClient)
+
+	director, goneNext, _ := reappearingDirector()
+	deleter := doubleClaimDeprovisioner(ctx, t, director, vaultClient)
+
+	goneNext.Store(true)
+
+	status, body := deleteInstance(ctx, t, deleter, doubleClaimDebtor, collidingShortPlan)
+	if status != http.StatusAccepted {
+		t.Fatalf("the delete of %s was answered %d %s, want 202", doubleClaimDebtor, status, body)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	deleter.WaitForBackground(waitCtx)
+	requireReappearedDeprovisionFailed(ctx, t, deleter, vaultClient, name)
+
+	row := debtorRow(t, deleter)
+
+	// The record is the failed deprovision, which owes no cleanup.
+	deleter.CleanupFailedDeployment(ctx, doubleClaimDebtor, name)
+
+	requireSweptRow(t, deleter, row, true, 1)
+}
+
 // reappearingDirector returns a director that has every deployment, apart
 // from the one read after goneNext is set, which says it is gone, and
 // that counts its deployment reads in reads.

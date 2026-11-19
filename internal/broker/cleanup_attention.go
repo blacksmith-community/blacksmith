@@ -137,6 +137,22 @@ func (b *Broker) forgetCleanupAttention(instanceID string) {
 	b.cleanupAttention.Delete(instanceID)
 }
 
+// forgetCleanupRefusal drops the entry of instanceID only when a refused
+// cleanup noted it. The entry of a refused delete stays, because the
+// sweep settles it by its own check of the double claim, and so does an
+// entry noted after this one was read.
+func (b *Broker) forgetCleanupRefusal(instanceID string) {
+	held, loaded := b.cleanupAttention.Load(instanceID)
+	if !loaded {
+		return
+	}
+
+	row, ok := held.(attentionRow)
+	if ok && row.kind == cleanupRefusal {
+		b.forgetAttentionRow(row)
+	}
+}
+
 // forgetAttentionRow drops row only while it is still the row held for
 // its instance, so a row noted in its place after it was read stays.
 func (b *Broker) forgetAttentionRow(row attentionRow) {

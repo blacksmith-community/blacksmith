@@ -4592,7 +4592,7 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploy
 	}
 
 	if !owed {
-		b.forgetCleanupAttention(instanceID)
+		b.forgetCleanupRefusal(instanceID)
 
 		return
 	}
