@@ -905,8 +905,12 @@ func (b *Broker) readoptIndexedStep(ctx context.Context, operation readoptOperat
 		return b.settleReadoptedTask(ctx, operation, current, logger)
 	case current.Action == operationTypeProvision:
 		return b.recoverProvision(ctx, operation.instanceID, operation.deploymentName, b.adoptReadoptedTask, logger)
-	default:
+	case current.Action == operationTypeDeprovision:
 		return b.recoverDeprovision(ctx, operation.instanceID, operation.deploymentName, b.adoptReadoptedTask, logger)
+	default:
+		// Only a deprovision may be recovered as one, because its recovery
+		// can remove the index entry. Anything else is left as it is.
+		return osbapi.LastOperationResponse{}, fmt.Errorf("%w: instance %s records the action %q with no task, so it is not re-adopted", ErrUnknownRecordedAction, operation.instanceID, current.Action)
 	}
 }
 
@@ -920,8 +924,12 @@ func (b *Broker) settleReadoptedTask(ctx context.Context, operation readoptOpera
 		return osbapi.LastOperationResponse{}, fmt.Errorf("stopped following BOSH task %d: %w", current.TaskID, ctx.Err())
 	}
 
-	if current.Action == operationTypeDeprovision {
+	switch current.Action {
+	case operationTypeDeprovision:
 		return b.handleDeprovisionTask(ctx, operation.instanceID, operation.deploymentName, current.TaskID, logger)
+	case operationTypeProvision:
+	default:
+		return osbapi.LastOperationResponse{}, fmt.Errorf("%w: instance %s records the action %q with task %d, so it is not settled", ErrUnknownRecordedAction, operation.instanceID, current.Action, current.TaskID)
 	}
 
 	if !bosh.IsTaskNotFound(err) {

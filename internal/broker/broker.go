@@ -45,6 +45,7 @@ const (
 	// every last_operation poll, and as the action recorded at <instance>/task.
 	operationTypeProvision   = "provision"
 	operationTypeDeprovision = "deprovision"
+	operationTypeUpdate      = "update"
 
 	// The state TrackProgress records for an operation that failed.
 	recordedStateFailed = "failed"
@@ -109,6 +110,7 @@ var (
 	ErrFailedToDeleteRabbitMQUser            = errors.New("failed to delete RabbitMQ user")
 	ErrAPIURLMustBeString                    = errors.New("api_url must be a string")
 	ErrNotImplemented                        = errors.New("not implemented")
+	ErrUnknownRecordedAction                 = errors.New("the instance's record holds an action the broker doesn't know")
 	ErrGetInstanceNotImplemented             = errors.New("GetInstance not implemented")
 	ErrGetBindingNotImplemented              = errors.New("GetBinding not implemented")
 	ErrCredentialsNotInExpectedFormat        = errors.New("credentials not in expected format")
@@ -809,14 +811,23 @@ func (b *Broker) LastOperation(
 		return osbapi.LastOperationResponse{}, err
 	}
 
-	operation := pollOperation(details.Operation, recorded)
-	logger.Debug("Polling %s of instance %s (recorded action '%s', state '%s', task %d)", operation, instanceID, recorded.Action, recorded.State, recorded.TaskID)
+	operation, err := pollOperation(details.Operation, recorded)
+	if err != nil {
+		logger.Error("Instance %s: %s", instanceID, err)
 
-	if operation == operationTypeDeprovision {
-		return b.deprovisionStatus(ctx, instanceID, deploymentName, recorded, logger)
+		return osbapi.LastOperationResponse{}, err
 	}
 
-	return b.provisionStatus(ctx, instanceID, deploymentName, recorded, logger)
+	logger.Debug("Polling %s of instance %s (recorded action '%s', state '%s', task %d)", operation, instanceID, recorded.Action, recorded.State, recorded.TaskID)
+
+	switch operation {
+	case operationTypeDeprovision:
+		return b.deprovisionStatus(ctx, instanceID, deploymentName, recorded, logger)
+	case operationTypeUpdate:
+		return b.updateStatus(ctx, instanceID, deploymentName, recorded, logger)
+	default:
+		return b.provisionStatus(ctx, instanceID, deploymentName, recorded, logger)
+	}
 }
 
 func (b *Broker) Bind(
@@ -1174,11 +1185,14 @@ func (c *operationClaim) takeRelease() func() {
 
 // operationHolderKind names the guard holder kind of a claim's operation.
 func operationHolderKind(operation string) mutation.HolderKind {
-	if operation == operationTypeDeprovision {
+	switch operation {
+	case operationTypeDeprovision:
 		return mutation.KindDeprovision
+	case operationTypeUpdate:
+		return mutation.KindUpdate
+	default:
+		return mutation.KindProvision
 	}
-
-	return mutation.KindProvision
 }
 
 // releaseOperation frees claim's reservation in the mutation guard, and
@@ -3014,7 +3028,11 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, d
 // plan and the instance ID name when the record names none. When neither
 // names one, it answers in progress without asking.
 func (b *Broker) unknownOutcomeWithoutIndexEntry(ctx context.Context, instanceID string, details osbapi.LastOperationRequest, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	polled := pollOperation(details.Operation, recorded)
+	polled, err := pollOperation(details.Operation, recorded)
+	if err != nil {
+		return osbapi.LastOperationResponse{}, err
+	}
+
 	if polled != recorded.Action {
 		return unknownOutcomeOfOtherOperation(instanceID, polled, recorded, logger), nil
 	}
@@ -3990,18 +4008,24 @@ func parseRecordedOperation(instanceID, state string, taskID int, task map[strin
 // pollOperation picks the operation a last_operation poll asks about. The
 // operation data the broker returned when it accepted the request wins. A poll
 // without it, such as one for a request accepted before the broker returned
-// operation data, falls back to the action the broker last recorded.
-func pollOperation(requested string, recorded recordedOperation) string {
+// operation data, falls back to the action the broker last recorded, and a
+// record with no action is polled as a provision. A record that holds an
+// action the broker doesn't know is an error, so no poll settles it as
+// something it isn't.
+func pollOperation(requested string, recorded recordedOperation) (string, error) {
 	switch requested {
-	case operationTypeProvision, operationTypeDeprovision:
-		return requested
+	case operationTypeProvision, operationTypeDeprovision, operationTypeUpdate:
+		return requested, nil
 	}
 
-	if recorded.Action == operationTypeDeprovision {
-		return operationTypeDeprovision
+	switch recorded.Action {
+	case operationTypeProvision, operationTypeDeprovision, operationTypeUpdate:
+		return recorded.Action, nil
+	case "":
+		return operationTypeProvision, nil
 	}
 
-	return operationTypeProvision
+	return "", fmt.Errorf("%w: the record holds the action %q, so the poll changes nothing", ErrUnknownRecordedAction, recorded.Action)
 }
 
 // provisionStatus answers a provision poll from the provision the broker

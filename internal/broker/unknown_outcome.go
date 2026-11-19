@@ -636,10 +636,15 @@ func (b *Broker) followFoundTask(pollCtx, ctx context.Context, instanceID, deplo
 		err      error
 	)
 
-	if operation.Action == operationTypeDeprovision {
+	switch operation.Action {
+	case operationTypeDeprovision:
 		response, err = b.handleDeprovisionTask(ctx, instanceID, deploymentName, finding.taskID, logger)
-	} else {
+	case operationTypeProvision:
 		response, err = b.handleProvisionTaskCleaningUpOn(ctx, pollCtx, instanceID, deploymentName, finding.taskID, logger)
+	default:
+		logger.Error("Instance %s: task %d was found for the %q with context ID %s, which no settle path handles here, so it is recorded and left unsettled", instanceID, finding.taskID, operation.Action, operation.ContextID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: description}, true
 	}
 
 	if err != nil {
