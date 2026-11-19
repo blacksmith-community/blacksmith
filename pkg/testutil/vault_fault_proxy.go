@@ -79,6 +79,16 @@ func (p *VaultFaultProxy) FailReads(pathContains string, status int, message str
 	p.rules = append(p.rules, &faultRule{pathContains: pathContains, status: status, message: message, remaining: times})
 }
 
+// FailReadsAfter lets the next skip reads whose path contains pathContains
+// through, and then fails the next times of them as FailReads does. A
+// negative times fails every matching read after the skipped ones.
+func (p *VaultFaultProxy) FailReadsAfter(pathContains string, skip, status int, message string, times int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.rules = append(p.rules, &faultRule{pathContains: pathContains, status: status, message: message, remaining: times, skip: skip})
+}
+
 // FailWrites makes the next times writes and deletes whose path contains
 // pathContains answer with status and a Vault error body carrying message. A
 // negative times fails every matching write. The failed requests still count
