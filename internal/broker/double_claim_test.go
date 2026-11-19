@@ -2,6 +2,7 @@ package broker_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -337,5 +338,201 @@ func runDoubleClaimStep(ctx context.Context, t *testing.T, refuser *broker.Broke
 	status, body := deleteInstance(ctx, t, refuser, doubleClaimDebtor, collidingShortPlan)
 	if status != http.StatusInternalServerError {
 		t.Fatalf("the delete of %s was answered %d %s, want 500", doubleClaimDebtor, status, body)
+	}
+}
+
+// indexDebtor indexes x-abc under plan redis-small with the name
+// redis-small-x-abc, which abc's entry names as well, as instances named
+// before the claim check were indexed.
+func indexDebtor(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault, name string) {
+	t.Helper()
+
+	err := vaultClient.Index(ctx, doubleClaimDebtor, map[string]interface{}{
+		serviceIDKey: recordedNameService, recordedPlanKey: collidingShortPlan, recordedDeploymentKey: name,
+		createdAtKey: time.Now().Add(-time.Hour).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("failed to index %s: %v", doubleClaimDebtor, err)
+	}
+}
+
+// doubleClaimDeprovisioner returns a broker over director and vaultClient
+// that can accept a deprovision, as the production broker can, with a
+// service context that ends with the spec.
+func doubleClaimDeprovisioner(ctx context.Context, t *testing.T, director *testutil.ScriptedBOSHDirector, vaultClient *internalVault.Vault) *broker.Broker {
+	t.Helper()
+
+	deprovisioner := cleanupGuardBroker(director, vaultClient, collidingShortPlan, collidingLongPlan)
+	deprovisioner.Shield = &shield.NoopClient{}
+	deprovisioner.Config = &config.Config{}
+	deprovisioner.Guard = mutation.NewGuard(time.Now)
+
+	serviceCtx, stopService := context.WithCancel(context.WithoutCancel(ctx))
+	t.Cleanup(stopService)
+
+	deprovisioner.ServiceContext = serviceCtx
+
+	return deprovisioner
+}
+
+// indexedDoubleClaim is a delete of the indexed instance asked, while
+// other claims the deployment it would delete, and what it must leave.
+// write writes the claims and returns the deployment name. owes says the
+// record of asked owes the cleanup of that name. A read of failPath fails
+// after failSkip reads that pass. row is the reason the overview's row
+// must give, and no row is wanted when it is empty.
+type indexedDoubleClaim struct {
+	name        string
+	asked       string
+	other       string
+	write       func(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault) string
+	owes        bool
+	failPath    string
+	failSkip    int
+	description string
+	row         string
+}
+
+// writeIndexedDoubleClaim writes the double claim of writeDoubleClaim and
+// indexes x-abc with the name too.
+func writeIndexedDoubleClaim(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault) string {
+	t.Helper()
+
+	name := writeDoubleClaim(ctx, t, vaultClient)
+	indexDebtor(ctx, t, vaultClient, name)
+
+	return name
+}
+
+// writeTwoLiveClaims indexes abc and x-abc with one name, and writes no
+// record for either.
+func writeTwoLiveClaims(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault) string {
+	t.Helper()
+
+	name := indexDoubleClaimOwner(ctx, t, vaultClient)
+	indexDebtor(ctx, t, vaultClient, name)
+
+	return name
+}
+
+// writeRecordedOwnerClaim indexes x-abc with the name, and has abc claim it
+// only through its record, which owes the cleanup of the name.
+func writeRecordedOwnerClaim(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault) string {
+	t.Helper()
+
+	name := collidingLongPlan + "-" + doubleClaimOwner
+
+	err := recordFailedMintedProvision(ctx, vaultClient, doubleClaimOwner, collidingLongPlan, name)
+	if err != nil {
+		t.Fatalf("failed to record the claim of %s: %v", doubleClaimOwner, err)
+	}
+
+	indexDebtor(ctx, t, vaultClient, name)
+
+	return name
+}
+
+func indexedDoubleClaims() []indexedDoubleClaim {
+	const (
+		claimedTwice = "two service instances claim deployment redis-small-x-abc"
+		refusedRow   = "The platform's delete of this instance was refused, because instance %s also claims deployment redis-small-x-abc, through its index entry"
+		refusedCheck = claimCheckFailed + ", so the deprovision of instance x-abc was refused: "
+	)
+
+	return []indexedDoubleClaim{
+		{
+			name: "its own record owes the cleanup of the name", asked: doubleClaimDebtor, other: doubleClaimOwner, owes: true,
+			write: writeIndexedDoubleClaim, description: claimedTwice, row: fmt.Sprintf(refusedRow, doubleClaimOwner),
+		},
+		{
+			name: "two live instances name it", asked: doubleClaimDebtor, other: doubleClaimOwner,
+			write: writeTwoLiveClaims, description: claimedTwice, row: fmt.Sprintf(refusedRow, doubleClaimOwner),
+		},
+		{
+			name: "the other of two live instances is deleted", asked: doubleClaimOwner, other: doubleClaimDebtor,
+			write: writeTwoLiveClaims, description: claimedTwice, row: fmt.Sprintf(refusedRow, doubleClaimDebtor),
+		},
+		{
+			// The delete reads the index three times before the claim
+			// check, so the fourth read is the claim check's own.
+			name: "the index read of the claim check fails", asked: doubleClaimDebtor, other: doubleClaimOwner, owes: true,
+			write: writeIndexedDoubleClaim, failPath: "/data/db", failSkip: 3,
+			description: refusedCheck + "could not read the index",
+		},
+		{
+			name: "the claim check cannot read the other record", asked: doubleClaimDebtor, other: doubleClaimOwner,
+			write: writeRecordedOwnerClaim, failPath: "/data/" + doubleClaimOwner + "/task",
+			description: refusedCheck + "could not read the record of another instance that can claim deployment redis-small-x-abc",
+		},
+	}
+}
+
+// A delete of an indexed instance never deletes a deployment that another
+// instance claims too, since nothing shows which of the two it belongs
+// to. That holds for an instance whose own record owes the cleanup of the
+// name, for two live instances whose entries both name it, and for the
+// delete of either one. The delete is answered 500 with a description
+// that names the double claim and not the other instance, nothing is
+// written or deleted, and the overview lists the instance asked for with
+// a reason that says the platform's delete was refused. When the claim
+// check cannot read what it needs, the delete is answered 500 with
+// nothing written or deleted.
+func TestDeprovision_RefusesAnIndexedInstanceWhoseNameAnotherClaims(t *testing.T) {
+	t.Parallel()
+
+	for _, entry := range indexedDoubleClaims() {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			vaultClient, proxy := claimFaultVault(t)
+			ctx := context.Background()
+			name := entry.write(ctx, t, vaultClient)
+
+			if entry.failPath != "" {
+				proxy.FailReadsAfter(entry.failPath, entry.failSkip, http.StatusForbidden, "permission denied", 1)
+			}
+
+			director := cleanupGuardDirector()
+			deprovisioner := doubleClaimDeprovisioner(ctx, t, director, vaultClient)
+
+			written := len(proxy.Writes())
+
+			status, body := deleteInstance(ctx, t, deprovisioner, entry.asked, collidingShortPlan)
+			if status != http.StatusInternalServerError || !strings.Contains(body, entry.description) {
+				t.Fatalf("the delete of %s was answered %d %s, want 500 saying %q", entry.asked, status, body, entry.description)
+			}
+
+			requireNoOtherInstanceNamed(t, body, name, entry.asked, entry.other)
+
+			if writes := proxy.Writes()[written:]; len(writes) != 0 {
+				t.Fatalf("the refused delete wrote %v", writes)
+			}
+
+			if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+				t.Fatalf("the delete of %s deleted %v", entry.asked, deleted)
+			}
+
+			if entry.owes {
+				requireCleanupStillOwed(ctx, t, vaultClient, entry.asked)
+			}
+
+			requireDeleteRow(t, deprovisioner, entry.asked, name, entry.row)
+		})
+	}
+}
+
+// requireDeleteRow checks that the overview of b lists instanceID for
+// deploymentName with a reason that says reason, or lists nothing when
+// reason is empty.
+func requireDeleteRow(t *testing.T, b *broker.Broker, instanceID, deploymentName, reason string) {
+	t.Helper()
+
+	attention := b.CleanupAttention()
+
+	switch {
+	case reason == "" && len(attention) != 0:
+		t.Fatalf("the refused delete left %+v for an operator, want nothing", attention)
+	case reason != "" && (len(attention) != 1 || attention[0].InstanceID != instanceID || attention[0].DeploymentName != deploymentName || !strings.Contains(attention[0].Reason, reason)):
+		t.Fatalf("the refused delete left %+v for an operator, want one row for %s that says %q", attention, instanceID, reason)
 	}
 }

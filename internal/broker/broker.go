@@ -595,7 +595,9 @@ func (b *Broker) Deprovision(
 	}
 
 	// An instance the index does not have is gone only when the director
-	// confirms its deployment is, and then nothing is recorded for it.
+	// confirms its deployment is, and then nothing is recorded for it. No
+	// delete, of an indexed instance or not, goes on while another
+	// instance claims the deployment it would delete.
 	err = b.refuseDeleteOfGoneInstance(ctx, instanceID, details, superseded, logger)
 	if err != nil {
 		return osbapi.DeprovisionResponse{}, false, err
@@ -2145,18 +2147,28 @@ func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, 
 // but no index entry to delete it through.
 var errInstanceUnindexed = errors.New("instance has no index entry")
 
-// refuseDeleteOfGoneInstance answers a deprovision of an instance the index
-// does not have. The instance is gone when another instance claims the
-// deployment named from the request's plan and the instance ID, as
-// nameClaimant decides, or when the director confirms that deployment is
-// gone, and the request then answers 410 Gone with nothing recorded. The
-// one exception is the instance's own record owing the cleanup of that
-// claimed name, which answerDeleteOfClaimedName fails. A claim that
-// cannot be checked fails the request with nothing recorded. A deployment that
-// still exists gets the running-task check that rejectIfOperationInProgress
-// gives an indexed instance, and with no task running it is left to the
-// deprovision, which records the request and deletes it. An indexed instance
-// is left to the deprovision as well.
+// refuseDeleteOfGoneInstance checks the deployment a deprovision would
+// delete before anything is recorded or deleted. For an instance the
+// index has, that is the deployment its entry names, and for one it does
+// not have, the deployment named from the request's plan and the instance
+// ID. Either way, nameClaimant checks that no other instance claims it,
+// and a claim that cannot be checked fails the request with nothing
+// recorded.
+//
+// An indexed instance whose deployment another instance claims too is
+// refused by refuseDeleteOfDoubleClaim, because nothing shows which of the
+// two the deployment belongs to, and the delete would take it from the
+// other one. With no other claim, it is left to the deprovision.
+//
+// An instance the index does not have is gone when another instance
+// claims the deployment, or when the director confirms that deployment
+// is gone, and the request then answers 410 Gone with nothing recorded.
+// The one exception is the instance's own record owing the cleanup of
+// that claimed name, which answerDeleteOfClaimedName fails. A deployment
+// that still exists gets the running-task check that
+// rejectIfOperationInProgress gives an indexed instance, and with no task
+// running it is left to the deprovision, which records the request and
+// deletes it.
 //
 // When the deprovision would replace an unknown provision, and the director
 // confirms the deployment is gone, the unknown provision is recorded as a
@@ -2166,26 +2178,33 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	_, exists, err := b.Vault.FindInstance(readCtx, instanceID)
+	instance, exists, err := b.Vault.FindInstance(readCtx, instanceID)
 	if err != nil {
 		logger.Error("unable to look instance %s up in the vault index: %s", instanceID, err)
 
 		return fmt.Errorf("failed to find instance in vault: %w", err)
 	}
 
-	if exists {
-		return nil
+	deploymentName := vaultPkg.MintDeploymentName(details.PlanID, instanceID)
+	if exists && instance != nil {
+		deploymentName = instance.DeploymentNameFor(instanceID)
 	}
 
-	deploymentName := vaultPkg.MintDeploymentName(details.PlanID, instanceID)
-
-	// The minted name can be another instance's, and that instance's
+	// The name can be another instance's too, and that instance's
 	// deployment is never deleted for this one.
 	claimant, where, err := b.nameClaimant(readCtx, instanceID, deploymentName, logger)
 	if err != nil {
-		logger.Error("Refusing deprovision of instance %s, which has no index entry: %s", instanceID, err)
+		logger.Error("Refusing deprovision of instance %s: %s", instanceID, err)
 
 		return fmt.Errorf("could not check whether another instance claims deployment %s, so the deprovision of instance %s was refused: %w", deploymentName, instanceID, err)
+	}
+
+	if exists {
+		if claimant == "" {
+			return nil
+		}
+
+		return b.refuseDeleteOfDoubleClaim(instanceID, deploymentName, claimant, where, logger)
 	}
 
 	if claimant != "" {
@@ -2211,8 +2230,9 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 	return nil
 }
 
-// errNameClaimedTwice fails the delete of an instance whose own record
-// owes the cleanup of a deployment name that another instance claims too.
+// errNameClaimedTwice fails the delete of an instance that claims a
+// deployment name another instance claims too, through its index entry or
+// through its own record owing the cleanup of that name.
 var errNameClaimedTwice = errors.New("two service instances claim deployment")
 
 // answerDeleteOfClaimedName answers the delete of instanceID, which the
@@ -2222,10 +2242,8 @@ var errNameClaimedTwice = errors.New("two service instances claim deployment")
 // the name as well, by owing the cleanup of a failed provision under it.
 // Then two instances claim one name. A 410 would tell the platform the
 // deployment is the other instance's while the owed cleanup still
-// deletes it for this one, so the delete fails, nothing is written, and
-// the instance is listed under Attention required for an operator to
-// settle which instance the deployment belongs to, unless a row already
-// lists it. A record that cannot be read fails the delete too.
+// deletes it for this one, so refuseDeleteOfDoubleClaim fails the delete.
+// A record that cannot be read fails the delete too.
 func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, deploymentName, claimant, where string, logger logger.Logger) error {
 	owes, err := b.recordClaimsName(ctx, instanceID, deploymentName)
 	if err != nil {
@@ -2236,24 +2254,34 @@ func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, depl
 	}
 
 	if owes {
-		// The delete leaves a row only when none is held, so it never
-		// replaces the refusal the sweep's cleanup gives, and a delete and
-		// a cleanup that take turns leave one row with one time.
-		reason := deleteDoubleClaimReason(claimant, deploymentName, where)
-		if b.holdCleanupAttention(instanceID, deploymentName, reason) {
-			logger.Error("Refusing deprovision of instance %s, which has no index entry: %s", instanceID, reason)
-		} else {
-			logger.Warning("Still refusing deprovision of instance %s, which the overview already lists: %s", instanceID, reason)
-		}
-
-		return fmt.Errorf("%w %s. The failed provision of instance %s still owes the cleanup of that deployment, and another service instance claims it too, so the deprovision is refused until an operator settles which instance it belongs to",
-			errNameClaimedTwice, deploymentName, instanceID)
+		return b.refuseDeleteOfDoubleClaim(instanceID, deploymentName, claimant, where, logger)
 	}
 
 	logger.Warning("Answering the deprovision of instance %s, which has no index entry, with 410 Gone: instance %s claims deployment %s through %s, so nothing of this instance exists under that name",
 		instanceID, claimant, deploymentName, where)
 
 	return fmt.Errorf("%w: instance %s has no index entry, and deployment %s belongs to another service instance", osbapi.ErrGoneError, instanceID, deploymentName)
+}
+
+// refuseDeleteOfDoubleClaim fails the delete of instanceID, which claims
+// deploymentName while claimant claims it too, through where, with
+// nothing written and nothing deleted. The description names the
+// deployment and not the other instance, whose ID only the log and the
+// overview show. The instance is listed under Attention required for an
+// operator to settle which instance the deployment belongs to. The
+// delete leaves a row only when none is held, so it never replaces the
+// refusal the sweep's cleanup gives, and a delete and a cleanup that take
+// turns leave one row with one time.
+func (b *Broker) refuseDeleteOfDoubleClaim(instanceID, deploymentName, claimant, where string, logger logger.Logger) error {
+	reason := deleteDoubleClaimReason(claimant, deploymentName, where)
+	if b.holdCleanupAttention(instanceID, deploymentName, reason) {
+		logger.Error("Refusing deprovision of instance %s: %s", instanceID, reason)
+	} else {
+		logger.Warning("Still refusing deprovision of instance %s, which the overview already lists: %s", instanceID, reason)
+	}
+
+	return fmt.Errorf("%w %s, so the deprovision of instance %s is refused until an operator settles which instance the deployment belongs to",
+		errNameClaimedTwice, deploymentName, instanceID)
 }
 
 // settleSupersededProvisionAsDeleted records the unknown provision a
