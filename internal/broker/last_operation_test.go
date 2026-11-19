@@ -494,6 +494,12 @@ var _ = Describe("LastOperation", func() {
 
 			Expect(poll(operation).State).To(Equal(osbapi.StateInProgress))
 			Expect(indexEntryExists()).To(BeTrue())
+
+			// The deprovision still waits out the production backoff before
+			// its second attempt, so the poll above ran during that wait.
+			// Ending the service context ends the wait, and the teardown
+			// does not sit through the rest of it.
+			stopService()
 		})
 
 		It("records the delete task the director's answer names even when a newer task runs on the deployment", func() {

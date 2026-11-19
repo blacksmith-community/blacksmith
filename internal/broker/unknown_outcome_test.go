@@ -834,6 +834,10 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		}
 
 		It("when the deployment is gone by the retry after a failed delete", func() {
+			// Nothing here depends on how long the broker waits before the
+			// retry, so the spec does not wait out the production backoff.
+			cleanups = append(cleanups, broker.SetDeleteRetryBackoff(10*time.Millisecond))
+
 			indexInstance()
 
 			cleaner := useCleaner()
