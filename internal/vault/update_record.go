@@ -38,6 +38,9 @@ type StagedUpdate struct {
 	// carries, so the change record of an update that settles after a
 	// restart still names who asked for it.
 	Actor string `json:"actor,omitempty"`
+	// Rollback says what the broker did when the update's deploy failed,
+	// and is nil until then.
+	Rollback *UpdateRollback `json:"rollback,omitempty"`
 }
 
 // ErrCleanupOwed is returned when an update would replace the record of a

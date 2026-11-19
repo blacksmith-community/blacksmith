@@ -38,7 +38,7 @@ func recordSucceededMintedProvision(ctx context.Context, client *vault.Vault, in
 
 func stagedUpdate() vault.StagedUpdate {
 	return vault.StagedUpdate{
-		Fingerprint: "digest", PreviousPlanID: updatePlan, PlanID: updatePlan,
+		Fingerprint: stagedDigest, PreviousPlanID: updatePlan, PlanID: updatePlan,
 		Parameters: map[string]interface{}{"maxmemory-policy": "allkeys-lru"},
 	}
 }
@@ -72,7 +72,7 @@ func TestTrackUpdateAccepted_CarriesTheMintedDeploymentForward(t *testing.T) {
 		}
 
 		staged, _ := record[vault.TaskRecordUpdateKey].(map[string]interface{})
-		if staged["fingerprint"] != "digest" || staged["plan_id"] != updatePlan {
+		if staged["fingerprint"] != stagedDigest || staged["plan_id"] != updatePlan {
 			t.Fatalf("%s: the staged update is %v", step, staged)
 		}
 	}

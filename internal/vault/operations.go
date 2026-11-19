@@ -279,10 +279,11 @@ func holdingUnsettled(instanceID, action, contextID string, taskID int) func(cur
 }
 
 // settledOrUnknown reports whether a record in state is settled, or holds
-// an outcome only the unknown-outcome resolver may settle.
+// an outcome only the unknown-outcome resolver may settle. An update whose
+// rollback failed is settled too.
 func settledOrUnknown(state string) bool {
 	switch state {
-	case eventStateFailed, TaskStateSucceeded, TaskStateDeleted, TaskStateOutcomeUnknown:
+	case eventStateFailed, TaskStateSucceeded, TaskStateDeleted, TaskStateOutcomeUnknown, TaskStateRollbackFailed:
 		return true
 	}
 
