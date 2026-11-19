@@ -191,14 +191,15 @@ func TestDrainLogsWhatItCouldNotSave(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
-	started := time.Now()
-
 	if store.Drain(ctx) {
 		t.Fatal("Drain reported the queue empty while Vault still held the write")
 	}
 
-	if waited := time.Since(started); waited < 50*time.Millisecond {
-		t.Fatalf("Drain returned after %v, before its context ended", waited)
+	// The write is held for good, so Drain can return only because its
+	// context ended. The context's own state shows that, where a time
+	// measured after the deadline was set can read under 50 ms.
+	if ctx.Err() == nil {
+		t.Fatal("Drain returned before its context ended")
 	}
 
 	text := log.Text()
