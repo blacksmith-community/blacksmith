@@ -115,6 +115,12 @@ func (b *Broker) SetUpdateCredentialsBound(d time.Duration) {
 	b.updateCredentialsBound = d
 }
 
+// SetUpdateManifestBound replaces the bound on re-adoption's read of the
+// manifest an update's succeeded task deployed.
+func (b *Broker) SetUpdateManifestBound(d time.Duration) {
+	b.updateManifestBound = d
+}
+
 // SetCredentialSweepPassTimeout replaces the deadline of one sweep pass.
 func (b *Broker) SetCredentialSweepPassTimeout(timeout time.Duration) {
 	b.credentialSweep.mu.Lock()

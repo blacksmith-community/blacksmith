@@ -265,6 +265,10 @@ type Broker struct {
 	// updateCredentialsTimeout as the bound on the credential refresh
 	// after an update's deploy succeeded.
 	updateCredentialsBound time.Duration
+	// updateManifestBound, when positive, replaces updateManifestTimeout
+	// as the bound on re-adoption's read of the manifest an update's
+	// succeeded task deployed.
+	updateManifestBound time.Duration
 
 	// unknownOutcomePasses holds an *unknownOutcomePass for each instance
 	// whose unknown outcome a poll has tried to settle.

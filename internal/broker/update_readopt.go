@@ -235,7 +235,13 @@ func (p *updatePhase) resume(ctx context.Context) bool {
 	// succeeded deploy needs the deployed manifest.
 	if finished.State == taskStateDone && p.rollback == nil {
 		deployed, err = p.liveManifest(ctx)
-		if err != nil {
+
+		switch {
+		case errors.Is(err, errDeployedManifestUnread):
+			// The deployment runs the update's values, so they are
+			// committed, and the stored manifest stays as it was.
+			p.logger.Error("Instance %s: its update's task %d succeeded, and the deployed manifest could not be read, so the update's values are committed and the stored manifest is kept: %s", p.instanceID, taskID, err)
+		case err != nil:
 			p.logger.Warning("Instance %s: its update's task %d succeeded, and the deployed manifest could not be read, so the next start settles it: %s", p.instanceID, taskID, err)
 
 			return false
@@ -265,12 +271,37 @@ func (p *updatePhase) resolveReadoptedTask(ctx context.Context) (int, bool) {
 	return task.ID, true
 }
 
+// updateManifestTimeout bounds re-adoption's read of the manifest an
+// update's succeeded task deployed. The task has ended, so the claim no
+// longer guards a running deploy, and a deployment the director no longer
+// answers for would otherwise keep the claim for good.
+const updateManifestTimeout = 10 * time.Minute
+
+// errDeployedManifestUnread reports that the manifest an update's
+// succeeded task deployed could not be read within its bound.
+var errDeployedManifestUnread = errors.New("the deployed manifest could not be read within its bound")
+
+// updateManifestWait is the bound on re-adoption's read of the manifest
+// an update's succeeded task deployed.
+func (b *Broker) updateManifestWait() time.Duration {
+	if b.updateManifestBound > 0 {
+		return b.updateManifestBound
+	}
+
+	return updateManifestTimeout
+}
+
 // liveManifest reads the manifest the director holds for the update's
 // deployment, which is the one the update deployed once its task
-// succeeded. A failed read is tried again after each wait until ctx ends.
+// succeeded. A failed read is tried again after each wait, for up to
+// updateManifestTimeout, and then it returns errDeployedManifestUnread.
+// It returns another error when ctx ends first.
 func (p *updatePhase) liveManifest(ctx context.Context) (string, error) {
+	readCtx, cancel := context.WithTimeout(ctx, p.broker.updateManifestWait())
+	defer cancel()
+
 	for {
-		live, err := p.broker.BOSH.GetDeployment(ctx, p.target.deployment)
+		live, err := p.broker.BOSH.GetDeployment(readCtx, p.target.deployment)
 		if err == nil && live == nil {
 			err = fmt.Errorf("%w: deployment %s", errNoLiveManifest, p.target.deployment)
 		}
@@ -281,8 +312,12 @@ func (p *updatePhase) liveManifest(ctx context.Context) (string, error) {
 
 		p.logger.Warning("Instance %s: the manifest of deployment %s could not be read: %s", p.instanceID, p.target.deployment, err)
 
-		if !readoptWait(ctx) {
-			return "", fmt.Errorf("failed to read the manifest of deployment %s: %w", p.target.deployment, err)
+		if !readoptWait(readCtx) {
+			if ctx.Err() != nil {
+				return "", fmt.Errorf("failed to read the manifest of deployment %s: %w", p.target.deployment, ctx.Err())
+			}
+
+			return "", fmt.Errorf("%w: deployment %s: %w", errDeployedManifestUnread, p.target.deployment, err)
 		}
 	}
 }

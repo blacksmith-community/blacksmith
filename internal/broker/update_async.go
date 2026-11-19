@@ -622,7 +622,11 @@ func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed stri
 		return
 	}
 
-	p.storeDeployedManifest(settleCtx, deployed)
+	// Re-adoption commits without the deployed manifest when the
+	// director never answered for it, and the stored one is kept then.
+	if deployed != "" {
+		p.storeDeployedManifest(settleCtx, deployed)
+	}
 
 	credentialsCtx, cancelCredentials := context.WithTimeout(settleCtx, p.broker.updateCredentialsWait())
 	err = p.broker.processCredentials(credentialsCtx, p.instanceID, osbapi.ProvisionRequest{ServiceID: p.target.instance.ServiceID, PlanID: p.plan.ID}, p.logger)
