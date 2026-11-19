@@ -2158,13 +2158,16 @@ var errInstanceUnindexed = errors.New("instance has no index entry")
 // An indexed instance whose deployment another instance claims too is
 // refused by refuseDeleteOfDoubleClaim, because nothing shows which of the
 // two the deployment belongs to, and the delete would take it from the
-// other one. With no other claim, it is left to the deprovision.
+// other one. Once the director says that deployment is gone, the double
+// claim takes nothing from anyone, and the instance is left to the
+// deprovision, as it is with no other claim.
 //
 // An instance the index does not have is gone when another instance
 // claims the deployment, or when the director confirms that deployment
 // is gone, and the request then answers 410 Gone with nothing recorded.
 // The one exception is the instance's own record owing the cleanup of
-// that claimed name, which answerDeleteOfClaimedName fails. A deployment
+// that claimed name, which answerDeleteOfClaimedName fails while the
+// director may still have the deployment. A deployment
 // that still exists gets the running-task check that
 // rejectIfOperationInProgress gives an indexed instance, and with no task
 // running it is left to the deprovision, which records the request and
@@ -2204,7 +2207,7 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 			return nil
 		}
 
-		return b.refuseDeleteOfDoubleClaim(instanceID, deploymentName, claimant, where, logger)
+		return b.refuseDeleteOfDoubleClaim(readCtx, instanceID, deploymentName, claimant, where, logger)
 	}
 
 	if claimant != "" {
@@ -2242,8 +2245,11 @@ var errNameClaimedTwice = errors.New("two service instances claim deployment")
 // the name as well, by owing the cleanup of a failed provision under it.
 // Then two instances claim one name. A 410 would tell the platform the
 // deployment is the other instance's while the owed cleanup still
-// deletes it for this one, so refuseDeleteOfDoubleClaim fails the delete.
-// A record that cannot be read fails the delete too.
+// deletes it for this one, so refuseDeleteOfDoubleClaim fails the delete,
+// unless the director says the deployment is gone. Then nothing of the
+// instance exists under the name either, and the delete answers 410 Gone
+// with nothing written, as the owed cleanup has nothing left to delete. A
+// record that cannot be read fails the delete too.
 func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, deploymentName, claimant, where string, logger logger.Logger) error {
 	owes, err := b.recordClaimsName(ctx, instanceID, deploymentName)
 	if err != nil {
@@ -2254,7 +2260,12 @@ func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, depl
 	}
 
 	if owes {
-		return b.refuseDeleteOfDoubleClaim(instanceID, deploymentName, claimant, where, logger)
+		err = b.refuseDeleteOfDoubleClaim(ctx, instanceID, deploymentName, claimant, where, logger)
+		if err != nil {
+			return err
+		}
+
+		return fmt.Errorf("%w: instance %s has no index entry, and deployment %s does not exist", osbapi.ErrGoneError, instanceID, deploymentName)
 	}
 
 	logger.Warning("Answering the deprovision of instance %s, which has no index entry, with 410 Gone: instance %s claims deployment %s through %s, so nothing of this instance exists under that name",
@@ -2272,7 +2283,28 @@ func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, depl
 // delete leaves a row only when none is held, so it never replaces the
 // refusal the sweep's cleanup gives, and a delete and a cleanup that take
 // turns leave one row with one time.
-func (b *Broker) refuseDeleteOfDoubleClaim(instanceID, deploymentName, claimant, where string, logger logger.Logger) error {
+//
+// It asks the director first, since that only reads. When the director
+// says the deployment is gone, the double claim can take nothing from
+// either instance, so it returns nil and leaves the delete to its caller,
+// with nothing noted. When the director cannot say, it fails the delete
+// with nothing written or noted, because the double claim may still hold.
+func (b *Broker) refuseDeleteOfDoubleClaim(ctx context.Context, instanceID, deploymentName, claimant, where string, logger logger.Logger) error {
+	gone, err := b.doubleClaimedDeploymentGone(ctx, deploymentName)
+	if err != nil {
+		logger.Error("Refusing deprovision of instance %s: instance %s claims deployment %s too, through %s, and the director could not say whether it exists: %s",
+			instanceID, claimant, deploymentName, where, err)
+
+		return fmt.Errorf("%w %s, and the director could not say whether it exists, so the deprovision of instance %s was refused: %w", errNameClaimedTwice, deploymentName, instanceID, err)
+	}
+
+	if gone {
+		logger.Info("Instance %s claims deployment %s too, through %s, and the director has no such deployment, so the double claim does not hold back the deprovision of instance %s",
+			claimant, deploymentName, where, instanceID)
+
+		return nil
+	}
+
 	reason := deleteDoubleClaimReason(claimant, deploymentName, where)
 	if b.holdCleanupAttention(instanceID, deploymentName, reason) {
 		logger.Error("Refusing deprovision of instance %s: %s", instanceID, reason)
@@ -2282,6 +2314,24 @@ func (b *Broker) refuseDeleteOfDoubleClaim(instanceID, deploymentName, claimant,
 
 	return fmt.Errorf("%w %s, so the deprovision of instance %s is refused until an operator settles which instance the deployment belongs to",
 		errNameClaimedTwice, deploymentName, instanceID)
+}
+
+// doubleClaimedDeploymentGone asks the director whether deploymentName,
+// which two instances claim, is gone. It reports true when the director
+// answers with its own deployment-not-found code, and false when the
+// deployment exists. Any other answer returns the error, because the
+// deployment may still exist.
+func (b *Broker) doubleClaimedDeploymentGone(ctx context.Context, deploymentName string) (bool, error) {
+	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
+
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, bosh.ErrDeploymentNotFound):
+		return true, nil
+	}
+
+	return false, fmt.Errorf("could not read deployment %s from the director: %w", deploymentName, err)
 }
 
 // settleSupersededProvisionAsDeleted records the unknown provision a
@@ -4513,13 +4563,16 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, instanceID, deploy
 		return
 	}
 
-	deploymentName, owned := b.cleanupOwnsDeployment(cleanupCtx, instanceID, deploymentName, recorded, logger)
-	if !owned {
-		return
-	}
+	deploymentName, verdict := b.cleanupOwnsDeployment(cleanupCtx, instanceID, deploymentName, recorded, logger)
 
-	if !b.deleteFailedDeployment(cleanupCtx, deploymentName, logger) {
+	switch verdict {
+	case cleanupRefused:
 		return
+	case cleanupDeletes:
+		if !b.deleteFailedDeployment(cleanupCtx, deploymentName, logger) {
+			return
+		}
+	case cleanupFindsGone:
 	}
 
 	// The clear takes its bound from ctx, not from cleanupCtx, so a
@@ -4566,15 +4619,31 @@ func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentNa
 	return recorded, true, nil
 }
 
+// cleanupVerdict is what cleanupOwnsDeployment lets a cleanup do.
+// cleanupRefused deletes nothing and leaves the mark, cleanupDeletes
+// deletes the deployment, and cleanupFindsGone takes the mark off with
+// nothing deleted, because the deployment is already gone.
+type cleanupVerdict int
+
+const (
+	cleanupRefused cleanupVerdict = iota
+	cleanupDeletes
+	cleanupFindsGone
+)
+
 // cleanupOwnsDeployment returns the deployment a cleanup may delete for
-// the instance, and false when it may delete none. The deployment must be
+// the instance, and cleanupRefused when it may delete none. The deployment must be
 // the name recorded for the instance, and the broker must have minted it
 // for the instance under the plan the provision asked for, which
 // ownedUnder checks. No other instance may claim it either, as
 // nameClaimant decides. Two instances that claim one name, as instances
 // named before the claim check, or an index entry that was lost, can
 // leave, show nothing about which of them the deployment belongs to, so
-// the broker deletes nothing and leaves the choice to an operator.
+// the broker deletes nothing and leaves the choice to an operator. Before
+// it refuses for that, it asks the director whether the deployment
+// exists, and when the director says it is gone, nothing is left that
+// either instance could lose, so the verdict is cleanupFindsGone and the
+// row comes off. When the director cannot say, the cleanup is refused.
 //
 // The name recorded for the instance is the one its record holds, or the
 // one its index entry recorded at provision time when the record holds
@@ -4597,27 +4666,52 @@ func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentNa
 // and another instance's claim that cannot be checked, leave a row only
 // when none is held, so a passing Vault fault never replaces the refusal
 // an operator is already looking at.
-func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (string, bool) {
+func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (string, cleanupVerdict) {
 	claim, read := b.recordedCleanupName(ctx, instanceID, deploymentName, recorded, logger)
 	if !read {
-		return "", false
+		return "", cleanupRefused
 	}
 
 	deploymentName, owned := b.judgeCleanupClaim(ctx, instanceID, deploymentName, claim, logger)
 	if !owned {
-		return "", false
+		return "", cleanupRefused
 	}
 
 	refusal := b.claimedByAnotherInstance(ctx, instanceID, deploymentName, logger)
+	if refusal.reason != "" && !refusal.unread && b.claimedDeploymentGoneForCleanup(ctx, instanceID, deploymentName, logger) {
+		b.forgetCleanupAttention(instanceID)
+
+		return deploymentName, cleanupFindsGone
+	}
+
 	if refusal.reason != "" {
 		b.refuseCleanup(instanceID, deploymentName, refusal, logger)
 
-		return "", false
+		return "", cleanupRefused
 	}
 
 	b.forgetCleanupAttention(instanceID)
 
-	return deploymentName, true
+	return deploymentName, cleanupDeletes
+}
+
+// claimedDeploymentGoneForCleanup reports whether the director says
+// deploymentName, which another instance claims as well as instanceID, is
+// gone. A director that cannot say is logged, and reported as not gone,
+// so the cleanup is refused.
+func (b *Broker) claimedDeploymentGoneForCleanup(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) bool {
+	gone, err := b.doubleClaimedDeploymentGone(ctx, deploymentName)
+	if err != nil {
+		logger.Warning("Instance %s: another instance claims deployment %s too, and whether it still exists is not known, so its cleanup stays refused: %s", instanceID, deploymentName, err)
+
+		return false
+	}
+
+	if gone {
+		logger.Info("Instance %s: another instance claims deployment %s too, and the director has no such deployment, so the cleanup deletes nothing and is done", instanceID, deploymentName)
+	}
+
+	return gone
 }
 
 // claimedByAnotherInstance returns why the cleanup of instanceID may not

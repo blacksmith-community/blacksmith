@@ -536,3 +536,128 @@ func requireDeleteRow(t *testing.T, b *broker.Broker, instanceID, deploymentName
 		t.Fatalf("the refused delete left %+v for an operator, want one row for %s that says %q", attention, instanceID, reason)
 	}
 }
+
+// goneDoubleClaim is a cleanup or a delete of a double claim, made while
+// the director says the deployment is gone, or cannot say, as unknown
+// sets. indexed says x-abc is indexed with the name as well.
+type goneDoubleClaim struct {
+	name    string
+	deletes bool
+	indexed bool
+	unknown bool
+	status  int
+}
+
+// A double claim on a deployment the director says is gone takes nothing
+// from either instance, so it no longer refuses anything. The cleanup x-abc
+// owes deletes nothing, its mark comes off, and the row goes. A delete of
+// x-abc that the index does not have is answered 410 Gone with nothing
+// written, and a delete of an indexed x-abc is accepted, as each was before
+// the double claim refused it. When the director cannot say whether the
+// deployment exists, the cleanup keeps the mark and the row, and the delete
+// is answered 500 with nothing written.
+func TestDoubleClaim_SettlesOnceTheDeploymentIsGone(t *testing.T) {
+	t.Parallel()
+
+	cases := []goneDoubleClaim{
+		{name: "the cleanup"},
+		{name: "the cleanup when the director cannot say", unknown: true},
+		{name: "a delete of an instance the index does not have", deletes: true, status: http.StatusGone},
+		{name: "a delete of an instance the index does not have when the director cannot say", deletes: true, unknown: true, status: http.StatusInternalServerError},
+		{name: "a delete of an indexed instance", deletes: true, indexed: true, status: http.StatusAccepted},
+		{name: "a delete of an indexed instance when the director cannot say", deletes: true, indexed: true, unknown: true, status: http.StatusInternalServerError},
+	}
+
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			vaultClient, proxy := claimFaultVault(t)
+			ctx := context.Background()
+
+			name := writeDoubleClaim(ctx, t, vaultClient)
+			if entry.indexed {
+				indexDebtor(ctx, t, vaultClient, name)
+			}
+
+			director := cleanupGuardDirector()
+			director.GetDeploymentFn = deploymentNotFound
+
+			if entry.unknown {
+				director.GetDeploymentFn = func(string) (*bosh.DeploymentDetail, error) { return nil, errDirectorUnreachable }
+			}
+
+			refuser := doubleClaimDeprovisioner(ctx, t, director, vaultClient)
+
+			if entry.deletes {
+				requireGoneDelete(ctx, t, refuser, proxy, entry)
+			} else {
+				requireGoneCleanup(ctx, t, refuser, vaultClient, name, entry.unknown)
+			}
+
+			if asked := director.Calls("GetDeployment"); len(asked) == 0 {
+				t.Fatalf("in %q nothing asked the director whether %s exists", entry.name, name)
+			}
+
+			if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 && !entry.indexed {
+				t.Fatalf("in %q the director was told to delete %v", entry.name, deleted)
+			}
+		})
+	}
+}
+
+// requireGoneDelete sends the delete of x-abc entry describes and checks
+// its status, and that a delete that is not accepted wrote nothing and
+// left no row.
+func requireGoneDelete(ctx context.Context, t *testing.T, refuser *broker.Broker, proxy *testutil.VaultFaultProxy, entry goneDoubleClaim) {
+	t.Helper()
+
+	written := len(proxy.Writes())
+
+	status, body := deleteInstance(ctx, t, refuser, doubleClaimDebtor, collidingShortPlan)
+	if status != entry.status {
+		t.Fatalf("in %q the delete was answered %d %s, want %d", entry.name, status, body, entry.status)
+	}
+
+	if status == http.StatusAccepted {
+		return
+	}
+
+	if writes := proxy.Writes()[written:]; len(writes) != 0 {
+		t.Fatalf("in %q the delete wrote %v", entry.name, writes)
+	}
+
+	if attention := refuser.CleanupAttention(); len(attention) != 0 {
+		t.Fatalf("in %q the delete left %+v for an operator, want nothing", entry.name, attention)
+	}
+}
+
+// requireGoneCleanup runs the cleanup x-abc owes, and checks that its mark
+// came off and its row went, or, when the director could not say whether
+// the deployment exists, that both stayed.
+func requireGoneCleanup(ctx context.Context, t *testing.T, refuser *broker.Broker, vaultClient *internalVault.Vault, name string, unknown bool) {
+	t.Helper()
+
+	refuser.CleanupFailedDeployment(ctx, doubleClaimDebtor, name)
+
+	attention := refuser.CleanupAttention()
+
+	if unknown {
+		requireCleanupStillOwed(ctx, t, vaultClient, doubleClaimDebtor)
+
+		if len(attention) != 1 || !strings.Contains(attention[0].Reason, "Instance abc also claims deployment redis-small-x-abc") {
+			t.Fatalf("the refused cleanup left %+v for an operator, want one row that names the double claim", attention)
+		}
+
+		return
+	}
+
+	recorded, err := refuser.RecordedOperation(ctx, doubleClaimDebtor)
+	if err != nil || recorded.CleanupPending {
+		t.Fatalf("the record of %s is %+v, %v, want it owing no cleanup", doubleClaimDebtor, recorded, err)
+	}
+
+	if len(attention) != 0 {
+		t.Fatalf("the settled cleanup left %+v for an operator, want nothing", attention)
+	}
+}
