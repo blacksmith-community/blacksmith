@@ -247,6 +247,11 @@ type Broker struct {
 	// grace period pass without waiting for it.
 	unknownOutcomeClock func() time.Time
 
+	// updateOutcomeWait, when positive, replaces updateOutcomeRetry as
+	// the wait between the resolver passes an update runs over its own
+	// lost deploy answer.
+	updateOutcomeWait time.Duration
+
 	// unknownOutcomePasses holds an *unknownOutcomePass for each instance
 	// whose unknown outcome a poll has tried to settle.
 	unknownOutcomePasses sync.Map

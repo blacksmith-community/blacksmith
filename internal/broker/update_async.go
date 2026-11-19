@@ -194,7 +194,8 @@ var errNoLiveManifest = errors.New("the director answered with no deployment")
 
 // deploy records the update's context ID with the deploy step, sends the
 // deploy that carries it, and records the task the director's answer
-// names. It reports whether the deploy was sent and its task is known.
+// names. A lost answer is resolved by the deploy's context ID before it
+// returns. It reports whether the deploy was sent and its task is known.
 func (p *updatePhase) deploy(ctx context.Context, deployed string) (*bosh.Task, bool) {
 	p.progress(ctx, "Deploying the update", 0)
 
@@ -206,7 +207,7 @@ func (p *updatePhase) deploy(ctx context.Context, deployed string) (*bosh.Task, 
 	if errors.Is(err, bosh.ErrOutcomeUnknown) {
 		p.broker.recordOutcomeUnknown(context.WithoutCancel(ctx), p.instanceID, operationTypeUpdate, "deploy", p.contextID, err, p.logger)
 
-		return nil, false
+		return p.resolveLostAnswer(ctx)
 	}
 
 	if err != nil {

@@ -309,7 +309,7 @@ func TestUpdate_FailedTask_KeepsLastGoodState(t *testing.T) {
 	}
 
 	records := fixture.updateRecords(ctx, t)
-	if len(records) != 1 || records[0].Outcome != "failed" || records[0].TaskID != updateTaskID {
+	if len(records) != 1 || records[0].Outcome != outcomeStateFailed || records[0].TaskID != updateTaskID {
 		t.Fatalf("the change records are %+v, want one failed update", records)
 	}
 }

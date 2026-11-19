@@ -89,6 +89,13 @@ func (b *Broker) SetUnknownOutcomeClock(now func() time.Time) {
 	b.unknownOutcomeClock = now
 }
 
+// SetUpdateOutcomeWait replaces the wait between the resolver passes an
+// update runs over its own lost deploy answer. Set it before the broker
+// starts any work.
+func (b *Broker) SetUpdateOutcomeWait(wait time.Duration) {
+	b.updateOutcomeWait = wait
+}
+
 // SetCredentialSweepPassTimeout replaces the deadline of one sweep pass.
 func (b *Broker) SetCredentialSweepPassTimeout(timeout time.Duration) {
 	b.credentialSweep.mu.Lock()

@@ -320,7 +320,7 @@ func (b *Broker) stampUnknownSince(passCtx context.Context, instanceID string, o
 
 // findUnknownOutcome asks the director what became of the request that
 // carried the operation's context ID. It looks for the task by its context
-// ID first, and then at the deployment. A deprovision whose deployment the
+// ID first, and then, for a provision or a deprovision, at the deployment. A deprovision whose deployment the
 // director says does not exist is settled as deleted. A deprovision whose
 // deployment exists adopts a delete task running on it, or the task a
 // delete event on it names. A provision adopts a deploy task running on
@@ -371,6 +371,13 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, pass *unknownOutcomePas
 		if found {
 			return finding
 		}
+	case operationTypeUpdate:
+		// An update's deployment always exists, and a deploy task on it
+		// or an update event may belong to an operator or to an earlier
+		// update, so only the lookup by context ID finds an update's task.
+		if operation.UnknownSince.IsZero() {
+			return unknownOutcomeFinding{reason: reasonNoUnknownSince}
+		}
 	default:
 		return unknownOutcomeFinding{reason: fmt.Sprintf("the record names the action %q, which no deployment check covers", operation.Action)}
 	}
@@ -385,7 +392,8 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, pass *unknownOutcomePas
 // findPastGrace decides what a pass past the grace period takes from the
 // absence of a task. A provision checks that its deployment is gone, and
 // otherwise stays unknown. A deprovision, whose deployment the check
-// above found, is taken as never started.
+// above found, is taken as never started, and so is an update, whose
+// deployment the director's list of tasks shows it never deployed.
 func (b *Broker) findPastGrace(ctx context.Context, pass *unknownOutcomePass, deploymentName string, operation recordedOperation, logger logger.Logger) unknownOutcomeFinding {
 	if operation.Action == operationTypeProvision {
 		_, err := b.BOSH.GetDeployment(ctx, deploymentName)
@@ -641,6 +649,13 @@ func (b *Broker) followFoundTask(pollCtx, ctx context.Context, instanceID, deplo
 		response, err = b.handleDeprovisionTask(ctx, instanceID, deploymentName, finding.taskID, logger)
 	case operationTypeProvision:
 		response, err = b.handleProvisionTaskCleaningUpOn(ctx, pollCtx, instanceID, deploymentName, finding.taskID, logger)
+	case operationTypeUpdate:
+		// The update's own goroutine, or re-adoption after a restart, reads
+		// the task from the record and follows it, and holds the claim
+		// until the update settles.
+		logger.Info("Instance %s: task %d is recorded for the update with context ID %s, which the update follows", instanceID, finding.taskID, operation.ContextID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: description}, true
 	default:
 		logger.Error("Instance %s: task %d was found for the %q with context ID %s, which no settle path handles here, so it is recorded and left unsettled", instanceID, finding.taskID, operation.Action, operation.ContextID)
 
@@ -786,14 +801,18 @@ func (b *Broker) recordSettledOutcome(ctx context.Context, instanceID string, op
 
 // failUnknownOutcome records as failed an operation whose request the
 // director lists no task for. The index entry stays, so a deprovision can be
-// retried, and a failed provision is cleaned up as any other is. When the
-// failure cannot be recorded over the unknown outcome, it answers in
-// progress and starts no cleanup. It reports whether it recorded the
-// failure.
+// retried, a failed provision is cleaned up as any other is, and a failed
+// update leaves its deployment as it is. When the failure cannot be
+// recorded over the unknown outcome, it answers in progress and starts no
+// cleanup. It reports whether it recorded the failure.
 func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
 	description := fmt.Sprintf("The director lists no task for the deploy with context ID %s, and the deployment does not exist", operation.ContextID)
-	if operation.Action == operationTypeDeprovision {
+
+	switch operation.Action {
+	case operationTypeDeprovision:
 		description = fmt.Sprintf("The director lists no task for the delete with context ID %s, and the deployment is still there. Retry the deprovision", operation.ContextID)
+	case operationTypeUpdate:
+		description = fmt.Sprintf("The director lists no task for the update's deploy with context ID %s, so the update was not deployed. Send the update again", operation.ContextID)
 	}
 
 	logger.Error("Instance %s: %s (the outcome was unknown since %s)", instanceID, description, operation.UnknownSince.Format(time.RFC3339))
