@@ -63,6 +63,16 @@ type updatePhase struct {
 	// rollback is the rollback the update runs after its deploy failed,
 	// and nil until then. While it is set, contextID is the rollback's.
 	rollback *internalVault.UpdateRollback
+	// unresumable, when set, says why re-adoption can't carry the update
+	// through, which is that its staged values can't be read back or the
+	// plan they name has left the catalog. The task the record names is
+	// still followed to its end under the claim, and the update then
+	// settles as failed with this reason, committing nothing.
+	unresumable string
+	// stagedLost reports that the staged values can't be read back, so
+	// whether a rollback ran isn't known either. Any end of the task then
+	// settles the update as failed, and nothing rolls back.
+	stagedLost bool
 }
 
 // launchUpdate records the accepted update and starts the goroutine that
@@ -372,17 +382,33 @@ func (b *Broker) followUpdateTask(ctx context.Context, taskID int, logger logger
 // setting at the failure says. A task the rollback ran settles the
 // rollback and never commits anything.
 func (p *updatePhase) settle(ctx context.Context, task *bosh.Task, deployed string) {
-	if p.rollback != nil {
+	switch {
+	case p.stagedLost:
+		p.failUnresumable(ctx, task)
+	case p.rollback != nil:
 		p.settleRollback(ctx, task, "")
-
-		return
-	}
-
-	if task.State != taskStateDone {
+	case task.State != taskStateDone:
 		p.deployFailed(ctx, task)
-
-		return
+	case p.unresumable != "":
+		p.failUnresumable(ctx, task)
+	default:
+		p.commit(ctx, task, deployed)
 	}
+}
+
+// failUnresumable settles an update re-adoption can't carry through as
+// failed once its task ended, and says why. The instance's values stay
+// at their last good state, and a repeat of the update deploys and
+// records them.
+func (p *updatePhase) failUnresumable(ctx context.Context, task *bosh.Task) {
+	p.logger.Error("Instance %s: BOSH task %d ended in state %s, and %s, so the update settles as failed", p.instanceID, task.ID, task.State, p.unresumable)
+	p.fail(ctx, fmt.Sprintf("BOSH deployment task %d ended in state %s, and %s. Send the update again", task.ID, task.State, p.unresumable), task.ID)
+}
+
+// commit records the update whose deploy succeeded, under the instance's
+// settle lock. It commits the staged values, the deployed manifest, the
+// credentials, and the plan references.
+func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed string) {
 
 	settleCtx := context.WithoutCancel(ctx)
 

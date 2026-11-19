@@ -7,13 +7,18 @@ import (
 	"fmt"
 	"time"
 
+	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 )
 
-// errNoStagedUpdate reports an update record that holds no staged values,
-// so re-adoption can't commit what the update deployed.
+// errNoStagedUpdate reports an update record that holds no staged values
+// re-adoption can read, so it can't commit what the update deployed.
 var errNoStagedUpdate = errors.New("the update's record holds no staged values")
+
+// errUpdateNotIndexed reports an update of an instance the index no
+// longer names, which re-adoption leaves alone.
+var errUpdateNotIndexed = errors.New("the index has no entry for the instance")
 
 // awaitReadoptedUpdateClaim takes the claim of a re-adopted update that
 // another operation held at start, trying again after each wait until it
@@ -64,7 +69,7 @@ func (b *Broker) readoptUpdate(ctx context.Context, operation readoptOperation, 
 			return phase.resume(ctx)
 		}
 
-		if errors.Is(err, errNoStagedUpdate) {
+		if errors.Is(err, errUpdateNotIndexed) {
 			logger.Error("Instance %s: re-adoption can't resume its update: %s", operation.instanceID, err)
 
 			return true
@@ -80,7 +85,10 @@ func (b *Broker) readoptUpdate(ctx context.Context, operation readoptOperation, 
 
 // readoptedUpdatePhase rebuilds an interrupted update from the staged
 // values its task record holds, the instance's index entry, and the plan
-// the update deploys.
+// the update deploys. When the staged values don't decode, or the plan
+// has left the catalog, the phase it returns can still follow the task
+// the record names, and it settles the update as failed with the reason
+// once that task ends.
 func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOperation, logger logger.Logger) (*updatePhase, error) {
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
@@ -92,23 +100,32 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 		return nil, fmt.Errorf("failed to read the task record: %w", err)
 	}
 
-	staged, err := stagedUpdate(record)
-	if err != nil {
-		return nil, err
-	}
-
 	instance, exists, err := b.Vault.FindInstance(readCtx, operation.instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the index entry: %w", err)
 	}
 
 	if !exists {
-		return nil, fmt.Errorf("%w: the index has no entry for the instance", errNoStagedUpdate)
+		return nil, errUpdateNotIndexed
 	}
 
-	plan, err := b.FindPlan(instance.ServiceID, staged.PlanID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: the catalog has no plan %s: %w", errNoStagedUpdate, staged.PlanID, err)
+	var (
+		plan        services.Plan
+		unresumable string
+	)
+
+	staged, stagedErr := stagedUpdate(record)
+	if stagedErr == nil {
+		plan, err = b.FindPlan(instance.ServiceID, staged.PlanID)
+		if err != nil {
+			unresumable = fmt.Sprintf("the broker can't record the update's values, because plan %s is no longer in the catalog", staged.PlanID)
+		}
+	} else {
+		unresumable = "the broker can't read the update's values back from its record"
+	}
+
+	if unresumable != "" {
+		logger.Error("Instance %s: re-adoption follows its update's task to its end and then settles the update as failed, because %s: %v", operation.instanceID, unresumable, errors.Join(stagedErr, err))
 	}
 
 	deployment := operation.recorded.DeploymentName
@@ -133,11 +150,13 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 			planID: staged.PlanID, parameters: staged.Parameters,
 			changedKeys: staged.ChangedKeys, fingerprint: staged.Fingerprint, actor: staged.Actor,
 		},
-		context:   staged.Context,
-		plan:      plan,
-		contextID: contextID,
-		logger:    logger,
-		rollback:  rollback,
+		context:     staged.Context,
+		plan:        plan,
+		contextID:   contextID,
+		logger:      logger,
+		rollback:    rollback,
+		unresumable: unresumable,
+		stagedLost:  stagedErr != nil,
 	}, nil
 }
 
