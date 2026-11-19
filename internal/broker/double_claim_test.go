@@ -436,6 +436,7 @@ func indexedDoubleClaims() []indexedDoubleClaim {
 	const (
 		claimedTwice = "two service instances claim deployment redis-small-x-abc"
 		refusedRow   = "The platform's delete of this instance was refused, because instance %s also claims deployment redis-small-x-abc, through its index entry"
+		recordRow    = "The platform's delete of this instance was refused, because instance abc also claims deployment redis-small-x-abc, through its record, which owes the cleanup of a failed provision"
 		refusedCheck = claimCheckFailed + ", so the deprovision of instance x-abc was refused: "
 	)
 
@@ -451,6 +452,10 @@ func indexedDoubleClaims() []indexedDoubleClaim {
 		{
 			name: "the other of two live instances is deleted", asked: doubleClaimOwner, other: doubleClaimDebtor,
 			write: writeTwoLiveClaims, description: claimedTwice, row: fmt.Sprintf(refusedRow, doubleClaimDebtor),
+		},
+		{
+			name: "the other claims it only through its record", asked: doubleClaimDebtor, other: doubleClaimOwner,
+			write: writeRecordedOwnerClaim, description: claimedTwice, row: recordRow,
 		},
 		{
 			// The delete reads the index three times before the claim
@@ -470,8 +475,9 @@ func indexedDoubleClaims() []indexedDoubleClaim {
 // A delete of an indexed instance never deletes a deployment that another
 // instance claims too, since nothing shows which of the two it belongs
 // to. That holds for an instance whose own record owes the cleanup of the
-// name, for two live instances whose entries both name it, and for the
-// delete of either one. The delete is answered 500 with a description
+// name, for two live instances whose entries both name it, for the delete
+// of either one, and for another instance that claims the name only
+// through its record, which owes the cleanup of it. The delete is answered 500 with a description
 // that names the double claim and not the other instance, nothing is
 // written or deleted, and the overview lists the instance asked for with
 // a reason that says the platform's delete was refused. When the claim
