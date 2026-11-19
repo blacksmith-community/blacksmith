@@ -843,6 +843,188 @@ func TestDeleteRow_StaysWhileTheDoubleClaimHolds(t *testing.T) {
 	}
 }
 
+// uncheckedRowCase is a full scan that cannot check whether the refusal
+// of a delete of x-abc still holds. write writes the claims, and refused
+// names the instances whose deletes are refused first. before is called
+// just before the scan, and fault on the director's first read during the
+// scan, with the scan's cancel. When directorFails is set, the director
+// cannot say whether the deployment exists during the scan.
+type uncheckedRowCase struct {
+	name          string
+	write         func(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault) string
+	refused       []string
+	before        func(proxy *testutil.VaultFaultProxy)
+	fault         func(proxy *testutil.VaultFaultProxy, cancel context.CancelFunc)
+	directorFails bool
+}
+
+// When the sweep's full scan cannot check whether the refusal of a delete
+// still holds, because the pass's context ended, the index or another
+// instance's record could not be read, or the director could not say
+// whether the deployment exists, it keeps the delete's row with its
+// reason and its time. The next full scan, once the fault has cleared and
+// the director says the deployment is gone, drops it.
+func TestDeleteRow_StaysWhileTheSweepCannotCheckIt(t *testing.T) {
+	t.Parallel()
+
+	failRead := func(path string) func(*testutil.VaultFaultProxy, context.CancelFunc) {
+		return func(proxy *testutil.VaultFaultProxy, _ context.CancelFunc) {
+			proxy.FailReads(path, http.StatusForbidden, "permission denied", -1)
+		}
+	}
+
+	both := []string{doubleClaimOwner, doubleClaimDebtor}
+
+	// The rows are checked in the order of their instance IDs, so the
+	// director's read for the row of abc comes before the check of the
+	// row of x-abc. The full scan reads the record of abc twice before
+	// the check of the row of x-abc reads it again.
+	cases := []uncheckedRowCase{
+		{name: "the pass's context ends", write: writeTwoLiveClaims, refused: both, fault: func(_ *testutil.VaultFaultProxy, cancel context.CancelFunc) { cancel() }},
+		{name: "the index cannot be read", write: writeTwoLiveClaims, refused: both, fault: failRead("/data/db")},
+		{name: "the other instance's record cannot be read", write: writeRecordedOwnerClaim, refused: []string{doubleClaimDebtor}, before: func(proxy *testutil.VaultFaultProxy) {
+			proxy.FailReadsAfter("/data/"+doubleClaimOwner+"/task", 2, http.StatusForbidden, "permission denied", 1)
+		}},
+		{name: "the director cannot say", write: writeTwoLiveClaims, refused: []string{doubleClaimDebtor}, directorFails: true},
+	}
+
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			requireRowKeptWhileUnchecked(t, entry)
+		})
+	}
+}
+
+// requireRowKeptWhileUnchecked refuses the deletes of entry, runs the
+// full scan that cannot check the refusal of the delete of x-abc, and
+// requires its row as it was. Then it clears the fault, has the director
+// say the deployment is gone, and requires the next full scan to drop
+// every row.
+func requireRowKeptWhileUnchecked(t *testing.T, entry uncheckedRowCase) {
+	t.Helper()
+
+	vaultClient, proxy := claimFaultVault(t)
+	ctx := context.Background()
+	entry.write(ctx, t, vaultClient)
+
+	scanCtx, cancelScan := context.WithCancel(ctx)
+	defer cancelScan()
+
+	var fault func()
+	if entry.fault != nil {
+		fault = func() { entry.fault(proxy, cancelScan) }
+	}
+
+	scripted := newFaultingScanDirector(fault)
+	deleter := doubleClaimDeprovisioner(ctx, t, scripted.director, vaultClient)
+
+	now := time.Now()
+
+	deleter.SetSweepClock(func() time.Time { return now })
+
+	for _, asked := range entry.refused {
+		status, body := deleteInstance(ctx, t, deleter, asked, collidingShortPlan)
+		if status != http.StatusInternalServerError {
+			t.Fatalf("the delete of %s was answered %d %s, want 500", asked, status, body)
+		}
+	}
+
+	want := deleteRowOf(t, deleter, doubleClaimDebtor)
+
+	if entry.directorFails {
+		scripted.state.Store(scanDirectorFailing)
+	}
+
+	if entry.before != nil {
+		entry.before(proxy)
+	}
+
+	scripted.armed.Store(true)
+	deleter.SweepOwedCleanupsOnce(scanCtx, time.Minute)
+
+	if scripted.armed.Swap(false) && (entry.fault != nil || entry.directorFails) {
+		t.Fatal("the scan never asked the director, so the fault was never made")
+	}
+
+	if row := deleteRowOf(t, deleter, doubleClaimDebtor); row.Reason != want.Reason || !row.Since.Equal(want.Since) {
+		t.Fatalf("the scan that could not check the refusal left %+v, want %+v as it was", row, want)
+	}
+
+	proxy.ClearFaults()
+	scripted.state.Store(scanDeploymentGone)
+
+	now = now.Add(7 * time.Hour)
+
+	deleter.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+	if rows := deleter.CleanupAttention(); len(rows) != 0 {
+		t.Fatalf("the full scan after the director said the deployment is gone left %+v, want nothing", rows)
+	}
+
+	if deleted := scripted.director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+		t.Fatalf("the sweep or the delete deleted %v", deleted)
+	}
+}
+
+// What the director of a faultingScanDirector says about a deployment.
+const (
+	scanDeploymentPresent int32 = iota
+	scanDirectorFailing
+	scanDeploymentGone
+)
+
+// faultingScanDirector scripts the director of a scan that cannot check
+// a refusal. Its deployment reads answer as state says, and the first
+// read after armed is set calls fault, unless fault is nil.
+type faultingScanDirector struct {
+	director *testutil.ScriptedBOSHDirector
+	state    atomic.Int32
+	armed    atomic.Bool
+	fault    func()
+}
+
+// newFaultingScanDirector returns a faultingScanDirector whose director
+// has every deployment until state says otherwise.
+func newFaultingScanDirector(fault func()) *faultingScanDirector {
+	scripted := &faultingScanDirector{director: cleanupGuardDirector(), fault: fault}
+	scripted.state.Store(scanDeploymentPresent)
+
+	scripted.director.GetDeploymentFn = func(asked string) (*bosh.DeploymentDetail, error) {
+		if scripted.armed.CompareAndSwap(true, false) && scripted.fault != nil {
+			scripted.fault()
+		}
+
+		switch scripted.state.Load() {
+		case scanDirectorFailing:
+			return nil, errDirectorUnreachable
+		case scanDeploymentGone:
+			return deploymentNotFound(asked)
+		}
+
+		return &bosh.DeploymentDetail{Name: asked}, nil
+	}
+
+	return scripted
+}
+
+// deleteRowOf returns the row the overview of deleter lists for
+// instanceID, and fails the spec when it lists none.
+func deleteRowOf(t *testing.T, deleter *broker.Broker, instanceID string) interfaces.CleanupAttention {
+	t.Helper()
+
+	for _, row := range deleter.CleanupAttention() {
+		if row.InstanceID == instanceID {
+			return row
+		}
+	}
+
+	t.Fatalf("the overview lists %+v, want a row for %s", deleter.CleanupAttention(), instanceID)
+
+	return interfaces.CleanupAttention{}
+}
+
 // requireRefusedDelete sends the delete of x-abc to deleter and requires
 // a 500.
 func requireRefusedDelete(ctx context.Context, t *testing.T, deleter *broker.Broker) {
