@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"blacksmith/internal/broker"
 	internalVault "blacksmith/internal/vault"
 
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
@@ -85,13 +86,21 @@ func TestReadopt_UnresumableUpdate_SettlesFailed(t *testing.T) {
 				t.Fatalf("re-adoption sent %d deploys, want none", len(calls))
 			}
 
-			fixture.broker.Plans = plans
+			// The fixture's broker stopped tracking its goroutines once
+			// settled waited for them, so a broker of the next start, over
+			// the same Vault and with the plan back in the catalog, sends
+			// the update again and waits for it.
+			next := &broker.Broker{BOSH: fixture.director, Vault: fixture.vault, Plans: plans}
+			next.SetChanges(fixture.changes)
 
-			// The broker has stopped once settled waited for it, so the
-			// accepted update's goroutine ends at once, and the spec only
-			// checks that the instance takes the update.
-			response, async, err := fixture.broker.Update(ctx, instanceID, failingUpdateRequest(), true)
+			response, async, err := next.Update(ctx, instanceID, failingUpdateRequest(), true)
 			requireAccepted(t, response, async, err)
+			next.WaitForBackground(ctx)
+
+			answer, err = next.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: updateFailureAction})
+			if err != nil || answer.State != osbapi.StateSucceeded {
+				t.Fatalf("the update sent again settled as %+v (%v), want succeeded", answer, err)
+			}
 		})
 	}
 }
