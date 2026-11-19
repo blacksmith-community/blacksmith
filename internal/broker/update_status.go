@@ -40,7 +40,7 @@ func (b *Broker) updateStatus(_ context.Context, instanceID, deploymentName stri
 
 		return osbapi.LastOperationResponse{
 			State:       osbapi.StateInProgress,
-			Description: fmt.Sprintf("Waiting for the director to show whether it started the deploy with context ID %s", recorded.ContextID),
+			Description: "Waiting for the director to show whether it started the deploy with context ID " + recorded.ContextID,
 		}, nil
 	}
 

@@ -10,10 +10,17 @@ import (
 	"blacksmith/internal/vault"
 )
 
+// The plan the specs' provisions mint their deployment names under, and
+// the state a failed operation records.
+const (
+	updatePlan  = "small"
+	stateFailed = "failed"
+)
+
 // recordSucceededMintedProvision records a provision of plan small that
 // minted small-<id> and succeeded in task 41.
 func recordSucceededMintedProvision(ctx context.Context, client *vault.Vault, instanceID string) error {
-	err := client.TrackProgressWithMintedDeployment(ctx, instanceID, "provision", "Creating BOSH deployment", "context-41", "small", 0, nil)
+	err := client.TrackProgressWithMintedDeployment(ctx, instanceID, "provision", "Creating BOSH deployment", "context-41", updatePlan, 0, nil)
 	if err == nil {
 		err = client.TrackProgress(ctx, instanceID, "provision", "BOSH deployment in progress (task 41)", 41, nil)
 	}
@@ -31,7 +38,7 @@ func recordSucceededMintedProvision(ctx context.Context, client *vault.Vault, in
 
 func stagedUpdate() vault.StagedUpdate {
 	return vault.StagedUpdate{
-		Fingerprint: "digest", PreviousPlanID: "small", PlanID: "small",
+		Fingerprint: "digest", PreviousPlanID: updatePlan, PlanID: updatePlan,
 		Parameters: map[string]interface{}{"maxmemory-policy": "allkeys-lru"},
 	}
 }
@@ -60,12 +67,12 @@ func TestTrackUpdateAccepted_CarriesTheMintedDeploymentForward(t *testing.T) {
 		t.Helper()
 
 		_, _, record := readRecord(ctx, t, client, instanceID)
-		if record["deployment_name"] != "small-"+instanceID || record["deployment_plan_id"] != "small" {
+		if record["deployment_name"] != updatePlan+"-"+instanceID || record["deployment_plan_id"] != updatePlan {
 			t.Fatalf("%s: the record names %v under plan %v, want the minted small-%s under small", step, record["deployment_name"], record["deployment_plan_id"], instanceID)
 		}
 
 		staged, _ := record[vault.TaskRecordUpdateKey].(map[string]interface{})
-		if staged["fingerprint"] != "digest" || staged["plan_id"] != "small" {
+		if staged["fingerprint"] != "digest" || staged["plan_id"] != updatePlan {
 			t.Fatalf("%s: the staged update is %v", step, staged)
 		}
 	}
@@ -119,9 +126,9 @@ func TestTrackUpdateAccepted_RefusesWhatItMustNotReplace(t *testing.T) {
 		want   error
 	}{
 		{"a provision that owes a cleanup", func(ctx context.Context, instanceID string) error {
-			err := client.TrackProgressWithMintedDeployment(ctx, instanceID, "provision", "Creating", "context-41", "small", 41, nil)
+			err := client.TrackProgressWithMintedDeployment(ctx, instanceID, "provision", "Creating", "context-41", updatePlan, 41, nil)
 			if err != nil {
-				return err
+				return fmt.Errorf("recording a provision: %w", err)
 			}
 
 			return client.TrackFailedCleanupPending(ctx, instanceID, "provision", "failed", "context-41", 41)
@@ -132,7 +139,7 @@ func TestTrackUpdateAccepted_RefusesWhatItMustNotReplace(t *testing.T) {
 		{"a provision that failed", func(ctx context.Context, instanceID string) error {
 			err := client.TrackProgressWithContextID(ctx, instanceID, "provision", "Creating", "context-41", 41, nil)
 			if err != nil {
-				return err
+				return fmt.Errorf("recording a provision: %w", err)
 			}
 
 			return client.TrackFailed(ctx, instanceID, "provision", "failed", "context-41", 41)
@@ -182,7 +189,7 @@ func TestTrackUpdateAccepted_ReplacesASettledUpdate(t *testing.T) {
 	client := newDevVault(t)
 	ctx := context.Background()
 
-	for _, settle := range []string{"failed", "succeeded"} {
+	for _, settle := range []string{stateFailed, "succeeded"} {
 		instanceID := fmt.Sprintf("update-again-%s-%d", settle, time.Now().UnixNano())
 
 		err := recordSucceededMintedProvision(ctx, client, instanceID)
@@ -194,7 +201,7 @@ func TestTrackUpdateAccepted_ReplacesASettledUpdate(t *testing.T) {
 			err = client.TrackProgress(ctx, instanceID, "update", "Deploying (task 42)", 42, nil)
 		}
 
-		if err == nil && settle == "failed" {
+		if err == nil && settle == stateFailed {
 			err = client.TrackFailed(ctx, instanceID, "update", "failed", "context-first", 42)
 		}
 
@@ -212,7 +219,7 @@ func TestTrackUpdateAccepted_ReplacesASettledUpdate(t *testing.T) {
 		}
 
 		_, _, record := readRecord(ctx, t, client, instanceID)
-		if record["context_id"] != "context-second" || record["deployment_name"] != "small-"+instanceID || record["deployment_plan_id"] != "small" {
+		if record["context_id"] != "context-second" || record["deployment_name"] != updatePlan+"-"+instanceID || record["deployment_plan_id"] != updatePlan {
 			t.Fatalf("after a %s update, the record is %v", settle, record)
 		}
 	}

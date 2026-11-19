@@ -14,6 +14,9 @@ import (
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
 
+// routedPlan is the plan the routing specs index their instances under.
+const routedPlan = "small"
+
 func routingVault(t *testing.T) *internalVault.Vault {
 	t.Helper()
 
@@ -31,7 +34,7 @@ func indexLiveInstance(ctx context.Context, t *testing.T, vaultClient *internalV
 	t.Helper()
 
 	err := vaultClient.Index(ctx, instanceID, map[string]interface{}{
-		"service_id": recordedNameService, "plan_id": "small", "deployment_name": "small-" + instanceID,
+		serviceIDKey: recordedNameService, recordedPlanKey: routedPlan, recordedDeploymentKey: routedPlan + "-" + instanceID,
 	})
 	if err != nil {
 		t.Fatalf("failed to index %s: %v", instanceID, err)
@@ -56,14 +59,14 @@ func TestLastOperation_UnknownActionErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	before, _ := readTaskRecord(ctx, t, vaultClient, instanceID)
+	before := readTaskRecord(ctx, t, vaultClient, instanceID)
 
 	_, err = brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{})
 	if !errors.Is(err, broker.ErrUnknownRecordedAction) {
 		t.Fatalf("the poll was answered %v, want ErrUnknownRecordedAction", err)
 	}
 
-	after, _ := readTaskRecord(ctx, t, vaultClient, instanceID)
+	after := readTaskRecord(ctx, t, vaultClient, instanceID)
 	if fmt.Sprint(before) != fmt.Sprint(after) {
 		t.Fatalf("the poll changed the record from %v to %v", before, after)
 	}
@@ -108,7 +111,7 @@ func TestLastOperation_RoutesAnUpdatePoll(t *testing.T) {
 	updated := fmt.Sprintf("routes-updated-%d", time.Now().UnixNano())
 	indexLiveInstance(ctx, t, vaultClient, updated)
 
-	err = vaultClient.TrackUpdateAccepted(ctx, updated, "Deploying the update", "context-update", "small-"+updated, internalVault.StagedUpdate{PlanID: "small"})
+	err = vaultClient.TrackUpdateAccepted(ctx, updated, "Deploying the update", "context-update", routedPlan+"-"+updated, internalVault.StagedUpdate{PlanID: routedPlan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,16 +122,17 @@ func TestLastOperation_RoutesAnUpdatePoll(t *testing.T) {
 	}
 }
 
-// readTaskRecord returns the instance's task record and whether it exists.
-func readTaskRecord(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault, instanceID string) (map[string]interface{}, bool) {
+// readTaskRecord returns the instance's task record, or nil when it has
+// none.
+func readTaskRecord(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault, instanceID string) map[string]interface{} {
 	t.Helper()
 
 	var record map[string]interface{}
 
-	exists, err := vaultClient.Get(ctx, instanceID+"/task", &record)
+	_, err := vaultClient.Get(ctx, instanceID+"/task", &record)
 	if err != nil {
 		t.Fatalf("failed to read the task record of %s: %v", instanceID, err)
 	}
 
-	return record, exists
+	return record
 }
