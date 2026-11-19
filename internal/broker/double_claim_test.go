@@ -11,6 +11,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/broker"
 	"blacksmith/internal/config"
+	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/testutil"
@@ -751,5 +752,119 @@ func TestDoubleClaim_DropsTheDeleteRowsOnceTheDeploymentIsGone(t *testing.T) {
 				t.Fatalf("the delete left %+v for an operator, want nothing", rows)
 			}
 		})
+	}
+}
+
+// sweptRowCase is a delete of x-abc refused while abc and x-abc are both
+// indexed with one name, followed by settle, which changes what the
+// sweep's full scans then find, and kept, which says the row must stay.
+type sweptRowCase struct {
+	name   string
+	settle func(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault, director *testutil.ScriptedBOSHDirector)
+	kept   bool
+}
+
+// The row a refused delete notes for two live instances does not depend
+// on a cleanup, since neither owes one. So the sweep's full scans keep
+// it, with its reason and its time, while x-abc is still indexed and the
+// double claim still holds, and a later refused delete leaves it as it
+// is. The first full scan that finds x-abc gone from the index, abc no
+// longer claiming the name, or the director saying the deployment is
+// gone drops it.
+func TestDeleteRow_StaysWhileTheDoubleClaimHolds(t *testing.T) {
+	t.Parallel()
+
+	unindex := func(instanceID string) func(context.Context, *testing.T, *internalVault.Vault, *testutil.ScriptedBOSHDirector) {
+		return func(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault, _ *testutil.ScriptedBOSHDirector) {
+			t.Helper()
+
+			err := vaultClient.Index(ctx, instanceID, nil)
+			if err != nil {
+				t.Fatalf("failed to take %s out of the index: %v", instanceID, err)
+			}
+		}
+	}
+
+	cases := []sweptRowCase{
+		{name: "the double claim holds", kept: true},
+		{name: "the other instance leaves the index", settle: unindex(doubleClaimOwner)},
+		{name: "the instance leaves the index", settle: unindex(doubleClaimDebtor)},
+		{name: "the director says the deployment is gone", settle: func(_ context.Context, _ *testing.T, _ *internalVault.Vault, director *testutil.ScriptedBOSHDirector) {
+			director.GetDeploymentFn = deploymentNotFound
+		}},
+	}
+
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			vaultClient, _ := claimFaultVault(t)
+			ctx := context.Background()
+			writeTwoLiveClaims(ctx, t, vaultClient)
+
+			director := cleanupGuardDirector()
+			deleter := doubleClaimDeprovisioner(ctx, t, director, vaultClient)
+
+			now := time.Now()
+
+			deleter.SetSweepClock(func() time.Time { return now })
+
+			requireRefusedDelete(ctx, t, deleter)
+
+			row := deleter.CleanupAttention()
+			if len(row) != 1 {
+				t.Fatalf("the refused delete left %+v for an operator, want one row", row)
+			}
+
+			if entry.settle != nil {
+				entry.settle(ctx, t, vaultClient, director)
+			}
+
+			// The first pass is a full scan, and so is one a full scan's
+			// interval later.
+			for scan := range 2 {
+				deleter.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+				now = now.Add(7 * time.Hour)
+
+				requireSweptRow(t, deleter, row[0], entry.kept, scan+1)
+			}
+
+			if entry.kept {
+				requireRefusedDelete(ctx, t, deleter)
+				requireSweptRow(t, deleter, row[0], true, 3)
+			}
+
+			if deleted := director.Calls(directorDeleteDeployment); len(deleted) != 0 {
+				t.Fatalf("the sweep or the delete deleted %v", deleted)
+			}
+		})
+	}
+}
+
+// requireRefusedDelete sends the delete of x-abc to deleter and requires
+// a 500.
+func requireRefusedDelete(ctx context.Context, t *testing.T, deleter *broker.Broker) {
+	t.Helper()
+
+	status, body := deleteInstance(ctx, t, deleter, doubleClaimDebtor, collidingShortPlan)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("the delete of %s was answered %d %s, want 500", doubleClaimDebtor, status, body)
+	}
+}
+
+// requireSweptRow checks that the overview of deleter still holds want,
+// with its reason and its time, when kept is set, and holds nothing when
+// it is not.
+func requireSweptRow(t *testing.T, deleter *broker.Broker, want interfaces.CleanupAttention, kept bool, step int) {
+	t.Helper()
+
+	rows := deleter.CleanupAttention()
+
+	switch {
+	case kept && (len(rows) != 1 || rows[0].InstanceID != want.InstanceID || rows[0].Reason != want.Reason || !rows[0].Since.Equal(want.Since)):
+		t.Fatalf("after step %d the overview lists %+v, want only %+v as it was", step, rows, want)
+	case !kept && len(rows) != 0:
+		t.Fatalf("after step %d the overview lists %+v, want nothing", step, rows)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"blacksmith/internal/interfaces"
 	"blacksmith/internal/settings"
 	"blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
@@ -222,7 +223,7 @@ func (b *Broker) sweepOwedCleanupsOnce(ctx context.Context, interval time.Durati
 		owed[instanceID] = true
 	}
 
-	b.forgetSettledSuspects(candidates, owed, notes, full)
+	b.forgetSettledSuspects(ctx, candidates, owed, notes, full, logger)
 	b.retryOwedCleanups(ctx, cleanups, now, interval, logger)
 }
 
@@ -366,8 +367,9 @@ func (b *Broker) adoptStalledProvision(instanceID string, recorded recordedOpera
 // longer owes a cleanup. A full scan read every instance, so it also
 // drops those of an instance it did not find. A record the pass found
 // but could not parse says nothing about the cleanup, so it settles
-// nothing.
-func (b *Broker) forgetSettledSuspects(candidates []*readoptCandidate, owed map[string]bool, notes map[string]uint64, full bool) {
+// nothing. An entry a refused delete noted does not depend on a cleanup,
+// so it stays while deleteRefusalHolds says the refusal still holds.
+func (b *Broker) forgetSettledSuspects(ctx context.Context, candidates []*readoptCandidate, owed map[string]bool, notes map[string]uint64, full bool, logger logger.Logger) {
 	read := make(map[string]bool, len(candidates))
 	unparsed := map[string]bool{}
 
@@ -396,10 +398,62 @@ func (b *Broker) forgetSettledSuspects(candidates []*readoptCandidate, owed map[
 	}
 
 	for _, entry := range b.CleanupAttention() {
-		if settled(entry.InstanceID) {
+		if settled(entry.InstanceID) && !b.deleteRefusalHolds(ctx, entry, logger) {
 			b.forgetCleanupAttention(entry.InstanceID)
 		}
 	}
+}
+
+// deleteRefusalHolds reports whether entry was noted by a delete refused
+// over a double claim that still holds. That is so while the instance's
+// index entry still names the deployment, another instance still claims
+// it, and the director has not said it is gone. A check that cannot be
+// made keeps the entry, because the refusal may still hold, and the next
+// pass that would drop it checks again.
+func (b *Broker) deleteRefusalHolds(ctx context.Context, entry interfaces.CleanupAttention, logger logger.Logger) bool {
+	if !isDeleteRefusal(entry) {
+		return false
+	}
+
+	if ctx.Err() != nil {
+		return true
+	}
+
+	readCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	instance, exists, err := b.Vault.FindInstance(readCtx, entry.InstanceID)
+	if err != nil {
+		logger.Warning("Instance %s: whether the refusal of its delete still holds could not be checked, so the overview keeps its row: %s", entry.InstanceID, err)
+
+		return true
+	}
+
+	if !exists || instance == nil || instance.DeploymentNameFor(entry.InstanceID) != entry.DeploymentName {
+		return false
+	}
+
+	claimant, _, err := b.nameClaimant(readCtx, entry.InstanceID, entry.DeploymentName, logger)
+	if err != nil {
+		logger.Warning("Instance %s: whether another instance still claims deployment %s could not be checked, so the overview keeps the row of its refused delete: %s",
+			entry.InstanceID, entry.DeploymentName, err)
+
+		return true
+	}
+
+	if claimant == "" {
+		return false
+	}
+
+	gone, err := b.doubleClaimedDeploymentGone(readCtx, entry.DeploymentName)
+	if err != nil {
+		logger.Warning("Instance %s: whether deployment %s still exists could not be checked, so the overview keeps the row of its refused delete: %s",
+			entry.InstanceID, entry.DeploymentName, err)
+
+		return true
+	}
+
+	return !gone
 }
 
 // sweepCandidates reads the records a pass works from, and reports
