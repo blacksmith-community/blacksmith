@@ -349,6 +349,41 @@ func TestUpdate_RepeatWhileInProgress_202SameOperation(t *testing.T) {
 	}
 }
 
+// A repeat of the update in progress from a platform that won't accept an
+// asynchronous answer gets 422 AsyncRequired, as the first request would,
+// and the update in progress goes on.
+func TestUpdate_RepeatWithoutAsync_422AsyncRequired(t *testing.T) {
+	t.Parallel()
+
+	fixture := newUpdateFixture(t)
+	ctx := context.Background()
+	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, nil)
+
+	script := &deployScript{release: make(chan struct{})}
+	script.script(fixture, "done")
+
+	request := osbapi.UpdateRequest{ServiceID: recordedNameService, Parameters: map[string]any{policyKey: policyNoEvict}}
+
+	response, async, err := fixture.broker.Update(ctx, instanceID, request, true)
+	requireAccepted(t, response, async, err)
+
+	response, async, err = fixture.broker.Update(ctx, instanceID, request, false)
+
+	close(script.release)
+
+	if !errors.Is(err, osbapi.ErrAsyncRequired) || async || response.Operation != "" {
+		t.Fatalf("the repeat without accepts_incomplete was answered %+v, async %v, %v, want 422 AsyncRequired", response, async, err)
+	}
+
+	if answer := fixture.settled(ctx, t, instanceID); answer.State != osbapi.StateSucceeded {
+		t.Fatalf("the update settled as %+v, want succeeded", answer)
+	}
+
+	if sent := script.sent(); len(sent) != 1 {
+		t.Fatalf("the repeated update sent %d deploys, want 1", len(sent))
+	}
+}
+
 // A different update while one is deploying gets 422 ConcurrencyError and
 // changes nothing the running update staged.
 func TestUpdate_DifferentWhileInProgress_422(t *testing.T) {

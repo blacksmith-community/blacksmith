@@ -122,7 +122,7 @@ func (b *Broker) Update(
 	}
 
 	if !claimed {
-		return b.answerUpdateWhileClaimed(ctx, instanceID, target, details, held, logger)
+		return b.answerUpdateWhileClaimed(ctx, instanceID, target, details, asyncAllowed, held, logger)
 	}
 
 	// Until the goroutine takes the claim over, Update owns it and gives
@@ -292,9 +292,11 @@ func unprocessable(description string) error {
 // answerUpdateWhileClaimed answers an update of an instance another
 // operation holds. While an update holds it, a request with the same
 // fingerprint as the update on record gets 202 with that update's
-// operation, so a repeated PATCH sees the same update in progress. Any
-// other request gets 422 ConcurrencyError.
-func (b *Broker) answerUpdateWhileClaimed(ctx context.Context, instanceID string, target updateTarget, details osbapi.UpdateRequest, held *operationClaim, logger logger.Logger) (osbapi.UpdateResponse, bool, error) {
+// operation, so a repeated PATCH sees the same update in progress, unless
+// the platform won't accept an asynchronous answer, which gets 422
+// AsyncRequired as the first request would. Any other request gets 422
+// ConcurrencyError.
+func (b *Broker) answerUpdateWhileClaimed(ctx context.Context, instanceID string, target updateTarget, details osbapi.UpdateRequest, asyncAllowed bool, held *operationClaim, logger logger.Logger) (osbapi.UpdateResponse, bool, error) {
 	switch {
 	case held == nil:
 		logger.Error("Rejecting update of instance %s: its operation claim holds a value of an unexpected type", instanceID)
@@ -324,6 +326,12 @@ func (b *Broker) answerUpdateWhileClaimed(ctx context.Context, instanceID string
 		logger.Warning("Rejecting update of instance %s: a different update has been in progress since %s", instanceID, held.claimed.Format(time.RFC3339))
 
 		return osbapi.UpdateResponse{}, false, fmt.Errorf("%w: a different update of instance %s is in progress", osbapi.ErrConcurrencyError, instanceID)
+	}
+
+	if !asyncAllowed {
+		logger.Warning("Refusing the repeated update of instance %s: the update in progress since %s runs asynchronously, and the platform does not accept an asynchronous answer", instanceID, held.claimed.Format(time.RFC3339))
+
+		return osbapi.UpdateResponse{}, false, osbapi.ErrAsyncRequired
 	}
 
 	logger.Info("Update of instance %s is already in progress since %s; accepting the repeated request without starting another", instanceID, held.claimed.Format(time.RFC3339))
