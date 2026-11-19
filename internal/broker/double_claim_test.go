@@ -561,7 +561,7 @@ type goneDoubleClaim struct {
 // written, and a delete of an indexed x-abc is accepted, as each was before
 // the double claim refused it. When the director cannot say whether the
 // deployment exists, the cleanup keeps the mark and the row, and the delete
-// is answered 500 with nothing written.
+// is answered 500 with nothing written and the delete's own row.
 func TestDoubleClaim_SettlesOnceTheDeploymentIsGone(t *testing.T) {
 	t.Parallel()
 
@@ -613,8 +613,9 @@ func TestDoubleClaim_SettlesOnceTheDeploymentIsGone(t *testing.T) {
 }
 
 // requireGoneDelete sends the delete of x-abc entry describes and checks
-// its status, and that a delete that is not accepted wrote nothing and
-// left no row.
+// its status, and that a delete that is not accepted wrote nothing. A
+// delete refused because the director could not say must leave the
+// delete's row, and one answered 410 Gone must leave none.
 func requireGoneDelete(ctx context.Context, t *testing.T, refuser *broker.Broker, proxy *testutil.VaultFaultProxy, entry goneDoubleClaim) {
 	t.Helper()
 
@@ -633,8 +634,14 @@ func requireGoneDelete(ctx context.Context, t *testing.T, refuser *broker.Broker
 		t.Fatalf("in %q the delete wrote %v", entry.name, writes)
 	}
 
-	if attention := refuser.CleanupAttention(); len(attention) != 0 {
+	attention := refuser.CleanupAttention()
+
+	switch {
+	case !entry.unknown && len(attention) != 0:
 		t.Fatalf("in %q the delete left %+v for an operator, want nothing", entry.name, attention)
+	case entry.unknown && (len(attention) != 1 || attention[0].InstanceID != doubleClaimDebtor || attention[0].DeploymentName != collidingLongPlan+"-"+doubleClaimOwner ||
+		!strings.Contains(attention[0].Reason, "The platform's delete of this instance was refused, because instance abc also claims deployment redis-small-x-abc, through its index entry")):
+		t.Fatalf("in %q the delete left %+v for an operator, want one row for %s that says the platform's delete was refused", entry.name, attention, doubleClaimDebtor)
 	}
 }
 

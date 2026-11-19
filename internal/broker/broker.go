@@ -2288,12 +2288,19 @@ func (b *Broker) answerDeleteOfClaimedName(ctx context.Context, instanceID, depl
 // says the deployment is gone, the double claim can take nothing from
 // either instance, so it returns nil and leaves the delete to its caller,
 // with nothing noted. When the director cannot say, it fails the delete
-// with nothing written or noted, because the double claim may still hold.
+// with nothing written, and the row is noted as for any other refusal,
+// because the double claim is known and may still hold.
 func (b *Broker) refuseDeleteOfDoubleClaim(ctx context.Context, instanceID, deploymentName, claimant, where string, logger logger.Logger) error {
+	reason := deleteDoubleClaimReason(claimant, deploymentName, where)
+
 	gone, err := b.doubleClaimedDeploymentGone(ctx, deploymentName)
 	if err != nil {
-		logger.Error("Refusing deprovision of instance %s: instance %s claims deployment %s too, through %s, and the director could not say whether it exists: %s",
-			instanceID, claimant, deploymentName, where, err)
+		if b.holdCleanupAttention(instanceID, deploymentName, reason) {
+			logger.Error("Refusing deprovision of instance %s, and the director could not say whether deployment %s exists: %s: %s", instanceID, deploymentName, reason, err)
+		} else {
+			logger.Warning("Still refusing deprovision of instance %s, which the overview already lists, and the director could not say whether deployment %s exists: %s: %s",
+				instanceID, deploymentName, reason, err)
+		}
 
 		return fmt.Errorf("%w %s, and the director could not say whether it exists, so the deprovision of instance %s was refused: %w", errNameClaimedTwice, deploymentName, instanceID, err)
 	}
@@ -2305,7 +2312,6 @@ func (b *Broker) refuseDeleteOfDoubleClaim(ctx context.Context, instanceID, depl
 		return nil
 	}
 
-	reason := deleteDoubleClaimReason(claimant, deploymentName, where)
 	if b.holdCleanupAttention(instanceID, deploymentName, reason) {
 		logger.Error("Refusing deprovision of instance %s: %s", instanceID, reason)
 	} else {
