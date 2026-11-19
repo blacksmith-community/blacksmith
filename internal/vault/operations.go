@@ -90,7 +90,8 @@ var ErrHistoryNotAppended = errors.New("the task record was written, and its his
 // replaces a newer operation, and otherwise writes nothing and returns an
 // error that wraps ErrTaskRecordReplaced. A record that cannot be read
 // stops the write. The description goes into the history as TrackProgress
-// writes it.
+// writes it, and a write that lands while its history entry does not
+// returns an error that wraps ErrHistoryNotAppended.
 func (vault *Vault) TrackSucceeded(ctx context.Context, instanceID, action, description string, taskID int) error {
 	logger := logger.Get().Named("vault track succeeded " + instanceID)
 	logger.Debug("recording the %s that ran as task %d as succeeded: %s", action, taskID, description)
@@ -118,7 +119,12 @@ func (vault *Vault) TrackSucceeded(ctx context.Context, instanceID, action, desc
 		return err
 	}
 
-	return vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(TaskStateSucceeded, taskID))
+	err = vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(TaskStateSucceeded, taskID))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrHistoryNotAppended, err)
+	}
+
+	return nil
 }
 
 // TrackFailed records the operation of action that ran as taskID, with
