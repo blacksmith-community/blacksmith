@@ -2706,6 +2706,17 @@ func TestAdoptFollowsAgainATaskWhoseWatcherFinished(t *testing.T) {
 	base.finish(t, adopted, batchTaskDone)
 	waitBatchStats(t, batch, 0, 0)
 
+	// A watcher releases its slot before it reports its result, so an empty
+	// pool does not show that the watcher has finished. The wait returns
+	// once the watcher has.
+	ended, cancel := context.WithTimeout(t.Context(), batchWaitLimit)
+	defer cancel()
+
+	_, err := batch.WaitForTask(ended, adopted)
+	if err != nil {
+		t.Fatalf("expected the watcher to finish, got %v", err)
+	}
+
 	if tasks, _ := bosh.BatchWatchesHeld(batch); tasks != 1 {
 		t.Fatalf("expected the finished watcher to be kept until it is pruned, got %d watches", tasks)
 	}
