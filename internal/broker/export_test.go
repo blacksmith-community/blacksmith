@@ -697,3 +697,22 @@ func (b *Broker) JudgeCleanupClaim(ctx context.Context, instanceID, asked, name,
 
 	return b.judgeCleanupClaim(ctx, instanceID, asked, claim, logger.Get().Named("broker"))
 }
+
+// RefuseProvisionOverClaimedName runs the check a new provision of
+// instanceID under planID makes for another instance that claims the
+// deployment name it would mint.
+func (b *Broker) RefuseProvisionOverClaimedName(ctx context.Context, instanceID, planID string) error {
+	return b.refuseProvisionOverClaimedName(ctx, instanceID, osbapi.ProvisionRequest{PlanID: planID}, logger.Get().Named("broker"))
+}
+
+// RefuseProvisionOverUnownedDeployment reads the record of instanceID and
+// runs the check a provision of it, which the index does not have, makes
+// for a deployment named deploymentName that exists.
+func (b *Broker) RefuseProvisionOverUnownedDeployment(ctx context.Context, instanceID, deploymentName string) error {
+	recorded, err := b.readRecordedOperation(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	return b.refuseProvisionOverUnownedDeployment(ctx, instanceID, deploymentName, recorded, logger.Get().Named("broker"))
+}

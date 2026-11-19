@@ -63,6 +63,8 @@ var _ = Describe("Provision repeated while the first is in flight", func() {
 		releaseOnce = sync.Once{}
 
 		director = &contextDirector{ScriptedBOSHDirector: testutil.NewScriptedBOSHDirector()}
+		// A new provision asks whether its deployment exists before it deploys.
+		director.GetDeploymentFn = deploymentNotFound
 		director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
 		director.GetReleasesFn = func() ([]bosh.Release, error) { return []bosh.Release{}, nil }
 		director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {

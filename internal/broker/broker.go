@@ -491,6 +491,13 @@ func (b *Broker) Provision(
 		return response, async, err
 	}
 
+	// A new provision never takes a deployment name that another instance
+	// claims, so no cleanup owed by that instance can delete this one.
+	err = b.refuseProvisionOverClaimedName(ctx, instanceID, details, logger)
+	if err != nil {
+		return osbapi.ProvisionResponse{}, false, err
+	}
+
 	// Record the initial request
 	err = b.recordInitialRequest(ctx, instanceID, details, logger)
 	if err != nil {
@@ -1416,12 +1423,15 @@ func (b *Broker) answerDeprovisionWhileClaimed(instanceID string, held *operatio
 	return osbapi.DeprovisionResponse{Operation: operationTypeDeprovision}, true, nil
 }
 
-// refuseProvisionOverUnknownOutcome answers a provision of an instance the
-// index does not have. It refuses the provision with the OSB concurrency
+// answerUnindexedProvision answers a provision of an instance the index
+// does not have. It refuses the provision with the OSB concurrency
 // error when the instance's record holds an operation whose outcome is
-// unknown, and fails it when the record cannot be read. Otherwise it leaves
-// the request unanswered, so it goes on as a new provision.
-func (b *Broker) refuseProvisionOverUnknownOutcome(ctx context.Context, instanceID string, logger logger.Logger) (osbapi.ProvisionResponse, bool, bool, error) {
+// unknown, and fails it when the record cannot be read. It then refuses
+// it when deploymentName, the deployment the provision would create,
+// exists and the instance's record does not name it, as
+// refuseProvisionOverUnownedDeployment describes. Otherwise it leaves the
+// request unanswered, so it goes on as a new provision.
+func (b *Broker) answerUnindexedProvision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.ProvisionResponse, bool, bool, error) {
 	recorded, err := b.readRecordedOperation(ctx, instanceID)
 	if err != nil {
 		logger.Error("Refusing provision of instance %s: it has no index entry, and its recorded operation could not be read: %s", instanceID, err)
@@ -1436,6 +1446,11 @@ func (b *Broker) refuseProvisionOverUnknownOutcome(ctx context.Context, instance
 		return osbapi.ProvisionResponse{}, false, true, osbapi.ErrConcurrencyError
 	}
 
+	err = b.refuseProvisionOverUnownedDeployment(ctx, instanceID, deploymentName, recorded, logger)
+	if err != nil {
+		return osbapi.ProvisionResponse{}, false, errors.Is(err, osbapi.ErrBadRequest), err
+	}
+
 	return osbapi.ProvisionResponse{}, false, false, nil
 }
 
@@ -1444,7 +1459,9 @@ func (b *Broker) refuseProvisionOverUnknownOutcome(ctx context.Context, instance
 // answered. An instance with no index entry is not answered, and neither is
 // one whose entry a refused accept chain left before the provision was
 // accepted, once the director confirms that the deployment the provision
-// would create does not exist. Those requests go on as new provisions. An
+// would create does not exist. An instance with no index entry also goes on
+// when the deployment exists and its own record names it for a provision.
+// Those requests go on as new provisions. An
 // index or record that cannot be read fails the request, because taking it
 // for a missing instance could deploy over one that exists. An instance
 // with no index entry whose record holds an operation with an unknown
@@ -1474,7 +1491,7 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 
 	raw, found := idx.Data[instanceID]
 	if !found || raw == nil {
-		return b.refuseProvisionOverUnknownOutcome(readCtx, instanceID, logger)
+		return b.answerUnindexedProvision(readCtx, instanceID, vaultPkg.MintDeploymentName(details.PlanID, instanceID), logger)
 	}
 
 	entry := copyIndexEntry(raw)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -170,6 +171,8 @@ var _ = Describe("Detached broker work", func() {
 		deploymentName = planID + "-" + instanceID
 
 		director = &contextDirector{ScriptedBOSHDirector: testutil.NewScriptedBOSHDirector()}
+		// A new provision asks whether its deployment exists before it deploys.
+		director.GetDeploymentFn = deploymentNotFound
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 
 		dir, err := os.MkdirTemp("", "blacksmith-detached")
@@ -494,7 +497,12 @@ var _ = Describe("Detached broker work", func() {
 
 		director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
 		director.GetReleasesFn = func() ([]bosh.Release, error) { return []bosh.Release{}, nil }
+
+		var deployed atomic.Bool
+
 		director.onCreateDeployment = func(context.Context, string) (*bosh.Task, error) {
+			deployed.Store(true)
+
 			// Another writer, such as a purge, removes the index entry
 			// while the deploy runs.
 			err := vaultClient.Index(ctx, instanceID, nil)
@@ -516,6 +524,10 @@ var _ = Describe("Detached broker work", func() {
 			return &bosh.Task{ID: taskID, State: "cancelled"}, nil
 		}
 		director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+			if !deployed.Load() {
+				return deploymentNotFound(deploymentName)
+			}
+
 			return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
 		}
 		director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {

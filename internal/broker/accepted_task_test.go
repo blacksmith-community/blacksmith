@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -100,6 +101,8 @@ var _ = Describe("Director tasks recorded on acceptance", func() {
 		serviceCtx, shutdown = context.WithCancel(ctx)
 
 		director = &contextDirector{ScriptedBOSHDirector: testutil.NewScriptedBOSHDirector()}
+		// A new provision asks whether its deployment exists before it deploys.
+		director.GetDeploymentFn = deploymentNotFound
 		director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: outcomeDirectorUUID}, nil }
 		director.GetReleasesFn = func() ([]bosh.Release, error) { return []bosh.Release{}, nil }
 		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no running task is a nil task without an error
@@ -231,6 +234,12 @@ func TestProvisionSendsTheContextIDItRecordedAndKeepsItWhenTheAnswerIsLost(t *te
 			return true
 		case request.Method == http.MethodGet && (request.URL.Path == "/releases" || request.URL.Path == "/stemcells" || request.URL.Path == "/tasks"):
 			boshtest.WriteJSON(writer, http.StatusOK, []interface{}{})
+
+			return true
+		case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/deployments/"):
+			// The provision asks whether its deployment exists before it
+			// deploys, and the deploy's answer is lost, so none does.
+			boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment doesn't exist")
 
 			return true
 		default:

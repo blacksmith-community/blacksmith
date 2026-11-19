@@ -161,6 +161,8 @@ var _ = Describe("Record writes of the provision and deprovision goroutines", fu
 		serviceCtx, shutdown = context.WithCancel(ctx)
 
 		director = &contextDirector{ScriptedBOSHDirector: testutil.NewScriptedBOSHDirector()}
+		// A new provision asks whether its deployment exists before it deploys.
+		director.GetDeploymentFn = deploymentNotFound
 		director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
 		director.GetReleasesFn = func() ([]bosh.Release, error) { return []bosh.Release{}, nil }
 		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no running task is a nil task without an error

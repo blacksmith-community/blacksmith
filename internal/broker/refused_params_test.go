@@ -126,6 +126,8 @@ var _ = Describe("Provision parameters graft refuses", func() {
 		}
 
 		director := testutil.NewScriptedBOSHDirector()
+		// A new provision asks whether its deployment exists before it deploys.
+		director.GetDeploymentFn = deploymentNotFound
 		director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
 		director.CreateDeploymentFn = func(string) (*bosh.Task, error) {
 			createCalled <- struct{}{}

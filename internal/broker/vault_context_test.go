@@ -91,6 +91,8 @@ var _ = Describe("Vault writes that outlive their context", func() {
 		deploymentName = planID + "-" + instanceID
 
 		director = &contextDirector{ScriptedBOSHDirector: testutil.NewScriptedBOSHDirector()}
+		// A new provision asks whether its deployment exists before it deploys.
+		director.GetDeploymentFn = deploymentNotFound
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 
 		dir, err := os.MkdirTemp("", "blacksmith-vault-ctx")

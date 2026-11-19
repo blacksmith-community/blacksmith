@@ -91,6 +91,8 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		deploymentName = planID + "-" + instanceID
 
 		director = testutil.NewScriptedBOSHDirector()
+		// A new provision asks whether its deployment exists before it deploys.
+		director.GetDeploymentFn = deploymentNotFound
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 
 		plan := services.Plan{
@@ -165,13 +167,17 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 
 			Eventually(func() []string { return director.Calls("GetInfo") }).ShouldNot(BeEmpty())
 
+			// The provision asked whether its deployment exists, and the
+			// deprovision must ask the director nothing.
+			asked := director.Calls("GetDeployment")
+
 			_, _, err = brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
 			Expect(err).To(MatchError(osbapi.ErrConcurrencyError))
 
 			_, exists := indexEntry()
 			Expect(exists).To(BeTrue())
 			Expect(director.Calls("DeleteDeployment")).To(BeEmpty())
-			Expect(director.Calls("GetDeployment")).To(BeEmpty())
+			Expect(director.Calls("GetDeployment")).To(Equal(asked))
 		})
 
 		It("accepts the deprovision once the provision goroutine has ended", func() {
@@ -324,6 +330,10 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 				return &bosh.Task{ID: taskID, State: "done"}, nil
 			}
 			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+				if len(director.Calls("CreateDeployment")) == 0 {
+					return deploymentNotFound(name)
+				}
+
 				return &bosh.DeploymentDetail{Name: name, Manifest: "name: " + name}, nil
 			}
 			director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {

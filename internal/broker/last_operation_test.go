@@ -319,6 +319,8 @@ var _ = Describe("LastOperation", func() {
 		specWorld := world
 
 		director = testutil.NewScriptedBOSHDirector()
+		// A new provision asks whether its deployment exists before it deploys.
+		director.GetDeploymentFn = deploymentNotFound
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 		monitor = &recordingVMMonitor{}
 		backups = &recordingShield{}
@@ -562,6 +564,19 @@ var _ = Describe("LastOperation", func() {
 	})
 
 	Context("for a provision", func() {
+		BeforeEach(func() {
+			// A new provision asks whether its deployment exists before
+			// it deploys, when there is nothing yet.
+			exists := director.GetDeploymentFn
+			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+				if len(director.Calls("CreateDeployment")) == 0 {
+					return deploymentNotFound(name)
+				}
+
+				return exists(name)
+			}
+		})
+
 		provisionAndWait := func(createDeployment func(string) (*bosh.Task, error)) {
 			director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
 			director.GetReleasesFn = func() ([]bosh.Release, error) { return []bosh.Release{}, nil }
