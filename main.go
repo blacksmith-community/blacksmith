@@ -1483,6 +1483,9 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		brokerInstance.SetTaskWaiters(upgradeHandler.GetManager())
 	}
 
+	// Updates keep their change records beside the other change records.
+	brokerInstance.SetChanges(internalAPI.Changes())
+
 	return &broker.API{
 		Username: config.Broker.Username,
 		Password: config.Broker.Password,

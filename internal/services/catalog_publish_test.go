@@ -189,7 +189,8 @@ func requirePublishedPlans(t *testing.T, published map[string]interface{}) {
 // The plan-change declarations in service.yml and plan.yml reach the
 // broker's catalog structs, while the catalog the platform reads keeps
 // publishing plan_updateable false, because this release cannot change a
-// plan. Context updates and maintenance_info stay unpublished as well.
+// plan. Every service publishes allow_context_updates true, and
+// maintenance_info stays unpublished.
 //
 //nolint:paralleltest // kept serial, as the other catalog tests are
 func TestCatalog_PublishesPlanUpdateableFromForge(t *testing.T) {
@@ -203,10 +204,12 @@ func TestCatalog_PublishesPlanUpdateableFromForge(t *testing.T) {
 		t.Errorf("the service publishes plan_updateable %v, want false", published["plan_updateable"])
 	}
 
-	for _, field := range []string{"allow_context_updates", "maintenance_info"} {
-		if value, ok := published[field]; ok {
-			t.Errorf("the service publishes %s %v, want it left out", field, value)
-		}
+	if published["allow_context_updates"] != true {
+		t.Errorf("the service publishes allow_context_updates %v, want true", published["allow_context_updates"])
+	}
+
+	if value, ok := published["maintenance_info"]; ok {
+		t.Errorf("the service publishes maintenance_info %v, want it left out", value)
 	}
 
 	requirePublishedPlans(t, published)

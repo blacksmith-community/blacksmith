@@ -124,6 +124,9 @@ func TestTrackUpdateAccepted_RefusesWhatItMustNotReplace(t *testing.T) {
 		name   string
 		record func(ctx context.Context, instanceID string) error
 		want   error
+		// kind is the finer refusal the error also wraps, or nil for one
+		// that must wrap neither ErrInstanceDeleted nor ErrInstanceNotReady.
+		kind error
 	}{
 		{"a provision that owes a cleanup", func(ctx context.Context, instanceID string) error {
 			err := client.TrackProgressWithMintedDeployment(ctx, instanceID, "provision", "Creating", "context-41", updatePlan, 41, nil)
@@ -132,10 +135,10 @@ func TestTrackUpdateAccepted_RefusesWhatItMustNotReplace(t *testing.T) {
 			}
 
 			return client.TrackFailedCleanupPending(ctx, instanceID, "provision", "failed", "context-41", 41)
-		}, vault.ErrCleanupOwed},
+		}, vault.ErrCleanupOwed, nil},
 		{"a provision still running", func(ctx context.Context, instanceID string) error {
 			return client.TrackProgressWithContextID(ctx, instanceID, "provision", "Creating", "context-41", 41, nil)
-		}, vault.ErrUpdateNotAllowed},
+		}, vault.ErrUpdateNotAllowed, vault.ErrInstanceNotReady},
 		{"a provision that failed", func(ctx context.Context, instanceID string) error {
 			err := client.TrackProgressWithContextID(ctx, instanceID, "provision", "Creating", "context-41", 41, nil)
 			if err != nil {
@@ -143,16 +146,16 @@ func TestTrackUpdateAccepted_RefusesWhatItMustNotReplace(t *testing.T) {
 			}
 
 			return client.TrackFailed(ctx, instanceID, "provision", "failed", "context-41", 41)
-		}, vault.ErrUpdateNotAllowed},
+		}, vault.ErrUpdateNotAllowed, vault.ErrInstanceNotReady},
 		{"a deprovision", func(ctx context.Context, instanceID string) error {
 			return client.TrackProgressWithContextID(ctx, instanceID, "deprovision", "Deleting", "context-del", 0, nil)
-		}, vault.ErrUpdateNotAllowed},
+		}, vault.ErrUpdateNotAllowed, vault.ErrInstanceDeleted},
 		{"an update still running", func(ctx context.Context, instanceID string) error {
 			return client.TrackUpdateAccepted(ctx, instanceID, "accepted", "context-first", "index-name", stagedUpdate())
-		}, vault.ErrUpdateNotAllowed},
+		}, vault.ErrUpdateNotAllowed, nil},
 		{"an unknown outcome", func(ctx context.Context, instanceID string) error {
 			return client.TrackOutcomeUnknown(ctx, instanceID, "provision", "lost", "context-41", time.Now())
-		}, vault.ErrOutcomeUnknownRecorded},
+		}, vault.ErrOutcomeUnknownRecorded, nil},
 	}
 
 	for index, test := range cases {
@@ -167,18 +170,38 @@ func TestTrackUpdateAccepted_RefusesWhatItMustNotReplace(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, _, before := readRecord(ctx, t, client, instanceID)
-
-			err = client.TrackUpdateAccepted(ctx, instanceID, "Update request accepted", "context-update", "index-name", stagedUpdate())
-			if !errors.Is(err, test.want) {
-				t.Fatalf("the update over %s returned %v, want %v", test.name, err, test.want)
-			}
-
-			_, _, after := readRecord(ctx, t, client, instanceID)
-			if fmt.Sprint(before) != fmt.Sprint(after) {
-				t.Fatalf("the refused update changed the record from %v to %v", before, after)
-			}
+			requireUpdateRefused(ctx, t, client, instanceID, test.want, test.kind)
 		})
+	}
+}
+
+// requireUpdateRefused fails the test unless an update over the record of
+// instanceID is refused with want, wraps kind as its only finer refusal,
+// and leaves the record as it was.
+func requireUpdateRefused(ctx context.Context, t *testing.T, client *vault.Vault, instanceID string, want, kind error) {
+	t.Helper()
+
+	_, _, before := readRecord(ctx, t, client, instanceID)
+
+	err := client.TrackUpdateAccepted(ctx, instanceID, "Update request accepted", "context-update", "index-name", stagedUpdate())
+	if !errors.Is(err, want) {
+		t.Fatalf("the update returned %v, want %v", err, want)
+	}
+
+	refusal := vault.UpdateRefusal(instanceID, before)
+	if !errors.Is(refusal, want) {
+		t.Fatalf("UpdateRefusal returned %v, want %v", refusal, want)
+	}
+
+	for _, finer := range []error{vault.ErrInstanceDeleted, vault.ErrInstanceNotReady} {
+		if errors.Is(err, finer) != errors.Is(kind, finer) {
+			t.Fatalf("the update returned %v, which should wrap %v only when the case's kind %v is it", err, finer, kind)
+		}
+	}
+
+	_, _, after := readRecord(ctx, t, client, instanceID)
+	if fmt.Sprint(before) != fmt.Sprint(after) {
+		t.Fatalf("the refused update changed the record from %v to %v", before, after)
 	}
 }
 

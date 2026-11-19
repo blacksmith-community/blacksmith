@@ -46,6 +46,25 @@ var ErrCleanupOwed = errors.New("the instance still owes the cleanup of a failed
 // provision that never succeeded.
 var ErrUpdateNotAllowed = errors.New("the task record holds an operation an update can't replace")
 
+// ErrInstanceDeleted and ErrInstanceNotReady tell apart two of the
+// records an update can't replace, and each comes wrapped together with
+// ErrUpdateNotAllowed. The first is a deleted instance or one whose
+// deprovision was accepted, and the second is one whose provision hasn't
+// succeeded. Any other refusal is an operation still running.
+var (
+	ErrInstanceDeleted  = errors.New("the instance is deleted or being deleted")
+	ErrInstanceNotReady = errors.New("the instance's provision has not succeeded")
+)
+
+// UpdateRefusal reports why an update can't replace record, the task
+// record of instanceID as it was read, or nil when it can. A nil record
+// is an instance with no task record, which takes the update. The update
+// handler asks it before anything is written, and TrackUpdateAccepted
+// asks it again under the task record lock.
+func UpdateRefusal(instanceID string, record map[string]interface{}) error {
+	return updateMayReplace(instanceID, record)
+}
+
 // TrackUpdateAccepted records an accepted update as the instance's current
 // operation, with contextID as the context ID its deploy will carry and
 // staged as the values it will commit. The deployment name and the plan
@@ -137,9 +156,9 @@ func updateMayReplace(instanceID string, current map[string]interface{}) error {
 
 	switch {
 	case action == "deprovision" || state == TaskStateDeleted:
-		return fmt.Errorf("%w: instance %s records the %s state of a %s", ErrUpdateNotAllowed, instanceID, state, action)
+		return fmt.Errorf("%w: %w: instance %s records the %s state of a %s", ErrUpdateNotAllowed, ErrInstanceDeleted, instanceID, state, action)
 	case action == "provision" && state != TaskStateSucceeded:
-		return fmt.Errorf("%w: instance %s records a provision in the %s state, not one that succeeded", ErrUpdateNotAllowed, instanceID, state)
+		return fmt.Errorf("%w: %w: instance %s records a provision in the %s state, not one that succeeded", ErrUpdateNotAllowed, ErrInstanceNotReady, instanceID, state)
 	case state != TaskStateSucceeded && state != eventStateFailed && state != TaskStateRollbackFailed:
 		return fmt.Errorf("%w: instance %s records a %s that is still %s", ErrUpdateNotAllowed, instanceID, action, state)
 	}

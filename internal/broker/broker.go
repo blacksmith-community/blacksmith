@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/config"
 	"blacksmith/internal/credhub"
@@ -264,6 +265,16 @@ type Broker struct {
 
 	// sweep is the state the sweep of owed cleanups keeps between passes.
 	sweep cleanupSweep
+
+	// changes keeps the change records of updates. When it was never set,
+	// no record is kept.
+	changes atomic.Pointer[audit.ChangeStore]
+}
+
+// SetChanges hands the broker the change audit store, which keeps a
+// record of every update that reaches its checks.
+func (b *Broker) SetChanges(store *audit.ChangeStore) {
+	b.changes.Store(store)
 }
 
 // operationClaim is the claim an operation holds on an instance ID in
@@ -939,32 +950,6 @@ func (b *Broker) Unbind(
 	return osbapi.UnbindResponse{}, false, nil
 }
 
-func (b *Broker) Update(
-	ctx context.Context,
-	instanceID string,
-	details osbapi.UpdateRequest,
-	asyncAllowed bool,
-) (
-	osbapi.UpdateResponse,
-	bool,
-	error,
-) {
-	logger := logger.Get().Named("broker")
-	logger.Error("Update operation not implemented")
-
-	prevPlanID := ""
-	if details.PreviousValues != nil {
-		prevPlanID = details.PreviousValues.PlanID
-	}
-
-	logger.Debug("Update request - InstanceID: %s, ServiceID: %s, NewPlanID: %s, PreviousPlanID: %s",
-		instanceID, details.ServiceID, details.PlanID, prevPlanID)
-
-	// FIXME: implement this!
-
-	return osbapi.UpdateResponse{}, false, ErrNotImplemented
-}
-
 func (b *Broker) GetInstance(ctx context.Context, instanceID string, details osbapi.FetchInstanceRequest) (osbapi.FetchInstanceResponse, error) {
 	logger := logger.Get().Named("broker")
 	logger.Debug("GetInstance called for instanceID: %s", instanceID)
@@ -1230,6 +1215,12 @@ type TaskWaiters interface {
 // 422 ConcurrencyError, even while the guard holds it for no one.
 func (b *Broker) SetTaskWaiters(waiters TaskWaiters) {
 	b.taskWaiters.Store(&waiters)
+}
+
+// changeStore returns the change audit store, or nil when none was set.
+// A nil store records nothing.
+func (b *Broker) changeStore() *audit.ChangeStore {
+	return b.changes.Load()
 }
 
 // errSettleHeld reports that a deprovision gave up waiting for the settle

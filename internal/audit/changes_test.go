@@ -371,6 +371,33 @@ func TestAnInstanceRecordLogsNoSecondLine(t *testing.T) {
 	}
 }
 
+// An update names its own actor, the platform user its request came
+// from, and the store keeps that actor while it still records where the
+// request came from. The reason and the key names are cleaned like every
+// other field.
+func TestRecordKeepsTheActorTheCallerNamed(t *testing.T) {
+	t.Parallel()
+
+	vault := audittest.NewKV()
+	store := newStore(vault, &audittest.Logger{}, time.Now())
+
+	store.Record(actorContext(t), audit.ChangeRecord{
+		Scope: audit.ScopeInstances, Instance: "7a1b", Action: "update", Outcome: "refused",
+		Actor: "cloudfoundry:user-1", Reason: "invalid\n_parameters", Keys: "maxmemory-policy,\r\nnote",
+	})
+	store.Wait()
+
+	records, err := store.List(t.Context(), audit.ScopeInstances, 10)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records = %+v, err = %v", records, err)
+	}
+
+	got := records[0]
+	if got.Actor != "cloudfoundry:user-1" || got.From == "" || got.Reason != "invalid_parameters" || got.Keys != "maxmemory-policy,note" {
+		t.Fatalf("record = %+v", got)
+	}
+}
+
 // A nil store records nothing and lists nothing, so a broker without
 // Vault still answers.
 func TestANilStoreDoesNothing(t *testing.T) {

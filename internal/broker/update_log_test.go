@@ -1,6 +1,7 @@
 package broker_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -26,8 +27,8 @@ func TestUpdateLogsEachPlanUnderItsOwnLabel(t *testing.T) {
 		PlanID:         "plan-requested",
 		PreviousValues: &osbapi.PreviousValues{PlanID: "plan-before"},
 	}, true)
-	if err == nil {
-		t.Error("expected the update stub to refuse the request")
+	if !errors.Is(err, broker.ErrUpdateNoVault) {
+		t.Errorf("an update on a broker with no Vault was answered %v, want ErrUpdateNoVault", err)
 	}
 
 	output := capture.output()

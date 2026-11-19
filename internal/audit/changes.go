@@ -79,6 +79,11 @@ type ChangeRecord struct {
 	Action     string `json:"action,omitempty"`
 	Outcome    string `json:"outcome,omitempty"`
 	TaskID     int    `json:"task_id,omitempty"`
+	// Reason is the code of a refused instance action, and Keys names the
+	// parameter keys an update added, changed, or removed, joined by
+	// commas. Neither holds a value.
+	Reason string `json:"reason,omitempty"`
+	Keys   string `json:"keys,omitempty"`
 }
 
 // KV is the part of Vault the store reads and writes.
@@ -165,7 +170,12 @@ func (s *ChangeStore) Record(ctx context.Context, records ...ChangeRecord) {
 		rec.At = now
 
 		if hasActor {
-			rec.Actor = actor.Username
+			// An actor the caller already named, such as the platform user
+			// an OSB request's originating identity names, is kept.
+			if rec.Actor == "" {
+				rec.Actor = actor.Username
+			}
+
 			rec.From = actor.From()
 		}
 
@@ -417,7 +427,7 @@ func SanitizeChange(rec ChangeRecord) ChangeRecord {
 
 	for _, field := range []*string{
 		&rec.ID, &rec.Scope, &rec.Actor, &rec.From, &rec.Target, &rec.Change, &rec.Key,
-		&rec.Old, &rec.New, &rec.Instance, &rec.Deployment, &rec.Action, &rec.Outcome,
+		&rec.Old, &rec.New, &rec.Instance, &rec.Deployment, &rec.Action, &rec.Outcome, &rec.Reason, &rec.Keys,
 	} {
 		*field = truncate(stripURLPassword(clean(*field)), maxChangeText)
 	}

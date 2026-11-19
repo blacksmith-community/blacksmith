@@ -31,9 +31,9 @@ var (
 const planChangesSupported = false
 
 // contextUpdatesSupported reports whether this release of the broker can
-// apply an update that changes only an instance's context. Until it can,
-// the catalog publishes allow_context_updates false.
-const contextUpdatesSupported = false
+// apply an update that changes only an instance's context, which it
+// does for every service, so every service publishes it as true.
+const contextUpdatesSupported = true
 
 // maintenanceInfoSupported reports whether this release of the broker can
 // run a maintenance update. Until it can, the catalog publishes no
@@ -830,7 +830,9 @@ func Catalog(services []Service) []osbapi.Service {
 		}
 
 		brokerServices[index].PlanUpdateable = &anyUpdateable
-		brokerServices[index].AllowContextUpdates = contextUpdatesSupported && service.AllowContextUpdates
+		// The broker applies a context-only update the same way for every
+		// forge, so every service publishes it.
+		brokerServices[index].AllowContextUpdates = contextUpdatesSupported
 
 		if maintenanceInfoSupported {
 			brokerServices[index].MaintenanceInfo = catalogMaintenanceInfo(service.MaintenanceInfo)
