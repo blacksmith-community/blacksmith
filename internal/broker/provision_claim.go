@@ -146,10 +146,13 @@ func refuseClaimedName(instanceID, deploymentName, claimant, where string, logge
 // would create. It returns nil when the director says the deployment does
 // not exist, and when it exists and the instance's own record names it
 // for a provision that owes no cleanup, so a retried provision of the
-// same instance goes on.
-// A deployment that exists without that record answers 400 Bad Request,
-// because the broker cannot show it belongs to this instance, and any
-// other answer fails the request.
+// same instance goes on. When the record names it for a provision that
+// failed, the request answers 409 Conflict, as it does for an indexed
+// instance whose provision failed, because a deploy over it would leave
+// the owed cleanup pointed at the new deployment. A deployment that exists
+// with no record naming it answers 400 Bad Request, because the broker
+// cannot show it belongs to this instance, and any other answer fails the
+// request.
 func (b *Broker) refuseProvisionOverUnownedDeployment(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) error {
 	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
 
@@ -160,7 +163,12 @@ func (b *Broker) refuseProvisionOverUnownedDeployment(ctx context.Context, insta
 		logger.Error("Refusing provision of instance %s: the director could not confirm whether deployment %s exists: %s", instanceID, deploymentName, err)
 
 		return fmt.Errorf("could not confirm whether deployment %s of instance %s exists, so the provision was refused: %w", deploymentName, instanceID, err)
-	case recorded.Action == operationTypeProvision && recorded.DeploymentName == deploymentName && !recorded.CleanupPending:
+	case recorded.Action != operationTypeProvision || recorded.DeploymentName != deploymentName:
+	case recorded.CleanupPending || recorded.State == recordedStateFailed:
+		logger.Warning("Refusing provision of instance %s: its provision of deployment %s failed (%s)", instanceID, deploymentName, recorded.Description)
+
+		return fmt.Errorf("%w: the provision of instance %s failed, and it must be deleted before a provision with the same ID", osbapi.ErrInstanceAlreadyExists, instanceID)
+	default:
 		logger.Info("Deployment %s exists, and the record of instance %s names it for its provision, so the provision goes on", deploymentName, instanceID)
 
 		return nil

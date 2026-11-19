@@ -198,29 +198,20 @@ func TestProvision_RefusesADeploymentItCannotShowIsItsOwn(t *testing.T) {
 
 	exists := func(name string) (*bosh.DeploymentDetail, error) { return &bosh.DeploymentDetail{Name: name}, nil }
 	unreachable := func(string) (*bosh.DeploymentDetail, error) { return nil, errDirectorUnreachable }
-	inProgress := func(ctx context.Context, instanceID string) error {
-		err := vaultClient.TrackProgressWithMintedDeployment(ctx, instanceID, outcomeProvision, "Creating BOSH deployment", "context-7", standalonePlanID, 0, nil)
-		if err != nil {
-			return fmt.Errorf("recording the provision: %w", err)
-		}
-
-		return nil
-	}
-	owing := func(ctx context.Context, instanceID string) error {
-		return recordFailedMintedProvision(ctx, vaultClient, instanceID, standalonePlanID, standalonePlanID+"-"+instanceID)
-	}
+	inProgress, owing, cleaned := unownedRecordWriters(vaultClient)
 
 	cases := []struct {
 		name       string
 		deployment func(string) (*bosh.DeploymentDetail, error)
 		record     func(context.Context, string) error
-		badRequest bool
+		want       error
 		fails      bool
 	}{
 		{name: "the deployment does not exist", deployment: deploymentNotFound},
-		{name: "the deployment exists and nothing names it", deployment: exists, badRequest: true, fails: true},
+		{name: "the deployment exists and nothing names it", deployment: exists, want: osbapi.ErrBadRequest, fails: true},
 		{name: "the deployment exists and the instance's provision names it", deployment: exists, record: inProgress},
-		{name: "the deployment exists and the instance's failed provision still owes its cleanup", deployment: exists, record: owing, badRequest: true, fails: true},
+		{name: "the deployment exists and the instance's failed provision still owes its cleanup", deployment: exists, record: owing, want: osbapi.ErrInstanceAlreadyExists, fails: true},
+		{name: "the deployment exists and the instance's failed provision owes no cleanup", deployment: exists, record: cleaned, want: osbapi.ErrInstanceAlreadyExists, fails: true},
 		{name: "the director cannot say whether it exists", deployment: unreachable, fails: true},
 	}
 
@@ -243,13 +234,56 @@ func TestProvision_RefusesADeploymentItCannotShowIsItsOwn(t *testing.T) {
 
 			err := cleanupGuardBroker(director, vaultClient).RefuseProvisionOverUnownedDeployment(ctx, instanceID, name)
 
-			switch {
-			case entry.fails != (err != nil):
-				t.Fatalf("the provision was answered %v, want a refusal %v", err, entry.fails)
-			case entry.badRequest != errors.Is(err, osbapi.ErrBadRequest):
-				t.Fatalf("the provision was answered %v, want a bad request %v", err, entry.badRequest)
-			}
+			requireUnownedAnswer(t, err, entry.want, entry.fails)
 		})
+	}
+}
+
+// unownedRecordWriters returns writers for the records of an instance
+// whose provision is in progress, failed and still owes its cleanup, and
+// failed with its cleanup done.
+func unownedRecordWriters(vaultClient *internalVault.Vault) (func(context.Context, string) error, func(context.Context, string) error, func(context.Context, string) error) {
+	inProgress := func(ctx context.Context, instanceID string) error {
+		err := vaultClient.TrackProgressWithMintedDeployment(ctx, instanceID, outcomeProvision, "Creating BOSH deployment", "context-7", standalonePlanID, 0, nil)
+		if err != nil {
+			return fmt.Errorf("recording the provision: %w", err)
+		}
+
+		return nil
+	}
+	owing := func(ctx context.Context, instanceID string) error {
+		return recordFailedMintedProvision(ctx, vaultClient, instanceID, standalonePlanID, standalonePlanID+"-"+instanceID)
+	}
+	cleaned := func(ctx context.Context, instanceID string) error {
+		err := owing(ctx, instanceID)
+		if err == nil {
+			err = vaultClient.ClearCleanupPending(ctx, instanceID, outcomeProvision, "context-7")
+		}
+
+		if err != nil {
+			return fmt.Errorf("clearing the owed cleanup: %w", err)
+		}
+
+		return nil
+	}
+
+	return inProgress, owing, cleaned
+}
+
+// requireUnownedAnswer checks the answer of the unowned-deployment check
+// against the error it should wrap, or a plain failure when want is nil.
+func requireUnownedAnswer(t *testing.T, err, want error, fails bool) {
+	t.Helper()
+
+	switch {
+	case fails != (err != nil):
+		t.Fatalf("the provision was answered %v, want a refusal %v", err, fails)
+	case want != nil && !errors.Is(err, want):
+		t.Fatalf("the provision was answered %v, want %v", err, want)
+	case want == nil && (errors.Is(err, osbapi.ErrBadRequest) || errors.Is(err, osbapi.ErrInstanceAlreadyExists)):
+		t.Fatalf("the provision was answered %v, want a plain failure", err)
+	case errors.Is(err, osbapi.ErrInstanceAlreadyExists) && !strings.Contains(err.Error(), "must be deleted before a provision with the same ID"):
+		t.Fatalf("the provision was answered %v, want the indexed path's wording", err)
 	}
 }
 

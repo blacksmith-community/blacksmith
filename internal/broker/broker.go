@@ -1448,7 +1448,7 @@ func (b *Broker) answerUnindexedProvision(ctx context.Context, instanceID, deplo
 
 	err = b.refuseProvisionOverUnownedDeployment(ctx, instanceID, deploymentName, recorded, logger)
 	if err != nil {
-		return osbapi.ProvisionResponse{}, false, errors.Is(err, osbapi.ErrBadRequest), err
+		return osbapi.ProvisionResponse{}, false, errors.Is(err, osbapi.ErrBadRequest) || errors.Is(err, osbapi.ErrInstanceAlreadyExists), err
 	}
 
 	return osbapi.ProvisionResponse{}, false, false, nil
