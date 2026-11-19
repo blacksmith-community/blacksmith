@@ -803,16 +803,23 @@ func (d *deprovisioningPhase) checkDeploymentExists(ctx context.Context) (bool, 
 // delete went ahead over a double claim because the director said the
 // deployment was gone, when the director now has it. Nothing is deleted,
 // the index entry and the credentials stay, and the instance is listed
-// under Attention required with the delete's reason, unless it is listed
-// already. The description names the deployment and not the other
-// instance, whose ID only the log and the overview show.
+// under Attention required with the delete's reason. That reason replaces
+// the row of a cleanup the sweep refused, because the deprovision's record
+// has replaced the failed provision that owed the cleanup, so the sweep
+// would drop that row while the double claim still holds. A row with the
+// same reason keeps its time. The description names the deployment and
+// not the other instance, whose ID only the log and the overview show.
 func (d *deprovisioningPhase) refuseReappearedDeployment(ctx context.Context) {
 	claim := d.foundGone
 	reason := deleteDoubleClaimReason(claim.claimant, d.deploymentName, claim.where)
 
-	d.broker.holdCleanupAttention(d.instanceID, d.deploymentName, reason)
-	d.logger.Error("Refusing to delete deployment %s for instance %s: the director said it was gone when the delete was accepted, and it has it again, while instance %s claims it too, through %s, so nothing was deleted",
-		d.deploymentName, d.instanceID, claim.claimant, claim.where)
+	if d.broker.noteCleanupAttention(d.instanceID, d.deploymentName, reason) {
+		d.logger.Error("Refusing to delete deployment %s for instance %s: the director said it was gone when the delete was accepted, and it has it again, while instance %s claims it too, through %s, so nothing was deleted",
+			d.deploymentName, d.instanceID, claim.claimant, claim.where)
+	} else {
+		d.logger.Warning("Still refusing to delete deployment %s for instance %s, which the overview already lists: the director said it was gone when the delete was accepted, and it has it again, while instance %s claims it too, through %s, so nothing was deleted",
+			d.deploymentName, d.instanceID, claim.claimant, claim.where)
+	}
 
 	d.broker.failWithTracking(ctx, d.instanceID, "deprovision",
 		fmt.Sprintf("Deployment %s, which two service instances claim, exists again, so it was not deleted, and an operator must settle which instance it belongs to", d.deploymentName), nil, d.logger)

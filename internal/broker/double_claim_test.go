@@ -931,7 +931,7 @@ func requireRowKeptWhileUnchecked(t *testing.T, entry uncheckedRowCase) {
 		}
 	}
 
-	want := deleteRowOf(t, deleter, doubleClaimDebtor)
+	want := debtorRow(t, deleter)
 
 	if entry.directorFails {
 		scripted.state.Store(scanDirectorFailing)
@@ -948,7 +948,7 @@ func requireRowKeptWhileUnchecked(t *testing.T, entry uncheckedRowCase) {
 		t.Fatal("the scan never asked the director, so the fault was never made")
 	}
 
-	if row := deleteRowOf(t, deleter, doubleClaimDebtor); row.Reason != want.Reason || !row.Since.Equal(want.Since) {
+	if row := debtorRow(t, deleter); row.Reason != want.Reason || !row.Since.Equal(want.Since) {
 		t.Fatalf("the scan that could not check the refusal left %+v, want %+v as it was", row, want)
 	}
 
@@ -1009,18 +1009,18 @@ func newFaultingScanDirector(fault func()) *faultingScanDirector {
 	return scripted
 }
 
-// deleteRowOf returns the row the overview of deleter lists for
-// instanceID, and fails the spec when it lists none.
-func deleteRowOf(t *testing.T, deleter *broker.Broker, instanceID string) interfaces.CleanupAttention {
+// debtorRow returns the row the overview of deleter lists for x-abc, and
+// fails the spec when it lists none.
+func debtorRow(t *testing.T, deleter *broker.Broker) interfaces.CleanupAttention {
 	t.Helper()
 
 	for _, row := range deleter.CleanupAttention() {
-		if row.InstanceID == instanceID {
+		if row.InstanceID == doubleClaimDebtor {
 			return row
 		}
 	}
 
-	t.Fatalf("the overview lists %+v, want a row for %s", deleter.CleanupAttention(), instanceID)
+	t.Fatalf("the overview lists %+v, want a row for %s", deleter.CleanupAttention(), doubleClaimDebtor)
 
 	return interfaces.CleanupAttention{}
 }
@@ -1052,34 +1052,117 @@ func requireSweptRow(t *testing.T, deleter *broker.Broker, want interfaces.Clean
 	}
 }
 
+// reappearedCase is a delete of x-abc that goes ahead over a double claim
+// because the director says the deployment is gone, after which the
+// director has the deployment again. write writes the claims. When swept
+// is set, the record of x-abc owes the cleanup of the name, a sweep pass
+// refuses that cleanup before the delete, and two passes run after it.
+type reappearedCase struct {
+	name  string
+	write func(ctx context.Context, t *testing.T, vaultClient *internalVault.Vault) string
+	swept bool
+}
+
 // A delete of an indexed instance goes ahead over a double claim when the
 // director says the deployment is gone. If the director has the
 // deployment again when the deprovision would send its delete, the other
 // claimant may have deployed it, so nothing is deleted. The deprovision
 // fails with a description that names the deployment and not the other
 // instance, the index entry stays, and the overview lists the instance
-// with the delete's reason.
+// with the delete's reason. That reason replaces the row of a cleanup the
+// sweep refused before, since the failed deprovision's record no longer
+// owes that cleanup, and the sweep's later passes keep it, with its time,
+// while the double claim holds.
 func TestDeprovision_KeepsADoubleClaimedDeploymentThatReappears(t *testing.T) {
 	t.Parallel()
 
-	vaultClient, _ := claimFaultVault(t)
-	ctx := context.Background()
-	name := writeTwoLiveClaims(ctx, t, vaultClient)
+	cases := []reappearedCase{
+		{name: "two live instances name it", write: writeTwoLiveClaims},
+		{name: "its own record owed the cleanup, which the sweep refused", write: writeIndexedDoubleClaim, swept: true},
+	}
 
-	// The claim check's read is the first, and the director has the
-	// deployment again on every later read.
-	var reads atomic.Int32
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			requireReappearedDeploymentKept(t, entry)
+		})
+	}
+}
+
+// reappearingDirector returns a director that has every deployment, apart
+// from the one read after goneNext is set, which says it is gone, and
+// that counts its deployment reads in reads.
+func reappearingDirector() (*testutil.ScriptedBOSHDirector, *atomic.Bool, *atomic.Int32) {
+	var (
+		goneNext atomic.Bool
+		reads    atomic.Int32
+	)
 
 	director := cleanupGuardDirector()
 	director.GetDeploymentFn = func(asked string) (*bosh.DeploymentDetail, error) {
-		if reads.Add(1) == 1 {
+		reads.Add(1)
+
+		if goneNext.CompareAndSwap(true, false) {
 			return deploymentNotFound(asked)
 		}
 
 		return &bosh.DeploymentDetail{Name: asked}, nil
 	}
 
+	return director, &goneNext, &reads
+}
+
+// requireReappearedDeprovisionFailed checks that the deprovision of x-abc
+// kept its index entry, recorded a failure that says deployment name
+// exists again and names no other instance, and left the delete's row.
+func requireReappearedDeprovisionFailed(ctx context.Context, t *testing.T, deleter *broker.Broker, vaultClient *internalVault.Vault, name string) {
+	t.Helper()
+
+	_, indexed, err := vaultClient.FindInstance(ctx, doubleClaimDebtor)
+	if err != nil || !indexed {
+		t.Fatalf("the index entry of %s is %v, %v, want it kept", doubleClaimDebtor, indexed, err)
+	}
+
+	recorded, err := deleter.RecordedOperation(ctx, doubleClaimDebtor)
+	if err != nil || recorded.Action != outcomeDeprovision || recorded.State != outcomeStateFailed || !strings.Contains(recorded.Description, "Deployment "+name+", which two service instances claim, exists again") {
+		t.Fatalf("the record of %s is %+v, %v, want a failed deprovision that says the deployment exists again", doubleClaimDebtor, recorded, err)
+	}
+
+	requireNoOtherInstanceNamed(t, recorded.Description, name, doubleClaimDebtor, doubleClaimOwner)
+	requireDeleteRow(t, deleter, doubleClaimDebtor, name, "The platform's delete of this instance was refused, because instance abc also claims deployment redis-small-x-abc, through its index entry")
+}
+
+// requireReappearedDeploymentKept runs the delete of entry, and requires
+// that it deletes nothing, fails the deprovision, and leaves the delete's
+// row for an operator, through the sweep's passes when entry is swept.
+func requireReappearedDeploymentKept(t *testing.T, entry reappearedCase) {
+	t.Helper()
+
+	vaultClient, _ := claimFaultVault(t)
+	ctx := context.Background()
+	name := entry.write(ctx, t, vaultClient)
+
+	// The director has the deployment on every read but the claim
+	// check's, which says it is gone.
+	director, goneNext, reads := reappearingDirector()
 	deleter := doubleClaimDeprovisioner(ctx, t, director, vaultClient)
+
+	now := time.Now()
+
+	deleter.SetSweepClock(func() time.Time { return now })
+
+	if entry.swept {
+		deleter.SweepOwedCleanupsOnce(ctx, time.Minute)
+
+		if row := debtorRow(t, deleter); !strings.HasPrefix(row.Reason, "Instance abc also claims deployment "+name) {
+			t.Fatalf("the sweep left %+v for an operator, want the row of its refused cleanup", row)
+		}
+	}
+
+	before := reads.Load()
+
+	goneNext.Store(true)
 
 	status, body := deleteInstance(ctx, t, deleter, doubleClaimDebtor, collidingShortPlan)
 	if status != http.StatusAccepted {
@@ -1095,20 +1178,24 @@ func TestDeprovision_KeepsADoubleClaimedDeploymentThatReappears(t *testing.T) {
 		t.Fatalf("the deprovision deleted %v, a deployment the director had again", deleted)
 	}
 
-	if reads.Load() < 2 {
-		t.Fatalf("the director was asked for %s %d times, want the deprovision to ask again", name, reads.Load())
+	if asked := reads.Load() - before; asked < 2 {
+		t.Fatalf("the director was asked for %s %d times, want the deprovision to ask again", name, asked)
 	}
 
-	_, indexed, err := vaultClient.FindInstance(ctx, doubleClaimDebtor)
-	if err != nil || !indexed {
-		t.Fatalf("the index entry of %s is %v, %v, want it kept", doubleClaimDebtor, indexed, err)
+	requireReappearedDeprovisionFailed(ctx, t, deleter, vaultClient, name)
+
+	if !entry.swept {
+		return
 	}
 
-	recorded, err := deleter.RecordedOperation(ctx, doubleClaimDebtor)
-	if err != nil || recorded.Action != outcomeDeprovision || recorded.State != outcomeStateFailed || !strings.Contains(recorded.Description, "Deployment "+name+", which two service instances claim, exists again") {
-		t.Fatalf("the record of %s is %+v, %v, want a failed deprovision that says the deployment exists again", doubleClaimDebtor, recorded, err)
-	}
+	// The pass right after the delete reads x-abc as a suspect, and the
+	// one a full scan's interval later is a full scan.
+	row := debtorRow(t, deleter)
 
-	requireNoOtherInstanceNamed(t, recorded.Description, name, doubleClaimDebtor, doubleClaimOwner)
-	requireDeleteRow(t, deleter, doubleClaimDebtor, name, "The platform's delete of this instance was refused, because instance abc also claims deployment redis-small-x-abc, through its index entry")
+	for pass := range 2 {
+		deleter.SweepOwedCleanupsOnce(ctx, time.Minute)
+		requireSweptRow(t, deleter, row, true, pass+1)
+
+		now = now.Add(7 * time.Hour)
+	}
 }
