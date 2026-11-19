@@ -526,3 +526,95 @@ func TestUpdate_RollbackSettingToggledMidUpdate_UsesValueAtFailure(t *testing.T)
 		})
 	}
 }
+
+// A saved manifest that is gone, or that no longer matches its digest, is
+// never deployed. The update is answered failed and usable, says the
+// previous manifest could not be read, and sends no second deploy.
+func TestUpdate_RollbackManifestUnreadable_FailsWithoutRedeploy(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]func(ctx context.Context, t *testing.T, fixture *updateFixture, path string){
+		"deleted after it was saved": dropSavedManifest,
+		"changed after it was saved": changeSavedManifest,
+	}
+
+	for name, spoil := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			fixture := newUpdateFixture(t)
+			ctx := context.Background()
+
+			fixture.rollbackOn(ctx, t, true)
+
+			script := &rollbackScript{}
+			script.script(fixture, outcomeTaskDone)
+
+			waiting, release := make(chan struct{}), make(chan struct{})
+			waitUpdate := fixture.director.WaitForTaskFn
+			fixture.director.WaitForTaskFn = func(taskID int) (*bosh.Task, error) {
+				if taskID == updateTaskID {
+					close(waiting)
+					<-release
+				}
+
+				return waitUpdate(taskID)
+			}
+
+			instanceID := fixture.startFailingUpdate(ctx, t)
+
+			select {
+			case <-waiting:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the update's deploy was never followed")
+			}
+
+			spoil(ctx, t, fixture, instanceID+"/update_rollback_manifest")
+			close(release)
+
+			answer := fixture.settled(ctx, t, instanceID)
+			if sent := script.sent(); len(sent) != 1 {
+				t.Fatalf("the update sent %d deploys, want only its own", len(sent))
+			}
+
+			if answer.State != osbapi.StateFailed || answer.InstanceUsable == nil || !*answer.InstanceUsable ||
+				!strings.Contains(answer.Description, "previous manifest could not be read") {
+				t.Fatalf("the update was answered %+v, want failed, usable, and saying the previous manifest could not be read", answer)
+			}
+
+			requireLastGood(ctx, t, fixture, instanceID, lastGoodParams(), answer)
+			fixture.requireNoSavedManifest(ctx, t, instanceID)
+		})
+	}
+}
+
+// dropSavedManifest deletes the manifest the update saved for its
+// rollback.
+func dropSavedManifest(ctx context.Context, t *testing.T, fixture *updateFixture, path string) {
+	t.Helper()
+
+	err := fixture.vault.Delete(ctx, path)
+	if err != nil {
+		t.Fatalf("failed to delete the saved manifest: %v", err)
+	}
+}
+
+// changeSavedManifest changes the manifest the update saved for its
+// rollback and leaves its digest as it was.
+func changeSavedManifest(ctx context.Context, t *testing.T, fixture *updateFixture, path string) {
+	t.Helper()
+
+	var saved map[string]interface{}
+
+	found, err := fixture.vault.Get(ctx, path, &saved)
+	if err != nil || !found {
+		t.Fatalf("the update saved no manifest before its deploy (%v)", err)
+	}
+
+	saved["manifest"] = liveManifest + "\n# changed\n"
+
+	err = fixture.vault.Put(ctx, path, saved)
+	if err != nil {
+		t.Fatalf("failed to change the saved manifest: %v", err)
+	}
+}
