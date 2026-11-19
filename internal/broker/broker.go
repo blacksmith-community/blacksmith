@@ -4498,7 +4498,11 @@ func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentNa
 // the instance, and false when it may delete none. The deployment must be
 // the name recorded for the instance, and the broker must have minted it
 // for the instance under the plan the provision asked for, which
-// ownedUnder checks.
+// ownedUnder checks. No other instance may claim it either, as
+// nameClaimant decides. Two instances that claim one name, as instances
+// named before the claim check, or an index entry that was lost, can
+// leave, show nothing about which of them the deployment belongs to, so
+// the broker deletes nothing and leaves the choice to an operator.
 //
 // The name recorded for the instance is the one its record holds, or the
 // one its index entry recorded at provision time when the record holds
@@ -4517,16 +4521,63 @@ func (b *Broker) recordOwesCleanup(ctx context.Context, instanceID, deploymentNa
 // on the record. It is logged at Error when it is new or its deployment
 // or reason changed, and at Warning when a later try repeats it. An index
 // that cannot be read is a refusal the next try may not repeat, so it is
-// logged at Error and nothing more. Request details that cannot be read
-// leave a row only when none is held, so a passing Vault fault never
-// replaces the refusal an operator is already looking at.
+// logged at Error and nothing more. Request details that cannot be read,
+// and another instance's claim that cannot be checked, leave a row only
+// when none is held, so a passing Vault fault never replaces the refusal
+// an operator is already looking at.
 func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (string, bool) {
 	claim, read := b.recordedCleanupName(ctx, instanceID, deploymentName, recorded, logger)
 	if !read {
 		return "", false
 	}
 
-	return b.judgeCleanupClaim(ctx, instanceID, deploymentName, claim, logger)
+	deploymentName, owned := b.judgeCleanupClaim(ctx, instanceID, deploymentName, claim, logger)
+	if !owned {
+		return "", false
+	}
+
+	refusal := b.claimedByAnotherInstance(ctx, instanceID, deploymentName, logger)
+	if refusal.reason != "" {
+		b.refuseCleanup(instanceID, deploymentName, refusal, logger)
+
+		return "", false
+	}
+
+	b.forgetCleanupAttention(instanceID)
+
+	return deploymentName, true
+}
+
+// claimedByAnotherInstance returns why the cleanup of instanceID may not
+// delete deploymentName when another instance claims it too, and an empty
+// ownership when none does. A claim that cannot be checked is a refusal
+// the next try may not repeat.
+func (b *Broker) claimedByAnotherInstance(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) ownership {
+	readCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	claimant, where, err := b.nameClaimant(readCtx, instanceID, deploymentName, logger)
+
+	switch {
+	case err != nil:
+		logger.Error("Refusing to delete deployment %s for instance %s: whether another instance claims it could not be checked: %s", deploymentName, instanceID, err)
+
+		return ownership{
+			reason: fmt.Sprintf("Whether another instance also claims deployment %s could not be checked, so the broker deletes nothing until it can", deploymentName),
+			unread: true,
+		}
+	case claimant != "":
+		return ownership{reason: doubleClaimReason(claimant, deploymentName, where)}
+	}
+
+	return ownership{}
+}
+
+// doubleClaimReason is the refusal shown for an instance whose own record
+// claims deploymentName while claimant claims it too, through where.
+func doubleClaimReason(claimant, deploymentName, where string) string {
+	return fmt.Sprintf("Instance %s also claims deployment %s, through %s, so two instances claim one name. The broker deletes nothing for this instance until an operator settles which instance the deployment belongs to",
+		claimant, deploymentName, where)
 }
 
 // judgeCleanupClaim decides whether the cleanup asked for deploymentName
@@ -4534,7 +4585,9 @@ func (b *Broker) cleanupOwnsDeployment(ctx context.Context, instanceID, deployme
 // it may. It refuses by default. Only a case that proves the broker
 // minted the name for the instance, under the plan the record says or
 // the plan the request details stored under the name say, lets the
-// cleanup delete, and every other way through refuses with a reason.
+// cleanup delete, and every other way through refuses with a reason. It
+// leaves the overview's row alone when the cleanup may delete, because
+// its caller still checks the claims of other instances.
 func (b *Broker) judgeCleanupClaim(ctx context.Context, instanceID, deploymentName string, claim cleanupName, logger logger.Logger) (string, bool) {
 	if deploymentName == "" || deploymentName == claim.callerMinted {
 		deploymentName = claim.name
@@ -4567,8 +4620,6 @@ func (b *Broker) judgeCleanupClaim(ctx context.Context, instanceID, deploymentNa
 	}
 
 	if owned && deploymentName != "" {
-		b.forgetCleanupAttention(instanceID)
-
 		return deploymentName, true
 	}
 
