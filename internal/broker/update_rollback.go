@@ -202,7 +202,17 @@ func (p *updatePhase) recordRollingBack(ctx context.Context, failure string, rol
 
 		return true
 	case errors.Is(err, internalVault.ErrUpdateNotInFlight):
+		// The record has moved on, so nothing is settled over it, but
+		// the failed deploy still gets its change record, and the saved
+		// manifest, which nothing will deploy now, is deleted.
 		p.logger.Error("Instance %s: the record no longer holds its update in flight, so nothing rolls back: %s", p.instanceID, err)
+
+		rollback.Phase, rollback.ContextID, rollback.ManifestDigest = "", "", ""
+
+		auditCtx, cancelAudit := recordContext(settleCtx)
+		p.broker.auditUpdateFailure(auditCtx, p.instanceID, p.target, p.request, updateOutcomeFailed, rollback)
+		cancelAudit()
+		p.dropRollbackManifest(settleCtx)
 
 		return false
 	}
