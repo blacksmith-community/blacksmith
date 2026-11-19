@@ -405,9 +405,10 @@ func slowBundle(t *testing.T, timeout time.Duration, began *atomic.Bool) func(ht
 }
 
 // checkSlowBodyOutlivesTheRequestTimeout runs the scenario, and runs it
-// again when the timeout passed before the director's answer began, which
-// boshapi's timer covers and a machine too slow to deliver the answer in
-// time makes happen. An error after the answer began is a real failure.
+// again when the timeout passed before the client had the director's
+// answer, which boshapi's timer covers and a machine too slow to deliver
+// the answer in time makes happen. An error after the answer began is a
+// real failure.
 func checkSlowBodyOutlivesTheRequestTimeout(t *testing.T) {
 	t.Helper()
 
@@ -422,7 +423,7 @@ func checkSlowBodyOutlivesTheRequestTimeout(t *testing.T) {
 		warmAdapter(t, director)
 
 		bundle, err := fetchLogs(t, director, nil)
-		if err != nil && !began.Load() && strings.Contains(err.Error(), "bosh.request_timeout") {
+		if answerNeverReachedTheClient(err, began.Load()) {
 			continue
 		}
 
@@ -432,6 +433,30 @@ func checkSlowBodyOutlivesTheRequestTimeout(t *testing.T) {
 	}
 
 	t.Fatalf("the director's answer never began within %s, in %d attempts", slowBodyRequestTimeout, maxStarvedAttempts)
+}
+
+// answerNeverReachedTheClient reports whether err is bosh.request_timeout
+// ending the fetch before the client had the director's answer, so the
+// scenario of a slow body never happened. That is so when the handler never
+// began its answer, or when the client says it timed out awaiting the
+// headers. The handler's flag alone cannot tell, because it is set once the
+// headers are flushed, and on a loaded machine the client's header timer
+// can fire before the client reads them, or as they arrive, when Go's
+// transport picks at random between the two. A timeout once the client
+// had the headers names the body, never the headers, so it is still a
+// failure.
+func answerNeverReachedTheClient(err error, began bool) bool {
+	if err == nil || !strings.Contains(err.Error(), "bosh.request_timeout") {
+		return false
+	}
+
+	if !began {
+		return true
+	}
+
+	text := err.Error()
+
+	return strings.Contains(text, "timeout awaiting response headers") || strings.Contains(text, "while awaiting headers")
 }
 
 func checkSlowBody(t *testing.T, server *logsDirector, bundle *bosh.LogBundle, err error) {
