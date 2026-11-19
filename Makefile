@@ -48,10 +48,30 @@ dev: linux ## Build for Linux and run test deployment
 
 ##@ Testing & Quality
 
+# The Ginkgo suites that make test runs on several processes, and the
+# top-level test of each that runs its specs. Each process starts its own
+# Vault dev server, and every spec makes its temporary files and test
+# servers on free ports, so the processes share nothing. The other tests
+# of these packages run in the go test pass beside them, which skips only
+# the suite tests. GINKGO_PROCS sets how many processes each suite gets.
+GINKGO := go run github.com/onsi/ginkgo/v2/ginkgo
+GINKGO_SUITES := ./internal/broker ./internal/vault
+GINKGO_SUITE_TESTS := ^(TestBroker|TestVault)$$
+GINKGO_PROCS ?= 4
+
 .PHONY: test
-test: ## Run all tests
+test: ## Run all tests, with the broker and vault Ginkgo suites on several processes
 	@echo "$(GREEN)Running tests...$(RESET)"
-	@go test -v $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@ginkgo_log="$$(mktemp)"; \
+	$(GINKGO) --procs=$(GINKGO_PROCS) --keep-going --no-color $(GINKGO_SUITES) -- '-test.run=$(GINKGO_SUITE_TESTS)' >"$$ginkgo_log" 2>&1 & \
+	ginkgo_pid=$$!; \
+	go test -v -skip '$(GINKGO_SUITE_TESTS)' $(shell go list ./... | grep -v vendor | grep -v tmp); go_status=$$?; \
+	wait $$ginkgo_pid; ginkgo_status=$$?; \
+	echo "$(GREEN)Ginkgo suites on $(GINKGO_PROCS) processes:$(RESET)"; \
+	cat "$$ginkgo_log"; rm -f "$$ginkgo_log"; \
+	if [ $$go_status -ne 0 ] || [ $$ginkgo_status -ne 0 ]; then \
+		echo "Tests failed: go test exited $$go_status and the Ginkgo suites exited $$ginkgo_status"; exit 1; \
+	fi
 	@echo "$(GREEN)✓ Tests complete$(RESET)"
 
 .PHONY: test-short
