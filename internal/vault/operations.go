@@ -380,12 +380,20 @@ var ErrMountListRefused = errors.New("vault refused to list the root of the moun
 // certificate tasks, the broker's settings, and the CF registrations under
 // secret/.
 //
-//nolint:gochecknoglobals // a fixed set read by ListOperationRecordIDs
+//nolint:gochecknoglobals // a fixed set read by ListOperationRecordIDs and InstanceFolderName
 var stateFolders = map[string]bool{
 	"upgrade-tasks/":     true,
 	"certificate-tasks/": true,
 	"blacksmith/":        true,
 	"secret/":            true,
+}
+
+// InstanceFolderName reports whether name can be the folder of an
+// instance at the root of the mount, as ListOperationRecordIDs would list
+// it. It is one path segment that is neither "." nor "..", and it is not a
+// folder that holds the broker's own state.
+func InstanceFolderName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.Contains(name, "/") && !stateFolders[name+"/"]
 }
 
 // ListOperationRecordIDs makes one listing of the root of the mount and

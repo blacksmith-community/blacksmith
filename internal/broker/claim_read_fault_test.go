@@ -2,6 +2,7 @@ package broker_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,11 +17,22 @@ import (
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/testutil"
 	"blacksmith/shield"
+
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
 
 // claimListPath is in the path of the LIST that names the instances in
-// Vault, and of no read the claim check makes.
+// Vault, which the claim check never makes, and of no read it makes.
 const claimListPath = "/metadata"
+
+// collidingOwner is the instance whose ID ends the colliding name, abc.
+const collidingOwner = "abc"
+
+// longerClaimant is the instance whose ID is the longer part of the
+// colliding name that the instance asked for does not hold, so the claim
+// check reads its record too. Under plan redis it is named
+// redis-small-x-abc as well.
+const longerClaimant = "small-x-abc"
 
 // claimCheckFailed begins the description of every request the claim
 // check fails, before the text of the read that failed.
@@ -29,12 +41,14 @@ const claimCheckFailed = "could not check whether another instance claims deploy
 // claimReadFault is one read of the claim check that fails. The claim it
 // writes is one that read would find, so a check that took the failure for
 // "no claim" would let the request reach the other instance's deployment.
-// failed is the text the answer's description gives for that read.
+// failed is the text the answer's description gives for that read, and
+// holder is the instance that holds the claim, abc when it is empty.
 type claimReadFault struct {
 	name   string
 	claim  func(ctx context.Context, vaultClient *internalVault.Vault, holder, deploymentName string) error
 	path   string
 	failed string
+	holder string
 	// skip counts the reads of path that the provision and the delete make
 	// before the claim check's own. Every index read goes to one path, so
 	// only the count can pick the claim check's out. The broker has a
@@ -54,7 +68,9 @@ func claimReadFaults() []claimReadFault {
 		{name: "the index read", path: "/data/db", provisionSkip: 1, deleteSkip: 3, failed: "could not read the index", claim: func(ctx context.Context, vaultClient *internalVault.Vault, holder, deploymentName string) error {
 			return vaultClient.Index(ctx, holder, map[string]interface{}{serviceIDKey: recordedNameService, recordedPlanKey: collidingLongPlan, recordedDeploymentKey: deploymentName})
 		}},
-		{name: "the list of instances", path: claimListPath, failed: "could not list the instances", claim: owing},
+		{name: "the record read of a longer ID the name ends with", holder: longerClaimant, path: "/data/" + longerClaimant + "/task", failed: "could not read the record of another instance that can claim deployment redis-small-x-abc", claim: func(ctx context.Context, vaultClient *internalVault.Vault, holder, deploymentName string) error {
+			return recordFailedMintedProvision(ctx, vaultClient, holder, "redis", deploymentName)
+		}},
 		{name: "the record read", path: "/data/abc/task", failed: "could not read the record of another instance that can claim deployment redis-small-x-abc", claim: owing},
 		{name: "the request details read", path: "/data/abc/redis-small-x-abc", failed: "could not read the request details another instance stored under deployment redis-small-x-abc", claim: func(ctx context.Context, vaultClient *internalVault.Vault, holder, deploymentName string) error {
 			err := recordFailedProvisionNaming(ctx, vaultClient, holder, "")
@@ -75,7 +91,7 @@ func claimReadFaults() []claimReadFault {
 func TestClaimCheck_FailsClosedOnAFailedRead(t *testing.T) {
 	t.Parallel()
 
-	const owner = "abc"
+	const owner = collidingOwner
 
 	intruder := "x-" + owner
 	name := collidingLongPlan + "-" + owner
@@ -93,7 +109,12 @@ func TestClaimCheck_FailsClosedOnAFailedRead(t *testing.T) {
 				vaultClient, proxy := claimFaultVault(t)
 				ctx := context.Background()
 
-				err := entry.claim(ctx, vaultClient, owner, name)
+				holder := entry.holder
+				if holder == "" {
+					holder = owner
+				}
+
+				err := entry.claim(ctx, vaultClient, holder, name)
 				if err != nil {
 					t.Fatalf("failed to write the claim: %v", err)
 				}
@@ -208,4 +229,58 @@ func claimFaultVault(t *testing.T) (*internalVault.Vault, *testutil.VaultFaultPr
 	t.Cleanup(proxy.Close)
 
 	return internalVault.New(proxy.Addr, server.RootToken, true), proxy
+}
+
+// The claim check reads the records of the instances the name could have
+// been minted for by their IDs, and it never lists the mount. So while
+// Vault refuses every LIST, a provision of a GUID instance is not refused,
+// a delete of a GUID instance whose deployment is gone is answered 410
+// Gone, and a claim held in another instance's record still refuses the
+// provision that would take its name.
+func TestClaimCheck_ListsNothing(t *testing.T) {
+	t.Parallel()
+
+	vaultClient, proxy := claimFaultVault(t)
+	ctx := context.Background()
+
+	const (
+		guid  = "5e0a3b4c-1d2e-4f60-8a9b-0c1d2e3f4a5b"
+		owner = collidingOwner
+	)
+
+	name := collidingLongPlan + "-" + owner
+
+	err := recordFailedMintedProvision(ctx, vaultClient, owner, collidingLongPlan, name)
+	if err != nil {
+		t.Fatalf("failed to write the claim: %v", err)
+	}
+
+	proxy.FailReads(claimListPath, http.StatusForbidden, "permission denied", -1)
+
+	_, _, err = vaultClient.ListOperationRecordIDs(ctx)
+	if err == nil {
+		t.Fatal("the listing of the mount was let through")
+	}
+
+	director := cleanupGuardDirector()
+	director.GetDeploymentFn = deploymentNotFound
+	checker := cleanupGuardBroker(director, vaultClient)
+
+	err = checker.RefuseProvisionOverClaimedName(ctx, guid, standalonePlanID)
+	if err != nil {
+		t.Fatalf("the provision of %s was refused: %v", guid, err)
+	}
+
+	err = checker.RefuseProvisionOverClaimedName(ctx, "x-"+owner, collidingShortPlan)
+	if !errors.Is(err, osbapi.ErrBadRequest) {
+		t.Fatalf("the provision of x-%s was answered %v, want a bad request", owner, err)
+	}
+
+	checker.Shield = &shield.NoopClient{}
+	checker.Config = &config.Config{}
+
+	status, body := deleteInstance(ctx, t, checker, guid, standalonePlanID)
+	if status != http.StatusGone {
+		t.Fatalf("the delete of %s was answered %d %s, want 410", guid, status, body)
+	}
 }

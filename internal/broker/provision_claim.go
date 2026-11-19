@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"blacksmith/internal/bosh"
+	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
 
@@ -27,7 +28,7 @@ import (
 // owes the cleanup of a failed provision and names it, or names nothing
 // while request details are stored under it. A deleted instance's entry
 // still claims its name, because its delete may not have finished. Only
-// instances whose IDs can mint the name have their records read. A read
+// instances whose IDs the name ends with have their records read. A read
 // that fails refuses the provision too, because a claim it would have
 // found cannot be ruled out.
 func (b *Broker) refuseProvisionOverClaimedName(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, logger logger.Logger) error {
@@ -68,12 +69,17 @@ var errRequestDetailsUnread = errors.New("failed to read the request details")
 
 // nameClaimant returns the first instance other than instanceID that
 // claims deploymentName, and says where it claims it, or returns "" when
-// no instance does. It reads the index, then lists the instances in Vault
-// and reads the record of each one whose ID can mint the name. A read
-// that fails returns an error, because a claim it would have found
-// cannot be ruled out. A failed read of another instance's record names
-// only the deployment in the error, and the instance's ID and the cause
-// are logged at Warning.
+// no instance does. It reads the index, which is one read however many
+// instances it holds, and checks every entry in it, so an entry that
+// records the name without ending in its own ID still claims it. Then it
+// reads the record of each instance whose ID the name could have been
+// minted for, which claimCandidates gives, without listing the mount, so
+// these reads grow with the dashes in the name and not with the fleet.
+// An ID that names no record reads as one that owes nothing. A read that
+// fails returns an error, because a claim it would have found cannot be
+// ruled out. A failed read of another instance's record names only the
+// deployment in the error, and the instance's ID and the cause are
+// logged at Warning.
 func (b *Broker) nameClaimant(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (string, string, error) {
 	idx, err := b.Vault.GetIndex(ctx, "db")
 	if err != nil {
@@ -84,15 +90,8 @@ func (b *Broker) nameClaimant(ctx context.Context, instanceID, deploymentName st
 		return claimant, "its index entry", nil
 	}
 
-	ids, _, err := b.Vault.ListOperationRecordIDs(ctx)
-	if err != nil {
-		return "", "", fmt.Errorf("could not list the instances in Vault to check whether another one claims deployment %s: %w", deploymentName, err)
-	}
-
-	sort.Strings(ids)
-
-	for _, otherID := range ids {
-		if otherID == instanceID || !mintedShape(deploymentName, otherID) {
+	for _, otherID := range claimCandidates(deploymentName) {
+		if otherID == instanceID {
 			continue
 		}
 
@@ -114,6 +113,29 @@ func (b *Broker) nameClaimant(ctx context.Context, instanceID, deploymentName st
 	}
 
 	return "", "", nil
+}
+
+// claimCandidates returns the IDs of the instances that deploymentName
+// could have been minted for, from the longest to the shortest. Each is
+// the part of the name after one of its dashes, where the part before the
+// dash has the shape of a plan ID, as mintedShape checks, and where the
+// part after it can be an instance's folder at the root of the mount.
+// These are the only instances whose records can claim the name.
+func claimCandidates(deploymentName string) []string {
+	var ids []string
+
+	for at := range len(deploymentName) {
+		if deploymentName[at] != '-' {
+			continue
+		}
+
+		otherID := deploymentName[at+1:]
+		if mintedShape(deploymentName, otherID) && internalVault.InstanceFolderName(otherID) {
+			ids = append(ids, otherID)
+		}
+	}
+
+	return ids
 }
 
 // indexClaimant returns the first instance other than instanceID, in ID

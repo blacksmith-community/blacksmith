@@ -698,6 +698,12 @@ func (b *Broker) JudgeCleanupClaim(ctx context.Context, instanceID, asked, name,
 	return b.judgeCleanupClaim(ctx, instanceID, asked, claim, logger.Get().Named("broker"))
 }
 
+// ClaimCandidates exposes the IDs of the instances whose records the
+// claim check reads for deploymentName.
+func ClaimCandidates(deploymentName string) []string {
+	return claimCandidates(deploymentName)
+}
+
 // RefuseProvisionOverClaimedName runs the check a new provision of
 // instanceID under planID makes for another instance that claims the
 // deployment name it would mint.
