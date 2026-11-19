@@ -268,7 +268,7 @@ forges:
 
 A `PATCH /v2/service_instances/{instance_id}` changes an instance's parameters, or the platform context it carries. A plan change and a `maintenance_info` change are refused with 422 for now, and so is an update to an instance whose provision did not succeed.
 
-The broker merges the request over the stored parameters. A key in the request sets or replaces the stored value, a key whose value is `null` removes it, and a key the request leaves out keeps its value. The merged parameters are checked against the plan's schema, and a bad one gets a 400 `InvalidParameters`. The broker then renders the manifest for the current parameters and for the merged ones, and compares the two.
+The broker merges the request over the stored parameters. A key in the request sets or replaces the stored value, a key whose value is `null` removes it, and a key the request leaves out keeps its value. The merged parameters are checked against the plan's schema, and a bad one gets a 400 `InvalidParameters`. The broker then renders the manifest for the current parameters and for the merged ones, and compares the two. When only the merged parameters fail to render, the update gets a 400 `InvalidParameters`. When the current ones fail too, the plan's template is at fault, so the update gets a 500 that tells the platform an operator must fix the plan.
 
 - **No effect**
 

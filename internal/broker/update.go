@@ -46,6 +46,7 @@ const (
 	updateReasonLiteralRefused    = "literal_refused"
 	updateReasonAsyncRequired     = "async_required"
 	updateReasonDeploymentName    = "deployment_name"
+	updateReasonPlanRenderFailed  = "plan_render_failed"
 )
 
 // updateRenderFailedDescription is the answer to an update whose requested
@@ -56,6 +57,13 @@ const updateRenderFailedDescription = "The plan can't render a manifest from the
 // errUpdateRenderFailed reports that the requested manifest didn't
 // render. Its text holds nothing of graft's error.
 var errUpdateRenderFailed = errors.New("the requested manifest did not render")
+
+// errUpdatePlanRenderFailed reports that the plan rendered neither the
+// requested manifest nor the current one from the stored parameters,
+// which rendered when the instance was deployed, so the fault is the
+// plan's and not the request's. Its text is the answer's description,
+// and it holds nothing of graft's error.
+var errUpdatePlanRenderFailed = errors.New("The plan's manifest template doesn't render, even from the instance's current parameters, so an operator must fix the plan before the instance can be updated") //nolint:staticcheck,revive // the text is the answer's description
 
 // ErrUpdateNoVault is returned when the broker has no Vault to read the
 // instance from, so an update can't be checked.
@@ -404,16 +412,10 @@ func (b *Broker) acceptUpdate(ctx context.Context, instanceID string, target upd
 	}
 
 	renders, err := b.renderUpdate(ctx, instanceID, plan, target, request, logger)
-	if errors.Is(err, graft.ErrLiteralRefused) {
-		return refuse(updateReasonLiteralRefused, fmt.Errorf("%w: %s", osbapi.ErrInvalidParameters, refusedParamsDescription))
-	}
 
-	if errors.Is(err, errUpdateRenderFailed) {
-		return refuse(updateReasonInvalidParameters, fmt.Errorf("%w: %s", osbapi.ErrInvalidParameters, updateRenderFailedDescription))
-	}
-
-	if errors.Is(err, errUpdateRenamesDeployment) {
-		return refuse(updateReasonDeploymentName, unprocessable("The update would rename the service instance's deployment, so it was refused"))
+	reason, refusal := renderRefusal(err)
+	if refusal != nil {
+		return refuse(reason, refusal)
 	}
 
 	if err != nil {
@@ -541,6 +543,15 @@ func (b *Broker) renderUpdate(ctx context.Context, instanceID string, plan servi
 	}
 
 	if err != nil {
+		// The stored parameters rendered when the instance was deployed,
+		// so when they don't render now either, the plan is at fault.
+		_, currentErr := renderInstanceManifest(plan, instanceID, defaults, target.parameters) //nolint:contextcheck // GenManifest takes no context
+		if currentErr != nil {
+			logger.Error("Instance %s: its plan %s renders neither the requested manifest from the parameter keys %s, because %s, nor the current one from the stored parameter keys %s, because %s", instanceID, plan.ID, parameterKeys(request.parameters), renderFailure(err), parameterKeys(target.parameters), renderFailure(currentErr))
+
+			return updateRenders{}, errUpdatePlanRenderFailed
+		}
+
 		logger.Error("Instance %s: its requested manifest did not render from the parameter keys %s, because %s", instanceID, parameterKeys(request.parameters), renderFailure(err))
 
 		return updateRenders{}, errUpdateRenderFailed
@@ -570,6 +581,24 @@ func (b *Broker) renderUpdate(ctx context.Context, instanceID string, plan servi
 	}
 
 	return updateRenders{requested: requested, equal: reflect.DeepEqual(currentDoc, requestedDoc)}, nil
+}
+
+// renderRefusal returns the reason code and the answer for a render
+// error renderUpdate returned that refuses the update, and a nil answer
+// for any other error.
+func renderRefusal(err error) (string, error) {
+	switch {
+	case errors.Is(err, graft.ErrLiteralRefused):
+		return updateReasonLiteralRefused, fmt.Errorf("%w: %s", osbapi.ErrInvalidParameters, refusedParamsDescription)
+	case errors.Is(err, errUpdatePlanRenderFailed):
+		return updateReasonPlanRenderFailed, err
+	case errors.Is(err, errUpdateRenderFailed):
+		return updateReasonInvalidParameters, fmt.Errorf("%w: %s", osbapi.ErrInvalidParameters, updateRenderFailedDescription)
+	case errors.Is(err, errUpdateRenamesDeployment):
+		return updateReasonDeploymentName, unprocessable("The update would rename the service instance's deployment, so it was refused")
+	}
+
+	return "", nil
 }
 
 // renderFailure names the class of a failed render for the log. Graft's
