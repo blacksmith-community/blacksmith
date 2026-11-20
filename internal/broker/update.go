@@ -79,6 +79,9 @@ type updateTarget struct {
 	// record holds now.
 	parameters map[string]interface{}
 	context    map[string]interface{}
+	// valuesUnrecorded reports that the last update's staged values were
+	// lost, so the stored values may not match what the deployment runs.
+	valuesUnrecorded bool
 }
 
 // updateRequest is an update request merged over the stored values.
@@ -260,6 +263,8 @@ func (b *Broker) readUpdateTarget(ctx context.Context, instanceID string, detail
 		deployment: instance.DeploymentNameFor(instanceID),
 		parameters: parameters,
 		context:    contextData,
+
+		valuesUnrecorded: stagedValuesLost(record),
 	}, nil
 }
 
@@ -423,7 +428,14 @@ func (b *Broker) acceptUpdate(ctx context.Context, instanceID string, target upd
 		return osbapi.UpdateResponse{}, false, false, err
 	}
 
-	if renders.equal {
+	// After an update whose staged values were lost, the deployment may
+	// run that update's manifest, so an update that matches the stored
+	// values still deploys them, which also puts the instance back in step.
+	if renders.equal && target.valuesUnrecorded {
+		logger.Warning("Update of instance %s changes nothing against its stored values, and it deploys them anyway, because the last update's values were lost and the deployment may not run them", instanceID)
+	}
+
+	if renders.equal && !target.valuesUnrecorded {
 		err = b.commitUpdateValues(ctx, instanceID, target, request, details.Context, logger)
 		if err != nil {
 			return osbapi.UpdateResponse{}, false, false, err

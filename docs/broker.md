@@ -272,7 +272,7 @@ The broker merges the request over the stored parameters. A key in the request s
 
 - **No effect**
 
-  When the two renders match, nothing is deployed. The broker records the merged parameters and any new platform context, such as a renamed space, and answers 200.
+  When the two renders match, nothing is deployed. The broker records the merged parameters and any new platform context, such as a renamed space, and answers 200. The one exception follows an update whose staged values couldn't be read back. The deployment may then run that update's manifest rather than the stored values, so the broker deploys the stored values anyway, as the next point describes, and the instance leaves Attention required once the update is accepted.
 
 - **A change to deploy**
 

@@ -94,12 +94,14 @@ func (b *Broker) noteSettledUnresumableUpdates(candidates []*readoptCandidate) {
 			continue
 		}
 
+		if stagedValuesLost(candidate.record) {
+			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionStagedLost)
+
+			continue
+		}
+
 		staged, err := stagedUpdate(candidate.record)
 		if err != nil {
-			if !rollbackRestored(candidate.record) {
-				b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionStagedLost)
-			}
-
 			continue
 		}
 
@@ -117,4 +119,22 @@ func rollbackRestored(record map[string]interface{}) bool {
 	rollback := internalVault.StagedRollback(record)
 
 	return rollback != nil && rollback.Phase == internalVault.UpdatePhaseRolledBack
+}
+
+// stagedValuesLost reports whether the task record holds a settled update
+// whose staged values can't be read back and that no rollback restored.
+// The stored values may then not match what the deployment runs, because
+// the lost update's deploy may have finished, which is what its Attention
+// required entry says.
+func stagedValuesLost(record map[string]interface{}) bool {
+	action, _ := record["action"].(string)
+	state, _ := record["state"].(string)
+
+	if action != operationTypeUpdate || (state != recordedStateFailed && state != internalVault.TaskStateRollbackFailed) {
+		return false
+	}
+
+	_, err := stagedUpdate(record)
+
+	return err != nil && !rollbackRestored(record)
 }
