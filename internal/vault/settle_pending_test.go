@@ -118,3 +118,57 @@ func TestSettleUpdateFailure_ClearsTheSettleMark(t *testing.T) {
 		t.Fatalf("after the rollback settled, the record is %s %v, want rollback_failed and unmarked", state, record)
 	}
 }
+
+// The description that takes the settle mark off reaches the history, as
+// the last entry of the update's failure, and moves updated_at, so the
+// operator's view of the instance shows the full text.
+func TestClearSettlePending_DescriptionReachesTheHistory(t *testing.T) {
+	t.Parallel()
+
+	client := newDevVault(t)
+	ctx := context.Background()
+
+	instanceID := unknownUpdate(ctx, t, client, updateContextID, false)
+
+	err := client.SettleOutcomeUnknownSettlePending(ctx, instanceID, "never started", updateContextID)
+	if err != nil {
+		t.Fatalf("settling the unknown outcome was refused: %v", err)
+	}
+
+	_, _, record := readRecord(ctx, t, client, instanceID)
+	record["updated_at"] = 1
+
+	err = client.Put(ctx, instanceID+"/task", record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const full = "never started, and the plan is gone"
+
+	err = client.ClearSettlePending(ctx, instanceID, updateContextID, full)
+	if err != nil {
+		t.Fatalf("clearing the mark was refused: %v", err)
+	}
+
+	_, _, record = readRecord(ctx, t, client, instanceID)
+	if fmt.Sprint(record["updated_at"]) == "1" {
+		t.Fatalf("after the clear, updated_at is %v, want it moved", record["updated_at"])
+	}
+
+	var metadata map[string]interface{}
+
+	_, err = client.Get(ctx, instanceID+"/metadata", &metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	history, _ := metadata["history"].([]interface{})
+	if len(history) == 0 {
+		t.Fatalf("the history is empty: %v", metadata)
+	}
+
+	last, _ := history[len(history)-1].(map[string]interface{})
+	if last["description"] != full || last["state"] != stateFailed || last["action"] != record["action"] {
+		t.Fatalf("the last history entry is %v, want the update's failure saying %q", last, full)
+	}
+}

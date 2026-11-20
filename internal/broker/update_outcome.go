@@ -128,7 +128,10 @@ func (p *updatePhase) neverStarted(ctx context.Context) {
 
 // clearSettlePending takes the settle mark off the update's record, trying
 // the write until it lands, and replaces the record's description with
-// description in the same write when it isn't empty. A record that no
+// description in the same write when it isn't empty, which the history
+// then gains too. A history append that fails after the record landed
+// leaves the record unmarked, so the next try finds no mark and counts
+// it as cleared. A record that no
 // longer holds the marked failure of the update owes nothing more of its
 // record, so it counts as cleared. It reports false only when the broker
 // shuts down before the write lands, and the mark then stays for the next

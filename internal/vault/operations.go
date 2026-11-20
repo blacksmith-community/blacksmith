@@ -633,7 +633,11 @@ func (vault *Vault) SettleOutcomeUnknownSettlePending(ctx context.Context, insta
 // writes only when the record holds that update, failed and marked,
 // checked under the instance's task record lock, and otherwise writes
 // nothing and returns an error that wraps ErrTaskRecordReplaced. A record
-// that cannot be read stops the write. No history entry is written.
+// that cannot be read stops the write. A new description also moves
+// updated_at and is appended to the history as the update's failure, and
+// a history append that fails after the record landed returns an error
+// that wraps ErrHistoryNotAppended. Without one, no history entry is
+// written.
 func (vault *Vault) ClearSettlePending(ctx context.Context, instanceID, contextID, description string) error {
 	logger := logger.Get().Named("vault clear settle pending " + instanceID)
 
@@ -655,16 +659,33 @@ func (vault *Vault) ClearSettlePending(ctx context.Context, instanceID, contextI
 		return nil
 	}
 
-	return vault.writeTaskRecordGuarded(ctx, instanceID, actionUpdate, logger, guard, func(replaced map[string]interface{}) interface{} {
+	taskID := -1
+
+	err := vault.writeTaskRecordGuarded(ctx, instanceID, actionUpdate, logger, guard, func(replaced map[string]interface{}) interface{} {
 		cleared := maps.Clone(replaced)
 		delete(cleared, TaskRecordSettlePendingKey)
 
 		if description != "" {
 			cleared["description"] = description
+			cleared["updated_at"] = time.Now().Unix()
+		}
+
+		if recorded, ok := recordedTaskID(replaced); ok {
+			taskID = recorded
 		}
 
 		return cleared
 	})
+	if err != nil || description == "" {
+		return err
+	}
+
+	err = vault.appendHistory(ctx, instanceID, actionUpdate, description, progressHistoryExtras(eventStateFailed, taskID))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrHistoryNotAppended, err)
+	}
+
+	return nil
 }
 
 // ErrUnknownSinceRecorded is returned when StampUnknownSince finds that the
