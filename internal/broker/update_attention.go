@@ -94,34 +94,47 @@ func (p *updatePhase) noteUnresumableUpdate() {
 
 // noteSettledUnresumableUpdates lists in Attention required each update
 // whose record says it settled as failed while its staged values can't be
-// read back or the plan they name is not in the catalog. Re-adoption skips
-// a settled record, so this is how an entry noted before a restart is found
-// again. A plan missing from the catalog comes before the other reasons. It
-// reads nothing from Vault.
+// read back or the plan they name is not in the catalog. It also lists
+// each repair of lost values a restart interrupted, which stays listed
+// while it runs. Re-adoption skips a settled record, so this is how an
+// entry noted before a restart is found again. A plan missing from the
+// catalog comes before the other reasons. It reads nothing from Vault.
 func (b *Broker) noteSettledUnresumableUpdates(candidates []*readoptCandidate) {
 	for _, candidate := range candidates {
 		if !candidate.parsed || !candidate.indexed || candidate.recorded.Action != operationTypeUpdate {
 			continue
 		}
 
-		state := candidate.recorded.State
-		settled := state == recordedStateFailed || state == internalVault.TaskStateRollbackFailed
-
-		staged, err := stagedUpdate(candidate.record)
-		if err == nil && settled {
-			serviceID, _ := candidate.entry["service_id"].(string)
-			if _, found := b.Plans[serviceID+"/"+staged.PlanID]; !found {
-				b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionPlanMissing(staged.PlanID))
-
-				continue
-			}
-		}
-
-		reason := lostValuesReason(candidate.record)
+		reason := b.unresumableReason(candidate)
 		if reason != "" {
 			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, reason)
 		}
 	}
+}
+
+// unresumableReason returns the Attention required reason of the update
+// record of candidate, or "" when it needs none.
+func (b *Broker) unresumableReason(candidate *readoptCandidate) string {
+	state := candidate.recorded.State
+	settled := state == recordedStateFailed || state == internalVault.TaskStateRollbackFailed
+
+	staged, err := stagedUpdate(candidate.record)
+	if err == nil && (settled || staged.RepairsLostValues) {
+		serviceID, _ := candidate.entry["service_id"].(string)
+		if _, found := b.Plans[serviceID+"/"+staged.PlanID]; !found {
+			return updateAttentionPlanMissing(staged.PlanID)
+		}
+	}
+
+	if reason := lostValuesReason(candidate.record); reason != "" {
+		return reason
+	}
+
+	if !settled && err == nil && staged.RepairsLostValues && state != internalVault.TaskStateSucceeded && state != internalVault.TaskStateDeleted {
+		return updateAttentionRepairFailed
+	}
+
+	return ""
 }
 
 // rollbackRestored reports whether the update record holds a rollback that

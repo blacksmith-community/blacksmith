@@ -239,3 +239,42 @@ func TestReadopt_InterruptedRepairWithPlanGone_NamesThePlan(t *testing.T) {
 	requireUpdateAttention(t, startedBroker(ctx, t, fixture, plans), instanceID, planGoneAttention, "once the re-adopted repair settled")
 	requireUpdateAttention(t, startedBroker(ctx, t, fixture, plans), instanceID, planGoneAttention, "at the start after it settled")
 }
+
+// A repair a restart interrupted is listed under Attention required as
+// soon as the broker starts, and not only once the repair settles,
+// because until the repair succeeds the deployment may still run what
+// the lost update deployed. A repair that then succeeds takes the
+// instance off the list.
+func TestReadopt_InterruptedRepairRunning_ListedAtOnce(t *testing.T) {
+	t.Parallel()
+
+	fixture := newUpdateFixture(t)
+	ctx := context.Background()
+	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, lastGoodParams())
+	settledStagedLostBroker(ctx, t, fixture, instanceID)
+	recordedRepair(ctx, t, fixture, instanceID)
+
+	script := &deployScript{release: make(chan struct{})}
+	script.script(fixture, outcomeTaskDone)
+
+	released := false
+	release := func() {
+		if !released {
+			released = true
+
+			close(script.release)
+		}
+	}
+
+	next := restartedBroker(ctx, t, fixture, updatePlans())
+
+	// The cleanup runs before the broker's, so its work can end.
+	t.Cleanup(release)
+
+	requireUpdateAttention(t, next, instanceID, repairFailedAttention, "while the re-adopted repair runs")
+
+	release()
+	next.WaitForBackground(ctx)
+
+	requireUpdateAttention(t, next, instanceID, "", "once the re-adopted repair succeeded")
+}
