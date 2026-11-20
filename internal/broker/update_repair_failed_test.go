@@ -16,6 +16,10 @@ import (
 // repair says.
 const repairFailedAttention = "didn't succeed"
 
+// planGoneAttention is what the Attention required entry says when the
+// plan has left the catalog.
+const planGoneAttention = "an operator restores the plan"
+
 // errLiveVersionsUnread is the director's answer when a repair update
 // reads the live release and stemcell versions.
 var errLiveVersionsUnread = errors.New("the director didn't answer")
@@ -153,16 +157,11 @@ func TestUpdate_FailedRepairOfLostValues_StaysInRepair(t *testing.T) {
 	}
 }
 
-// A repair a restart interrupted is re-adopted as a repair, so when its
-// deploy fails after the restart, the instance is listed under Attention
-// required as soon as it settles.
-func TestReadopt_InterruptedRepairFails_StaysInRepair(t *testing.T) {
-	t.Parallel()
-
-	fixture := newUpdateFixture(t)
-	ctx := context.Background()
-	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, lastGoodParams())
-	settledStagedLostBroker(ctx, t, fixture, instanceID)
+// recordedRepair records an accepted repair of lost values for
+// instanceID, with the deploy task and the rollback manifest it had saved
+// when the broker stopped.
+func recordedRepair(ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string) {
+	t.Helper()
 
 	err := fixture.vault.TrackUpdateAccepted(ctx, instanceID, "Update request accepted", "repair-context-id", openUpdatePlan+"-"+instanceID, internalVault.StagedUpdate{
 		Fingerprint: "repair-fingerprint", PreviousPlanID: openUpdatePlan, PlanID: openUpdatePlan,
@@ -174,6 +173,20 @@ func TestReadopt_InterruptedRepairFails_StaysInRepair(t *testing.T) {
 
 	recordedDeployTask(ctx, t, fixture, instanceID)
 	savedRollbackManifest(ctx, t, fixture, instanceID)
+}
+
+// A repair a restart interrupted is re-adopted as a repair, so when its
+// deploy fails after the restart, the instance is listed under Attention
+// required as soon as it settles.
+func TestReadopt_InterruptedRepairFails_StaysInRepair(t *testing.T) {
+	t.Parallel()
+
+	fixture := newUpdateFixture(t)
+	ctx := context.Background()
+	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, lastGoodParams())
+	settledStagedLostBroker(ctx, t, fixture, instanceID)
+
+	recordedRepair(ctx, t, fixture, instanceID)
 	(&deployScript{}).script(fixture, outcomeTaskError)
 
 	requireUpdateAttention(t, startedBroker(ctx, t, fixture, updatePlans()), instanceID, repairFailedAttention, "once the re-adopted repair failed")
@@ -203,4 +216,26 @@ func TestUpdate_NoEffectAfterStagedLost_SyncRequestNeedsAsync(t *testing.T) {
 	}
 
 	requireUpdateAttention(t, next, instanceID, stagedLostAttention, "after the synchronous update")
+}
+
+// A repair a restart interrupted, on a catalog that no longer holds its
+// plan, settles as failed, and every update of the instance is refused
+// until an operator restores the plan. Attention required then says to
+// restore the plan, and not to send the update again, both once the
+// repair settled and at every later start.
+func TestReadopt_InterruptedRepairWithPlanGone_NamesThePlan(t *testing.T) {
+	t.Parallel()
+
+	fixture := newUpdateFixture(t)
+	ctx := context.Background()
+	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, lastGoodParams())
+	settledStagedLostBroker(ctx, t, fixture, instanceID)
+	recordedRepair(ctx, t, fixture, instanceID)
+	(&deployScript{}).script(fixture, outcomeTaskDone)
+
+	plans := updatePlans()
+	delete(plans, recordedNameService+"/"+openUpdatePlan)
+
+	requireUpdateAttention(t, startedBroker(ctx, t, fixture, plans), instanceID, planGoneAttention, "once the re-adopted repair settled")
+	requireUpdateAttention(t, startedBroker(ctx, t, fixture, plans), instanceID, planGoneAttention, "at the start after it settled")
 }

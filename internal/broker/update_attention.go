@@ -74,49 +74,52 @@ func (b *Broker) forgetUpdateAttention(instanceID string) {
 
 // noteUnresumableUpdate lists the update of the phase in Attention
 // required when re-adoption couldn't carry it through, or when it repairs
-// lost values and settled as anything but succeeded. A rollback that
-// restored the deployment leaves it on the stored values, so an update
-// whose staged values were lost isn't listed then. A repair's rollback
-// restores what the lost update may have deployed, so it is.
+// lost values and settled as anything but succeeded. A plan that has left
+// the catalog comes first, because every update is refused until an
+// operator restores it, so sending the update again can't help. A
+// rollback that restored the deployment leaves it on the stored values, so
+// an update whose staged values were lost isn't listed then. A repair's
+// rollback restores what the lost update may have deployed, so it is.
 func (p *updatePhase) noteUnresumableUpdate() {
 	switch {
+	case p.planMissing:
+		p.broker.noteUpdateAttention(p.instanceID, p.target.deployment, updateAttentionPlanMissing(p.request.planID))
 	case p.repairsLostValues && !p.succeeded:
 		p.broker.noteUpdateAttention(p.instanceID, p.target.deployment, updateAttentionRepairFailed)
 	case p.stagedLost && p.restored:
 	case p.stagedLost:
 		p.broker.noteUpdateAttention(p.instanceID, p.target.deployment, updateAttentionStagedLost)
-	case p.planMissing:
-		p.broker.noteUpdateAttention(p.instanceID, p.target.deployment, updateAttentionPlanMissing(p.request.planID))
 	}
 }
 
 // noteSettledUnresumableUpdates lists in Attention required each update
 // whose record says it settled as failed while its staged values can't be
-// read back or the plan they name is not in the catalog. Re-adoption
-// skips a settled record, so this is how an entry noted before a restart
-// is found again. It reads nothing from Vault.
+// read back or the plan they name is not in the catalog. Re-adoption skips
+// a settled record, so this is how an entry noted before a restart is found
+// again. A plan missing from the catalog comes before the other reasons. It
+// reads nothing from Vault.
 func (b *Broker) noteSettledUnresumableUpdates(candidates []*readoptCandidate) {
 	for _, candidate := range candidates {
+		if !candidate.parsed || !candidate.indexed || candidate.recorded.Action != operationTypeUpdate {
+			continue
+		}
+
 		state := candidate.recorded.State
-		if !candidate.parsed || !candidate.indexed || candidate.recorded.Action != operationTypeUpdate ||
-			(state != recordedStateFailed && state != internalVault.TaskStateRollbackFailed) {
-			continue
-		}
-
-		if reason := lostValuesReason(candidate.record); reason != "" {
-			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, reason)
-
-			continue
-		}
+		settled := state == recordedStateFailed || state == internalVault.TaskStateRollbackFailed
 
 		staged, err := stagedUpdate(candidate.record)
-		if err != nil {
-			continue
+		if err == nil && settled {
+			serviceID, _ := candidate.entry["service_id"].(string)
+			if _, found := b.Plans[serviceID+"/"+staged.PlanID]; !found {
+				b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionPlanMissing(staged.PlanID))
+
+				continue
+			}
 		}
 
-		serviceID, _ := candidate.entry["service_id"].(string)
-		if _, found := b.Plans[serviceID+"/"+staged.PlanID]; !found {
-			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionPlanMissing(staged.PlanID))
+		reason := lostValuesReason(candidate.record)
+		if reason != "" {
+			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, reason)
 		}
 	}
 }
