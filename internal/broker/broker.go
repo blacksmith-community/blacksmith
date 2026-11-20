@@ -3990,6 +3990,17 @@ type recordedOperation struct {
 	// deployment is gone. A record written before the mark existed has
 	// none, and is never cleaned up from it.
 	CleanupPending bool
+	// SettlePending is true while an update the resolver of a lost answer
+	// recorded as never started still owes its settle, which is its
+	// change record or its rollback's end. See
+	// internalVault.TaskRecordSettlePendingKey.
+	SettlePending bool
+}
+
+// owesSettle reports whether r is the record of an update recorded as
+// failed that still owes its settle.
+func (r recordedOperation) owesSettle() bool {
+	return r.Action == operationTypeUpdate && r.State == recordedStateFailed && r.SettlePending
 }
 
 // hasTask reports whether a BOSH task ID was recorded. Zero means no task
@@ -4019,6 +4030,7 @@ func parseRecordedOperation(instanceID, state string, taskID int, task map[strin
 	recorded.DeploymentName, _ = task[internalVault.TaskRecordDeploymentNameKey].(string)
 	recorded.DeploymentPlanID, _ = task[internalVault.TaskRecordDeploymentPlanIDKey].(string)
 	recorded.CleanupPending, _ = task[internalVault.TaskRecordCleanupPendingKey].(bool)
+	recorded.SettlePending, _ = task[internalVault.TaskRecordSettlePendingKey].(bool)
 
 	if rollback := internalVault.StagedRollback(task); rollback != nil {
 		recorded.RollingBack = rollback.Phase == internalVault.UpdatePhaseRollingBack

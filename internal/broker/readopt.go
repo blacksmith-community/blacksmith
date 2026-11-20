@@ -606,7 +606,7 @@ func sortReadoptCandidates(candidates []*readoptCandidate, logger logger.Logger)
 			logger.Warning("Instance %s: its record holds an update in flight, and its index entry is gone, so the update is not re-adopted", candidate.instanceID)
 
 			continue
-		case !readoptClaimable(recorded.State):
+		case !readoptClaimable(recorded.State) && !recorded.owesSettle():
 			logger.Debug("Instance %s: its %s is %s, so it is not re-adopted", candidate.instanceID, recorded.Action, recorded.State)
 
 			continue

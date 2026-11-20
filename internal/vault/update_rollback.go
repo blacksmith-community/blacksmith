@@ -156,6 +156,12 @@ func (vault *Vault) writeUpdateRollback(ctx context.Context, instanceID, descrip
 
 		delete(record, TaskRecordUnknownSinceKey)
 
+		// The write that settles the update is the settle the resolver's
+		// mark waited for.
+		if settling {
+			delete(record, TaskRecordSettlePendingKey)
+		}
+
 		staged, _ := replaced[TaskRecordUpdateKey].(map[string]interface{})
 		staged = maps.Clone(staged)
 

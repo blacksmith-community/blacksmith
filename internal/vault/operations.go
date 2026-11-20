@@ -68,6 +68,15 @@ const TaskStateDeleted = "deleted"
 // stops in between still finds the cleanup owed.
 const TaskRecordCleanupPendingKey = "cleanup_pending"
 
+// TaskRecordSettlePendingKey is the key of the mark an update's record
+// carries while the update still owes its settle after the resolver of a
+// lost answer recorded that its deploy never started. The resolver's
+// write sets it, and the update's settle takes it off in the write that
+// settles the update, or with ClearSettlePending once nothing else is
+// written, so a broker that stops in between still finds the update owing
+// its change record, or its rollback's end, and re-adoption finishes it.
+const TaskRecordSettlePendingKey = "settle_pending"
+
 // TaskRecordUnknownSinceKey is the key of the time a task record's outcome
 // became unknown, in RFC 3339 form with nanoseconds, in UTC.
 const TaskRecordUnknownSinceKey = "unknown_since"
@@ -606,6 +615,53 @@ func (vault *Vault) SettleOutcomeUnknownCleanupPending(ctx context.Context, inst
 	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, taskDeployment{}, -1, nil, true, settlingOutcomeUnknown(instanceID, action, contextID))
 }
 
+// SettleOutcomeUnknownSettlePending records the failure -1 as the outcome
+// of the update whose unknown outcome the record holds under contextID,
+// as SettleOutcomeUnknown does, and marks the record, in the same write,
+// as owing the update's settle. See TaskRecordSettlePendingKey.
+func (vault *Vault) SettleOutcomeUnknownSettlePending(ctx context.Context, instanceID, description, contextID string) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s, settled outcome", ErrEmptyContextID, instanceID, actionUpdate)
+	}
+
+	return vault.trackProgressMarked(ctx, instanceID, actionUpdate, description, contextID, taskDeployment{}, -1, nil, progressMarks{settlePending: true}, settlingOutcomeUnknown(instanceID, actionUpdate, contextID))
+}
+
+// ClearSettlePending removes the settle mark from the record of the update
+// with contextID, and keeps every other field. It writes only when the
+// record holds that update, failed and marked, checked under the
+// instance's task record lock, and otherwise writes nothing and returns an
+// error that wraps ErrTaskRecordReplaced. A record that cannot be read
+// stops the write. No history entry is written.
+func (vault *Vault) ClearSettlePending(ctx context.Context, instanceID, contextID string) error {
+	logger := logger.Get().Named("vault clear settle pending " + instanceID)
+
+	guard := func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrTaskRecordReplaced, instanceID)
+		}
+
+		recordedAction, _ := current["action"].(string)
+		recordedContextID, _ := current[taskRecordContextIDKey].(string)
+		state, _ := current["state"].(string)
+		marked, _ := current[TaskRecordSettlePendingKey].(bool)
+
+		if recordedAction != actionUpdate || recordedContextID != contextID || state != eventStateFailed || !marked {
+			return fmt.Errorf("%w: instance %s records the %s state of a %s with context ID %q and the settle mark %v, not the marked failure of the update with context ID %q",
+				ErrTaskRecordReplaced, instanceID, state, recordedAction, recordedContextID, marked, contextID)
+		}
+
+		return nil
+	}
+
+	return vault.writeTaskRecordGuarded(ctx, instanceID, actionUpdate, logger, guard, func(replaced map[string]interface{}) interface{} {
+		cleared := maps.Clone(replaced)
+		delete(cleared, TaskRecordSettlePendingKey)
+
+		return cleared
+	})
+}
+
 // ErrUnknownSinceRecorded is returned when StampUnknownSince finds that the
 // record already says when its outcome became unknown.
 var ErrUnknownSinceRecorded = errors.New("the task record already says when its outcome became unknown")
@@ -761,6 +817,7 @@ type progressRecord struct {
 	DeploymentName   string      `json:"deployment_name,omitempty"`
 	DeploymentPlanID string      `json:"deployment_plan_id,omitempty"`
 	CleanupPending   bool        `json:"cleanup_pending,omitempty"`
+	SettlePending    bool        `json:"settle_pending,omitempty"`
 	// Update holds an update's staged values, which every later write of
 	// the same update keeps. See TaskRecordUpdateKey.
 	Update interface{} `json:"update,omitempty"`
@@ -771,6 +828,19 @@ type progressRecord struct {
 // When cleanupPending is true, the record it writes carries the cleanup
 // mark; see TaskRecordCleanupPendingKey.
 func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action, description, contextID string, deployment taskDeployment, taskID int, params interface{}, cleanupPending bool, guard func(current map[string]interface{}) error) error {
+	return vault.trackProgressMarked(ctx, instanceID, action, description, contextID, deployment, taskID, params, progressMarks{cleanupPending: cleanupPending}, guard)
+}
+
+// progressMarks are the marks a progress write leaves on the record. See
+// TaskRecordCleanupPendingKey and TaskRecordSettlePendingKey.
+type progressMarks struct {
+	cleanupPending bool
+	settlePending  bool
+}
+
+// trackProgressMarked writes the task record as trackProgressGuarded
+// does, with marks on it.
+func (vault *Vault) trackProgressMarked(ctx context.Context, instanceID, action, description, contextID string, deployment taskDeployment, taskID int, params interface{}, marks progressMarks, guard func(current map[string]interface{}) error) error {
 	logger := logger.Get().Named("vault track progress " + instanceID)
 	logger.Debug("tracking progress for '%s': %s (taskID: %d)", action, description, taskID)
 
@@ -786,7 +856,8 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 		ContextID:        contextID,
 		DeploymentName:   deployment.name,
 		DeploymentPlanID: deployment.planID,
-		CleanupPending:   cleanupPending,
+		CleanupPending:   marks.cleanupPending,
+		SettlePending:    marks.settlePending,
 	}
 
 	err := vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {

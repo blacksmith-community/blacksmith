@@ -761,14 +761,20 @@ func (b *Broker) recordSettledOutcome(ctx context.Context, instanceID string, op
 	noun := requestNoun(operation.Action)
 
 	var err error
-	if taskID == -1 && operation.Action == operationTypeProvision {
+
+	switch {
+	case taskID == -1 && operation.Action == operationTypeProvision:
 		// A provision settled as failed owes the delete of whatever its
 		// deploy left, and the write says so.
 		err = b.Vault.SettleOutcomeUnknownCleanupPending(recordCtx, instanceID, operation.Action, description, operation.ContextID)
 		if err == nil || errors.Is(err, internalVault.ErrHistoryNotAppended) {
 			b.noteOwedCleanup(instanceID)
 		}
-	} else {
+	case taskID == -1 && operation.Action == operationTypeUpdate:
+		// An update whose deploy never started still owes its settle,
+		// which the update or re-adoption finishes, and the write says so.
+		err = b.Vault.SettleOutcomeUnknownSettlePending(recordCtx, instanceID, description, operation.ContextID)
+	default:
 		err = b.Vault.SettleOutcomeUnknown(recordCtx, instanceID, operation.Action, description, operation.ContextID, taskID)
 	}
 

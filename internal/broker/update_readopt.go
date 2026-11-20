@@ -206,6 +206,13 @@ func (p *updatePhase) resume(ctx context.Context) bool {
 		current, err = p.broker.readoptCurrent(ctx, p.instanceID)
 	}
 
+	if current.owesSettle() && current.ContextID == p.contextID {
+		p.logger.Info("Instance %s: the director never started its update's deploy with context ID %s, and the update's settle is still owed, so re-adoption finishes it", p.instanceID, p.contextID)
+		p.neverStarted(ctx)
+
+		return true
+	}
+
 	if current.Action != operationTypeUpdate || current.ContextID != p.contextID || readoptTerminal(current.State) || current.State == internalVault.TaskStateRollbackFailed {
 		p.logger.Info("Instance %s: its record now holds the %s %s, so re-adoption leaves it", p.instanceID, current.Action, current.State)
 

@@ -93,7 +93,8 @@ func (p *updatePhase) resolveLostAnswer(ctx context.Context) (*bosh.Task, bool) 
 // director never started. For the update's own deploy, the deployment is
 // as it was, so the failure stands and nothing rolls back. For the
 // rollback's deploy, the update's failed deploy is still in place, so the
-// rollback failed.
+// rollback failed, and the write that settles it takes the settle mark
+// off. See internalVault.TaskRecordSettlePendingKey.
 func (p *updatePhase) neverStarted(ctx context.Context) {
 	if p.rollback != nil {
 		p.settleRollback(ctx, nil, "")
@@ -101,8 +102,48 @@ func (p *updatePhase) neverStarted(ctx context.Context) {
 		return
 	}
 
+	// The mark comes off before the change record is written, as every
+	// settle write comes before its change record. A broker that shuts
+	// down before the mark comes off leaves both to the next start.
+	if !p.clearSettlePending(ctx) {
+		return
+	}
+
 	p.broker.auditUpdate(context.WithoutCancel(ctx), p.instanceID, p.target, p.request, updateOutcomeFailed, "", 0)
 	p.dropRollbackManifest(ctx)
+}
+
+// clearSettlePending takes the settle mark off the update's record, trying
+// the write until it lands. A record that no longer holds the marked
+// failure of the update owes nothing more of its record, so it counts as
+// cleared. It reports false only when the broker shuts down before the
+// write lands, and the mark then stays for the next start.
+func (p *updatePhase) clearSettlePending(ctx context.Context) bool {
+	wait := p.broker.updateRetryWait()
+
+	for {
+		recordCtx, cancel := recordContext(ctx)
+		err := p.broker.Vault.ClearSettlePending(recordCtx, p.instanceID, p.contextID)
+
+		cancel()
+
+		switch {
+		case err == nil:
+			return true
+		case errors.Is(err, internalVault.ErrTaskRecordReplaced):
+			p.logger.Info("Instance %s: its record no longer holds the marked failure of the update with context ID %s, so no settle mark is left to clear: %s", p.instanceID, p.contextID, err)
+
+			return true
+		}
+
+		p.logger.Error("Instance %s: failed to clear the settle mark of its update with context ID %s, and tries again in %v: %s", p.instanceID, p.contextID, wait, err)
+
+		if !p.retryAfter(&wait) {
+			p.logger.Warning("Instance %s: the broker is shutting down before the settle mark of its update with context ID %s came off, so re-adoption finishes the update at the next start", p.instanceID, p.contextID)
+
+			return false
+		}
+	}
 }
 
 // waitForOutcome waits out the gap between two resolver passes, and
