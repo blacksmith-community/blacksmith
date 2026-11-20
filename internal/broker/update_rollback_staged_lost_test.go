@@ -174,9 +174,9 @@ func TestReadopt_ResumesRollback_StagedValuesLost(t *testing.T) {
 }
 
 // requireRollbackSettled fails t unless the re-adopted rollback of
-// instanceID settled within waitCtx as outcome, naming rollbackTask, sent no deploy, and
-// left the Attention required entry that attention names, or none, both
-// at once and at the next start.
+// instanceID settled within waitCtx as outcome, naming rollbackTask, sent
+// no deploy, and left the Attention required entry that attention names,
+// or none, both at once and at the next start.
 func requireRollbackSettled(waitCtx, ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string, script *readoptRollbackScript, outcome string, rollbackTask int, attention string) {
 	t.Helper()
 
