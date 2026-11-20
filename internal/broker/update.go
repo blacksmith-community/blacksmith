@@ -59,11 +59,12 @@ const updateRenderFailedDescription = "The plan can't render a manifest from the
 var errUpdateRenderFailed = errors.New("the requested manifest did not render")
 
 // errUpdatePlanRenderFailed reports that the plan rendered neither the
-// requested manifest nor the current one from the stored parameters,
-// which rendered when the instance was deployed, so the fault is the
-// plan's and not the request's. Its text is the answer's description,
-// and it holds nothing of graft's error.
-var errUpdatePlanRenderFailed = errors.New("The plan's manifest template doesn't render, even from the instance's current parameters, so an operator must fix the plan before the instance can be updated") //nolint:staticcheck,revive // the text is the answer's description
+// requested manifest nor the current one from the stored parameters.
+// The stored parameters rendered when the instance was deployed, so the
+// plan is most likely at fault, and the requested parameters may be at
+// fault as well, so the answer names both. Its text is the answer's
+// description, and it holds nothing of graft's error.
+var errUpdatePlanRenderFailed = errors.New("The plan's manifest template doesn't render from the instance's current parameters or from the requested parameters. An operator most likely has to fix the plan, and the requested parameters may be at fault as well") //nolint:staticcheck,revive // the text is the answer's description
 
 // ErrUpdateNoVault is returned when the broker has no Vault to read the
 // instance from, so an update can't be checked.
@@ -544,7 +545,8 @@ func (b *Broker) renderUpdate(ctx context.Context, instanceID string, plan servi
 
 	if err != nil {
 		// The stored parameters rendered when the instance was deployed,
-		// so when they don't render now either, the plan is at fault.
+		// so when they don't render now either, the plan is most likely
+		// at fault, though the requested parameters may be too.
 		_, currentErr := renderInstanceManifest(plan, instanceID, defaults, target.parameters) //nolint:contextcheck // GenManifest takes no context
 		if currentErr != nil {
 			logger.Error("Instance %s: its plan %s renders neither the requested manifest from the parameter keys %s, because %s, nor the current one from the stored parameter keys %s, because %s", instanceID, plan.ID, parameterKeys(request.parameters), renderFailure(err), parameterKeys(target.parameters), renderFailure(currentErr))

@@ -26,9 +26,11 @@ func (f *updateFixture) addBrokenPlan() {
 }
 
 // A plan whose template renders neither the stored parameters nor the
-// requested ones is broken on the operator's side, so the update is
-// refused with a 500 that says so, and never with a 400 that blames the
-// tenant's parameters. The refusal is recorded with its own reason.
+// requested ones is most likely broken on the operator's side, so the
+// update is refused with a 500 that says so, and never with a 400 that
+// blames only the tenant's parameters. The requested parameters may be at
+// fault as well, so the answer names them too. The refusal is recorded
+// with its own reason.
 func TestUpdate_BrokenPlanTemplate_500NotTheTenantsFault(t *testing.T) {
 	t.Parallel()
 
@@ -44,8 +46,8 @@ func TestUpdate_BrokenPlanTemplate_500NotTheTenantsFault(t *testing.T) {
 	}, true)
 
 	var osbErr *osbapi.OSBError
-	if errors.Is(err, osbapi.ErrInvalidParameters) || errors.As(err, &osbErr) || !strings.Contains(err.Error(), "operator") {
-		t.Fatalf("the update of a broken plan was answered %v, want a 500 that names the operator", err)
+	if errors.Is(err, osbapi.ErrInvalidParameters) || errors.As(err, &osbErr) || !strings.Contains(err.Error(), "operator") || !strings.Contains(err.Error(), "requested parameters") {
+		t.Fatalf("the update of a broken plan was answered %v, want a 500 that names the operator and the requested parameters", err)
 	}
 
 	fixture.requireRefused(ctx, t, instanceID, before, err, func(error) bool { return true })
