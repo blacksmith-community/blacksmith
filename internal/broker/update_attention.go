@@ -68,9 +68,12 @@ func (b *Broker) forgetUpdateAttention(instanceID string) {
 }
 
 // noteUnresumableUpdate lists the update of the phase in Attention
-// required when re-adoption couldn't carry it through.
+// required when re-adoption couldn't carry it through. A rollback that
+// restored the deployment leaves it on the stored values, so an update
+// whose staged values were lost isn't listed then.
 func (p *updatePhase) noteUnresumableUpdate() {
 	switch {
+	case p.stagedLost && p.restored:
 	case p.stagedLost:
 		p.broker.noteUpdateAttention(p.instanceID, p.target.deployment, updateAttentionStagedLost)
 	case p.planMissing:
@@ -93,7 +96,9 @@ func (b *Broker) noteSettledUnresumableUpdates(candidates []*readoptCandidate) {
 
 		staged, err := stagedUpdate(candidate.record)
 		if err != nil {
-			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionStagedLost)
+			if !rollbackRestored(candidate.record) {
+				b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionStagedLost)
+			}
 
 			continue
 		}
@@ -103,4 +108,13 @@ func (b *Broker) noteSettledUnresumableUpdates(candidates []*readoptCandidate) {
 			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionPlanMissing(staged.PlanID))
 		}
 	}
+}
+
+// rollbackRestored reports whether the update record holds a rollback that
+// restored the deployment, which leaves the deployment on the instance's
+// stored values.
+func rollbackRestored(record map[string]interface{}) bool {
+	rollback := internalVault.StagedRollback(record)
+
+	return rollback != nil && rollback.Phase == internalVault.UpdatePhaseRolledBack
 }

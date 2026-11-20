@@ -81,10 +81,18 @@ type updatePhase struct {
 	// the catalog. Every update of the instance is refused until an
 	// operator restores it, so the update isn't repeatable until then.
 	planMissing bool
-	// stagedLost reports that the staged values can't be read back, so
-	// whether a rollback ran isn't known either. Any end of the task then
+	// stagedLost reports that the staged values can't be read back. A
+	// rollback the record still names apart from them is resumed, and
+	// otherwise whether a rollback ran isn't known, so any end of the task
 	// settles the update as failed, and nothing rolls back.
 	stagedLost bool
+	// rollbackUnverified reports that the rollback was read from a record
+	// whose staged values don't decode, and that the manifest saved for
+	// it doesn't back it up, so it can't settle as rolled back.
+	rollbackUnverified bool
+	// restored reports that the rollback settled as rolled back, which
+	// leaves the deployment on the instance's stored values.
+	restored bool
 }
 
 // launchUpdate records the accepted update and starts the goroutine that
@@ -600,10 +608,10 @@ func (p *updatePhase) settle(ctx context.Context, task *bosh.Task, deployed stri
 	defer p.noteUnresumableUpdate()
 
 	switch {
-	case p.stagedLost:
-		p.failUnresumable(ctx, task)
 	case p.rollback != nil:
 		p.settleRollback(ctx, task, "")
+	case p.stagedLost:
+		p.failUnresumable(ctx, task)
 	case task.State != taskStateDone:
 		p.deployFailed(ctx, task)
 	case p.unresumable != "":

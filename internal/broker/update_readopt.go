@@ -137,11 +137,9 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 
 	contextID, _ := record["context_id"].(string)
 
-	// A rollback the restart interrupted is resumed as the rollback, by
-	// its own context ID, and never sent again.
-	var rollback *internalVault.UpdateRollback
-	if staged.Rollback != nil && staged.Rollback.Phase == internalVault.UpdatePhaseRollingBack {
-		rollback = staged.Rollback
+	rollback, rollbackUnverified, err := b.readoptedRollback(readCtx, operation.instanceID, record, staged, stagedErr, logger)
+	if err != nil {
+		return nil, err
 	}
 
 	return &updatePhase{
@@ -152,15 +150,68 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 			planID: staged.PlanID, parameters: staged.Parameters,
 			changedKeys: staged.ChangedKeys, fingerprint: staged.Fingerprint, actor: staged.Actor,
 		},
-		context:     staged.Context,
-		plan:        plan,
-		contextID:   contextID,
-		logger:      logger,
-		rollback:    rollback,
-		unresumable: unresumable,
-		planMissing: planMissing,
-		stagedLost:  stagedErr != nil,
+		context:            staged.Context,
+		plan:               plan,
+		contextID:          contextID,
+		logger:             logger,
+		rollback:           rollback,
+		unresumable:        unresumable,
+		planMissing:        planMissing,
+		stagedLost:         stagedErr != nil,
+		rollbackUnverified: rollbackUnverified,
 	}, nil
+}
+
+// readoptedRollback returns the rollback a restart interrupted, which
+// re-adoption resumes as the rollback, by its own context ID, and never
+// sends again, or nil when the update record names none. It also reports
+// whether the rollback can't be vouched for, as rollbackOfDamagedRecord
+// says, when the record's staged values don't decode.
+func (b *Broker) readoptedRollback(ctx context.Context, instanceID string, record map[string]interface{}, staged internalVault.StagedUpdate, stagedErr error, logger logger.Logger) (*internalVault.UpdateRollback, bool, error) {
+	if stagedErr == nil {
+		if staged.Rollback != nil && staged.Rollback.Phase == internalVault.UpdatePhaseRollingBack {
+			return staged.Rollback, false, nil
+		}
+
+		return nil, false, nil
+	}
+
+	contextID, _ := record["context_id"].(string)
+
+	rollback, unverified, err := b.rollbackOfDamagedRecord(ctx, instanceID, record, contextID)
+	if err == nil && rollback != nil {
+		logger.Warning("Instance %s: re-adoption resumes the rollback with context ID %s that its damaged update record still names, and it settles as rolled back only if the manifest saved for it backs it up (%t)", instanceID, rollback.ContextID, !unverified)
+	}
+
+	return rollback, unverified, err
+}
+
+// rollbackOfDamagedRecord returns the rollback that the update record of
+// instanceID names while its staged values don't decode, when the
+// rollback still reads apart from them and is running under the record's
+// contextID. The record is damaged, so it also reports whether the
+// rollback can't be vouched for, which is when the manifest saved for it
+// is missing or doesn't match the rollback's digest. A rollback that
+// can't be vouched for is still followed, by its own context ID and
+// never sent again, and it settles as rollback_failed. It returns an
+// error when the saved manifest can't be read, and re-adoption then
+// tries again.
+func (b *Broker) rollbackOfDamagedRecord(ctx context.Context, instanceID string, record map[string]interface{}, contextID string) (*internalVault.UpdateRollback, bool, error) {
+	rollback := internalVault.StagedRollback(record)
+	if rollback == nil || rollback.Phase != internalVault.UpdatePhaseRollingBack {
+		return nil, false, nil
+	}
+
+	_, digest, err := b.savedRollbackManifest(ctx, instanceID)
+
+	switch {
+	case errors.Is(err, errRollbackManifestMissing) || errors.Is(err, errRollbackManifestDigest):
+		return rollback, true, nil
+	case err != nil:
+		return nil, false, err
+	}
+
+	return rollback, digest != rollback.ManifestDigest || rollback.ContextID != contextID, nil
 }
 
 // stagedUpdate decodes the staged values an update's task record holds.

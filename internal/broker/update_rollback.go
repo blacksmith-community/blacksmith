@@ -67,6 +67,14 @@ func (p *updatePhase) saveRollbackManifest(ctx context.Context, live string) err
 // savedRollbackManifest reads the manifest saved for the rollback and
 // checks it against its digest.
 func (p *updatePhase) savedRollbackManifest(ctx context.Context) (string, string, error) {
+	return p.broker.savedRollbackManifest(ctx, p.instanceID)
+}
+
+// savedRollbackManifest reads the manifest saved for the rollback of the
+// update of instanceID and checks it against its digest. It returns an
+// error that wraps errRollbackManifestMissing when none was saved, and one
+// that wraps errRollbackManifestDigest when it doesn't match its digest.
+func (b *Broker) savedRollbackManifest(ctx context.Context, instanceID string) (string, string, error) {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
@@ -75,15 +83,15 @@ func (p *updatePhase) savedRollbackManifest(ctx context.Context) (string, string
 		Digest   string `json:"digest"`
 	}
 
-	found, err := p.broker.Vault.Get(recordCtx, p.instanceID+rollbackManifestSuffix, &saved)
+	found, err := b.Vault.Get(recordCtx, instanceID+rollbackManifestSuffix, &saved)
 
 	switch {
 	case err != nil:
-		return "", "", fmt.Errorf("failed to read the saved manifest of instance %s: %w", p.instanceID, err)
+		return "", "", fmt.Errorf("failed to read the saved manifest of instance %s: %w", instanceID, err)
 	case !found || saved.Manifest == "":
-		return "", "", fmt.Errorf("%w: instance %s", errRollbackManifestMissing, p.instanceID)
+		return "", "", fmt.Errorf("%w: instance %s", errRollbackManifestMissing, instanceID)
 	case manifestDigest(saved.Manifest) != saved.Digest:
-		return "", "", fmt.Errorf("%w: instance %s", errRollbackManifestDigest, p.instanceID)
+		return "", "", fmt.Errorf("%w: instance %s", errRollbackManifestDigest, instanceID)
 	}
 
 	return saved.Manifest, saved.Digest, nil
@@ -335,7 +343,8 @@ func (p *updatePhase) settleRollback(ctx context.Context, task *bosh.Task, reaso
 		rollback.TaskID = task.ID
 	}
 
-	if task != nil && task.State == taskStateDone {
+	if task != nil && task.State == taskStateDone && !p.rollbackUnverified {
+		p.restored = true
 		rollback.Phase = internalVault.UpdatePhaseRolledBack
 		description := fmt.Sprintf("The update failed in BOSH task %d, and BOSH task %d restored the previous deployment", rollback.FailedTaskID, task.ID)
 		p.settleFailure(ctx, recordedStateFailed, description, updateOutcomeRolledBack, rollback)
@@ -352,6 +361,14 @@ func (p *updatePhase) settleRollback(ctx context.Context, task *bosh.Task, reaso
 
 	rollback.Phase = internalVault.UpdatePhaseRollbackFailed
 	description := fmt.Sprintf("The update failed in BOSH task %d, and its rollback failed too (%s). The deployment may be in an inconsistent state, so an operator should check it", rollback.FailedTaskID, reason)
+
+	// The record that names the rollback is damaged, and the manifest
+	// saved for it doesn't back it up, so whatever the task did, the
+	// broker can't vouch for what it restored.
+	if task != nil && p.rollbackUnverified {
+		description = fmt.Sprintf("The update failed in BOSH task %d, and the broker can't vouch for its rollback in BOSH task %d, which is %s, because the update's record is damaged and doesn't match the manifest saved for the rollback. The deployment may be in an inconsistent state, so an operator should check it", rollback.FailedTaskID, task.ID, task.State)
+	}
+
 	p.settleFailure(ctx, internalVault.TaskStateRollbackFailed, description, updateOutcomeRollbackFailed, rollback)
 }
 

@@ -48,7 +48,7 @@ func savedRollbackManifest(ctx context.Context, t *testing.T, fixture *updateFix
 	sum := sha256.Sum256([]byte(liveManifest))
 
 	err := fixture.vault.Put(ctx, instanceID+"/update_rollback_manifest", map[string]interface{}{
-		"manifest": liveManifest, "digest": hex.EncodeToString(sum[:]),
+		savedManifestField: liveManifest, savedDigestField: hex.EncodeToString(sum[:]),
 	})
 	if err != nil {
 		t.Fatalf("failed to save the rollback manifest: %v", err)
