@@ -240,6 +240,29 @@ func TestReadopt_InterruptedRepairWithPlanGone_NamesThePlan(t *testing.T) {
 	requireUpdateAttention(t, startedBroker(ctx, t, fixture, plans), instanceID, planGoneAttention, "at the start after it settled")
 }
 
+// A repair that succeeded leaves the instance off Attention required for
+// good, so a later start on a catalog that no longer holds its plan lists
+// nothing, because the update didn't fail.
+func TestReadopt_SucceededRepairWithPlanGone_ListsNothing(t *testing.T) {
+	t.Parallel()
+
+	fixture := newUpdateFixture(t)
+	ctx := context.Background()
+	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, lastGoodParams())
+	next := settledStagedLostBroker(ctx, t, fixture, instanceID)
+
+	(&deployScript{}).script(fixture, outcomeTaskDone)
+
+	if answer := sendRepair(ctx, t, next, instanceID, nil); answer.State != osbapi.StateSucceeded {
+		t.Fatalf("the repair was answered %+v, want succeeded", answer)
+	}
+
+	plans := updatePlans()
+	delete(plans, recordedNameService+"/"+openUpdatePlan)
+
+	requireUpdateAttention(t, startedBroker(ctx, t, fixture, plans), instanceID, "", "at the start after the repair succeeded and its plan left")
+}
+
 // A repair a restart interrupted is listed under Attention required as
 // soon as the broker starts, and not only once the repair settles,
 // because until the repair succeeds the deployment may still run what

@@ -113,9 +113,15 @@ func (b *Broker) noteSettledUnresumableUpdates(candidates []*readoptCandidate) {
 }
 
 // unresumableReason returns the Attention required reason of the update
-// record of candidate, or "" when it needs none.
+// record of candidate, or "" when it needs none. A record that succeeded
+// or was deleted needs none, because its update didn't fail, whatever the
+// repair flag it keeps says.
 func (b *Broker) unresumableReason(candidate *readoptCandidate) string {
 	state := candidate.recorded.State
+	if state == internalVault.TaskStateSucceeded || state == internalVault.TaskStateDeleted {
+		return ""
+	}
+
 	settled := state == recordedStateFailed || state == internalVault.TaskStateRollbackFailed
 
 	staged, err := stagedUpdate(candidate.record)
@@ -130,7 +136,7 @@ func (b *Broker) unresumableReason(candidate *readoptCandidate) string {
 		return reason
 	}
 
-	if !settled && err == nil && staged.RepairsLostValues && state != internalVault.TaskStateSucceeded && state != internalVault.TaskStateDeleted {
+	if !settled && err == nil && staged.RepairsLostValues {
 		return updateAttentionRepairFailed
 	}
 
