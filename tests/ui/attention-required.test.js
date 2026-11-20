@@ -216,3 +216,47 @@ test('an entry that is not an object is skipped, and a list of none adds no row'
   expect(section(mount(w,d,refusedCleanups('x'))).querySelector('[data-attention="cleanups"]')).toBeNull();
  }finally{w.close();}
 });
+
+// An update the broker couldn't carry through after a restart is named in
+// the box with its deployment and the reason, because the tenant alone
+// can't put it right. The row holds off the all-clear, and what it shows
+// is escaped.
+const stuckUpdates=(entries)=>({...quiet(),update_attention:entries});
+
+test('an update the broker could not carry through is listed by instance with its reason, and nothing is called clear',async()=>{
+ const {w,d}=boot({routes:[inventory([]),...settled]});
+ try{
+  const reason='Plan small is no longer in the catalog, so the update settled as failed, and every update of the instance is refused until an operator restores the plan';
+  const input=stuckUpdates([{instance_id:'inst-7',deployment_name:'small-inst-7',reason,since:'2026-11-19T10:00:00Z'}]);
+  const host=mount(w,d,input);
+  await w.__T.refreshAttentionRequired(host,input);
+  const row=section(host).querySelector('[data-attention="updates"]');
+  expect(row).not.toBeNull();
+  expect(row.getAttribute('data-tone')).toBe('critical');
+  expect(row.textContent).toContain('1 update the broker could not carry through');
+  expect(row.textContent).toContain('inst-7');
+  expect(row.textContent).toContain('small-inst-7');
+  expect(row.textContent).toContain(reason);
+  expect(section(host).textContent).not.toContain('Nothing needs attention');
+ }finally{w.close();}
+});
+
+test('an update the broker could not carry through is escaped, and its row adds no control and no data attribute that carries its values',()=>{
+ const {w,d}=boot();try{
+  const evil='"><img src=x onerror=alert(1)>';
+  const host=mount(w,d,stuckUpdates([{instance_id:evil,deployment_name:evil,reason:evil},{instance_id:'inst-2',reason:'The update\'s values can\'t be read back from its record'}]));
+  const row=section(host).querySelector('[data-attention="updates"]');
+  expect(section(host).querySelector('img')).toBeNull();
+  expect(row.textContent).toContain(evil);
+  expect(row.textContent).toContain('2 updates the broker could not carry through');
+  expect(row.querySelectorAll('a,button,input,select,textarea').length).toBe(0);
+  for(const node of row.querySelectorAll('*')) for(const attr of node.attributes) expect(attr.value).not.toContain('inst-');
+ }finally{w.close();}
+});
+
+test('an update entry that is not an object is skipped, and a list of none adds no row',()=>{
+ const {w,d}=boot();try{
+  expect(section(mount(w,d,stuckUpdates([null,'x',7]))).querySelector('[data-attention="updates"]')).toBeNull();
+  expect(section(mount(w,d,stuckUpdates('x'))).querySelector('[data-attention="updates"]')).toBeNull();
+ }finally{w.close();}
+});

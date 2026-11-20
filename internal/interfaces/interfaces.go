@@ -173,6 +173,23 @@ type CleanupAttention struct {
 	Since          time.Time `json:"since"`
 }
 
+// UpdateAttention is an update the broker couldn't carry through after a
+// restart, because its staged values can't be read back or the plan they
+// name has left the catalog. The tenant alone can't put it right, so an
+// operator decides what to do.
+type UpdateAttention struct {
+	InstanceID     string    `json:"instance_id"`
+	DeploymentName string    `json:"deployment_name,omitempty"`
+	Reason         string    `json:"reason"`
+	Since          time.Time `json:"since"`
+}
+
+// UpdateAttentionReporter is a broker that reports the updates it
+// couldn't carry through.
+type UpdateAttentionReporter interface {
+	UpdateAttention() []UpdateAttention
+}
+
 // CleanupAttentionReporter is a broker that reports the owed cleanups it
 // refused to run.
 type CleanupAttentionReporter interface {

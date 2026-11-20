@@ -2876,7 +2876,10 @@
     // nothing proves the deployment is the instance's own, waits for an
     // operator, and /b/status names it.
     const refusedCleanups = (Array.isArray(data.cleanup_attention) ? data.cleanup_attention : []).filter(item => item && typeof item === 'object');
-    if (!alerts.length && !refusedSchemas.length && !refusedCleanups.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && !tasksUnsettled && attentionHealth.status === 'ready' && attentionOrphans.status === 'ready' && !attentionOrphans.orphans.length && !attentionOrphans.unclaimed.length) {
+    // An update the broker could not carry through after a restart waits
+    // for an operator too, because the tenant alone can't put it right.
+    const stuckUpdates = (Array.isArray(data.update_attention) ? data.update_attention : []).filter(item => item && typeof item === 'object');
+    if (!alerts.length && !refusedSchemas.length && !refusedCleanups.length && !stuckUpdates.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && !tasksUnsettled && attentionHealth.status === 'ready' && attentionOrphans.status === 'ready' && !attentionOrphans.orphans.length && !attentionOrphans.unclaimed.length) {
       return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${unclaimedNote}${fetched(cert.fetchedAt)}`);
     }
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -2909,6 +2912,10 @@
     if (refusedCleanups.length) {
       const items = refusedCleanups.map(item => `<li>${escapeHtml(String(item.instance_id || ''))}${item.deployment_name ? ` <span class="entity-attention-state">${escapeHtml(String(item.deployment_name))}</span>` : ''} <span class="entity-attention-reason">${escapeHtml(String(item.reason || ''))}</span></li>`).join('');
       tier1.push(row('cleanups', 'critical', `<p>${refusedCleanups.length === 1 ? '1 failed provision' : `${refusedCleanups.length} failed provisions`} whose cleanup the broker refused, left for you to review</p><ul>${items}</ul>`));
+    }
+    if (stuckUpdates.length) {
+      const items = stuckUpdates.map(item => `<li>${escapeHtml(String(item.instance_id || ''))}${item.deployment_name ? ` <span class="entity-attention-state">${escapeHtml(String(item.deployment_name))}</span>` : ''} <span class="entity-attention-reason">${escapeHtml(String(item.reason || ''))}</span></li>`).join('');
+      tier1.push(row('updates', 'critical', `<p>${plural(stuckUpdates.length, 'update')} the broker could not carry through, left for you to review</p><ul>${items}</ul>`));
     }
     if (refusedSchemas.length) {
       const items = refusedSchemas.map(plan => `<li>${escapeHtml([plan.service?.name, plan.name || plan.id].filter(Boolean).map(String).join(' '))} <span class="entity-attention-reason">${escapeHtml(plan.schema_refused)}</span></li>`).join('');

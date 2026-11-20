@@ -286,6 +286,11 @@ type Broker struct {
 	// cleanup or delete was refused, keyed by instance ID.
 	cleanupAttention sync.Map
 
+	// updateAttention holds an interfaces.UpdateAttention for each
+	// instance whose update re-adoption couldn't carry through, keyed by
+	// instance ID, until the next update or deprovision is accepted.
+	updateAttention sync.Map
+
 	// sweep is the state the sweep of owed cleanups keeps between passes.
 	sweep cleanupSweep
 
@@ -1283,6 +1288,9 @@ func (b *Broker) recordAcceptedDeprovision(ctx context.Context, instanceID strin
 
 	err = b.Vault.TrackProgressReplacingOutcomeUnknown(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted",
 		superseded.Action, superseded.ContextID, 0, nil)
+	if err == nil || errors.Is(err, internalVault.ErrHistoryNotAppended) {
+		b.forgetUpdateAttention(instanceID)
+	}
 
 	return followRunning, err //nolint:wrapcheck // the caller tells the Vault's sentinel errors apart and wraps the rest
 }

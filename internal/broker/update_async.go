@@ -118,6 +118,10 @@ func (b *Broker) launchUpdate(ctx context.Context, phase *updatePhase, claim *op
 		return osbapi.UpdateResponse{}, false, false, fmt.Errorf("failed to record the update of instance %s: %w", phase.instanceID, err)
 	}
 
+	// The record now holds this update, so an earlier one listed in
+	// Attention required no longer needs an operator.
+	b.forgetUpdateAttention(phase.instanceID)
+
 	// The update outlives the request, so it runs under the service
 	// context. Only the steps before the deploy have a time bound. Once
 	// the deploy is sent, only a shutdown ends the goroutine, and the
@@ -583,6 +587,8 @@ func (b *Broker) followUpdateTask(ctx context.Context, taskID int, logger logger
 // setting at the failure says. A task the rollback ran settles the
 // rollback and never commits anything.
 func (p *updatePhase) settle(ctx context.Context, task *bosh.Task, deployed string) {
+	defer p.noteUnresumableUpdate()
+
 	switch {
 	case p.stagedLost:
 		p.failUnresumable(ctx, task)

@@ -373,6 +373,15 @@ func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Reques
 		}
 	}
 
+	// An update the broker couldn't carry through after a restart is named
+	// for the Attention required box too, because the tenant alone can't
+	// put it right.
+	if reporter, ok := h.broker.(interfaces.UpdateAttentionReporter); ok {
+		if stuck := reporter.UpdateAttention(); len(stuck) > 0 {
+			status["update_attention"] = stuck
+		}
+	}
+
 	response.HandleJSON(responseWriter, status, nil)
 }
 

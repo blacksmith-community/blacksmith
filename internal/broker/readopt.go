@@ -94,6 +94,8 @@ type readoptCandidate struct {
 	exists   bool
 	parsed   bool
 	recorded recordedOperation
+	// record is the raw record, which holds an update's staged values.
+	record map[string]interface{}
 
 	// metadata is <id>/metadata, read only for a deprovision without an
 	// index entry that carries a context ID.
@@ -184,6 +186,8 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	b.noteSettledUnresumableUpdates(candidates)
 
 	operations, migrations := sortReadoptCandidates(candidates, logger)
 	cleanups := owedCleanups(candidates)
@@ -386,6 +390,7 @@ func readoptReadRecords(ctx context.Context, store readoptStore, candidates []*r
 
 			candidate.parsed = true
 			candidate.recorded = recorded
+			candidate.record = task
 
 			return nil
 		})
