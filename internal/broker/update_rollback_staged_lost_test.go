@@ -71,14 +71,43 @@ func savedUnnamedManifest(ctx context.Context, t *testing.T, fixture *updateFixt
 	}
 }
 
+// rollbackSettleBound bounds the wait for a re-adopted rollback to settle.
+const rollbackSettleBound = 30 * time.Second
+
+// noSavedManifest saves no manifest for the rollback.
+func noSavedManifest(context.Context, *testing.T, *updateFixture, string) {}
+
+// recordedRollbackOtherContext records the rollback's task, with the
+// staged rollback naming a context ID that isn't the record's.
+func recordedRollbackOtherContext(ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string) {
+	t.Helper()
+
+	recordedRollbackTask(ctx, t, fixture, instanceID)
+
+	record := readTaskRecord(ctx, t, fixture.vault, instanceID)
+	staged, _ := record[internalVault.TaskRecordUpdateKey].(map[string]interface{})
+	rollback, _ := staged["rollback"].(map[string]interface{})
+
+	if rollback == nil {
+		t.Fatalf("the record holds no staged rollback: %v", record)
+	}
+
+	rollback["context_id"] = "another-rollback-context-id"
+
+	err := fixture.vault.Put(ctx, instanceID+"/task", record)
+	if err != nil {
+		t.Fatalf("failed to change the rollback's context ID: %v", err)
+	}
+}
+
 // A restart in the middle of a rollback, on a record whose staged values
 // no longer decode, still re-attaches to the rollback, because the
 // rollback reads apart from the rest of the staged values, and the
 // manifest saved for it matches its digest. The rollback settles as it
 // would have, rolled_back with the instance usable or rollback_failed
-// with it unusable, and it is never sent again. A saved manifest that
-// doesn't match the rollback's digest leaves the broker unable to vouch
-// for the rollback, so it settles as rollback_failed whatever its task
+// with it unusable, and it is never sent again. A saved manifest that is
+// missing or doesn't match, or a rollback under another context ID,
+// leaves the broker unable to vouch for the rollback, so it settles as rollback_failed whatever its task
 // did. Attention required lists the update unless the rollback restored
 // the deployment, which leaves it on the stored values.
 func TestReadopt_ResumesRollback_StagedValuesLost(t *testing.T) {
@@ -99,6 +128,8 @@ func TestReadopt_ResumesRollback_StagedValuesLost(t *testing.T) {
 		{"its rollback's deploy never started", recordedRollbackLostAnswer, savedRollbackManifest, outcomeTaskDone, pastGraceClock(), changeRollbackFail, 0, stagedLostAttention},
 		{"its saved manifest doesn't match its digest", recordedRollbackTask, savedOtherManifest, outcomeTaskDone, nil, changeRollbackFail, rollbackTaskID, stagedLostAttention},
 		{"its saved manifest isn't the one the rollback names", recordedRollbackTask, savedUnnamedManifest, outcomeTaskDone, nil, changeRollbackFail, rollbackTaskID, stagedLostAttention},
+		{"no manifest was saved for it", recordedRollbackTask, noSavedManifest, outcomeTaskDone, nil, changeRollbackFail, rollbackTaskID, stagedLostAttention},
+		{"it names a context ID that isn't the record's", recordedRollbackOtherContext, savedRollbackManifest, outcomeTaskDone, nil, changeRollbackFail, rollbackTaskID, stagedLostAttention},
 	} {
 		t.Run(rollbackCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -128,7 +159,12 @@ func TestReadopt_ResumesRollback_StagedValuesLost(t *testing.T) {
 				t.Fatalf("re-adoption failed: %v", err)
 			}
 
-			requireRollbackSettled(ctx, t, fixture, instanceID, script, rollbackCase.outcome, rollbackCase.rollbackTask, rollbackCase.attention)
+			// A re-adoption that can't read the rollback retries until
+			// shutdown, so the wait for it is bounded.
+			waitCtx, cancel := context.WithTimeout(ctx, rollbackSettleBound)
+			defer cancel()
+
+			requireRollbackSettled(waitCtx, t, fixture, instanceID, script, rollbackCase.outcome, rollbackCase.rollbackTask, rollbackCase.attention)
 		})
 	}
 }

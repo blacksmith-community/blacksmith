@@ -178,3 +178,29 @@ func TestReadopt_InterruptedRepairFails_StaysInRepair(t *testing.T) {
 
 	requireUpdateAttention(t, startedBroker(ctx, t, fixture, updatePlans()), instanceID, repairFailedAttention, "once the re-adopted repair failed")
 }
+
+// An update with no effect after lost values deploys, so a request that
+// doesn't accept an asynchronous answer gets 422 AsyncRequired, sends no
+// deploy, and leaves the instance listed under Attention required.
+func TestUpdate_NoEffectAfterStagedLost_SyncRequestNeedsAsync(t *testing.T) {
+	t.Parallel()
+
+	fixture := newUpdateFixture(t)
+	ctx := context.Background()
+	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, lastGoodParams())
+	next := settledStagedLostBroker(ctx, t, fixture, instanceID)
+
+	script := &deployScript{}
+	script.script(fixture, outcomeTaskDone)
+
+	response, async, err := next.Update(ctx, instanceID, repairRequest(), false)
+	if !errors.Is(err, osbapi.ErrAsyncRequired) || async || response.Operation != "" {
+		t.Fatalf("the synchronous update was answered %+v, async %v, %v, want 422 AsyncRequired", response, async, err)
+	}
+
+	if sent := script.sent(); len(sent) != 0 {
+		t.Fatalf("the synchronous update sent %d deploys, want none", len(sent))
+	}
+
+	requireUpdateAttention(t, next, instanceID, stagedLostAttention, "after the synchronous update")
+}
