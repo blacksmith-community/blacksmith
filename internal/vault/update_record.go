@@ -41,6 +41,10 @@ type StagedUpdate struct {
 	// Rollback says what the broker did when the update's deploy failed,
 	// and is nil until then.
 	Rollback *UpdateRollback `json:"rollback,omitempty"`
+	// RepairsLostValues reports that the update was accepted after an
+	// earlier one whose values were lost, so until it succeeds the stored
+	// values may not match what the deployment runs.
+	RepairsLostValues bool `json:"repairs_lost_values,omitempty"`
 }
 
 // ErrCleanupOwed is returned when an update would replace the record of a

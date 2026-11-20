@@ -93,6 +93,11 @@ type updatePhase struct {
 	// restored reports that the rollback settled as rolled back, which
 	// leaves the deployment on the instance's stored values.
 	restored bool
+	// repairsLostValues reports that the update follows one whose values
+	// were lost, so any end but success leaves the deployment unknown.
+	repairsLostValues bool
+	// succeeded reports that the update settled as succeeded.
+	succeeded bool
 }
 
 // launchUpdate records the accepted update and starts the goroutine that
@@ -109,7 +114,11 @@ func (b *Broker) launchUpdate(ctx context.Context, phase *updatePhase, claim *op
 		Context:        phase.context,
 		ChangedKeys:    phase.request.changedKeys,
 		Actor:          phase.request.actor,
+
+		RepairsLostValues: phase.target.valuesUnrecorded,
 	}
+
+	phase.repairsLostValues = phase.target.valuesUnrecorded
 
 	recordCtx, cancelRecord := recordContext(ctx)
 	err := b.Vault.TrackUpdateAccepted(recordCtx, phase.instanceID, "Update request accepted", phase.contextID, phase.target.deployment, staged)
@@ -127,8 +136,12 @@ func (b *Broker) launchUpdate(ctx context.Context, phase *updatePhase, claim *op
 	}
 
 	// The record now holds this update, so an earlier one listed in
-	// Attention required no longer needs an operator.
-	b.forgetUpdateAttention(phase.instanceID)
+	// Attention required no longer needs an operator. An update that
+	// repairs lost values stays listed until it succeeds, because until
+	// then the deployment may still run what the lost update deployed.
+	if !phase.repairsLostValues {
+		b.forgetUpdateAttention(phase.instanceID)
+	}
 
 	// The update outlives the request, so it runs under the service
 	// context. Only the steps before the deploy have a time bound. Once
@@ -295,6 +308,10 @@ func (p *updatePhase) fail(ctx context.Context, description string, taskID int) 
 
 	p.broker.auditUpdate(recordCtx, p.instanceID, p.target, p.request, updateOutcomeFailed, "", taskID)
 	p.dropRollbackManifest(settleCtx)
+
+	// A failure before the deploy settles outside settle, so it lists an
+	// update that repairs lost values here.
+	p.noteUnresumableUpdate()
 }
 
 // carryLiveVersions returns the requested manifest with the live version
@@ -693,6 +710,11 @@ func (p *updatePhase) commit(ctx context.Context, task *bosh.Task, deployed stri
 
 	recordCtx, cancelRecord := recordContext(settleCtx)
 	defer cancelRecord()
+
+	// The deployment now runs the stored values, so nothing listed for the
+	// instance in Attention required applies any more.
+	p.succeeded = true
+	p.broker.forgetUpdateAttention(p.instanceID)
 
 	p.broker.auditUpdate(recordCtx, p.instanceID, p.target, p.request, updateOutcomeSucceeded, "", task.ID)
 	p.dropRollbackManifest(settleCtx)

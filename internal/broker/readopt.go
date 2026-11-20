@@ -116,6 +116,16 @@ type readoptOperation struct {
 	claim          *operationClaim
 }
 
+// deployment returns the deployment the record names, or the one the
+// index names when the record names none.
+func (operation readoptOperation) deployment() string {
+	if operation.recorded.DeploymentName != "" {
+		return operation.recorded.DeploymentName
+	}
+
+	return operation.deploymentName
+}
+
 // owedCleanup is a failed provision that the first phase found still
 // owing the delete of its deployment.
 type owedCleanup struct {

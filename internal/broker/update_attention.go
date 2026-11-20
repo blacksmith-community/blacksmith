@@ -14,6 +14,11 @@ import (
 // can't be read back is listed in Attention required.
 const updateAttentionStagedLost = "The update's values can't be read back from its record, so the stored values may not match what the deployment runs. Sending the update again records them"
 
+// updateAttentionRepairFailed is the reason an update that redeployed the
+// stored values after lost ones, and didn't succeed, is listed in
+// Attention required.
+const updateAttentionRepairFailed = "An update that redeployed the stored values after an earlier update's values were lost didn't succeed, so the stored values may not match what the deployment runs. Sending the update again deploys them"
+
 // updateAttentionPlanMissing returns the reason an update whose plan has
 // left the catalog is listed in Attention required.
 func updateAttentionPlanMissing(planID string) string {
@@ -68,11 +73,15 @@ func (b *Broker) forgetUpdateAttention(instanceID string) {
 }
 
 // noteUnresumableUpdate lists the update of the phase in Attention
-// required when re-adoption couldn't carry it through. A rollback that
+// required when re-adoption couldn't carry it through, or when it repairs
+// lost values and settled as anything but succeeded. A rollback that
 // restored the deployment leaves it on the stored values, so an update
-// whose staged values were lost isn't listed then.
+// whose staged values were lost isn't listed then. A repair's rollback
+// restores what the lost update may have deployed, so it is.
 func (p *updatePhase) noteUnresumableUpdate() {
 	switch {
+	case p.repairsLostValues && !p.succeeded:
+		p.broker.noteUpdateAttention(p.instanceID, p.target.deployment, updateAttentionRepairFailed)
 	case p.stagedLost && p.restored:
 	case p.stagedLost:
 		p.broker.noteUpdateAttention(p.instanceID, p.target.deployment, updateAttentionStagedLost)
@@ -94,8 +103,8 @@ func (b *Broker) noteSettledUnresumableUpdates(candidates []*readoptCandidate) {
 			continue
 		}
 
-		if stagedValuesLost(candidate.record) {
-			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, updateAttentionStagedLost)
+		if reason := lostValuesReason(candidate.record); reason != "" {
+			b.noteUpdateAttention(candidate.instanceID, candidate.deploymentName, reason)
 
 			continue
 		}
@@ -121,20 +130,35 @@ func rollbackRestored(record map[string]interface{}) bool {
 	return rollback != nil && rollback.Phase == internalVault.UpdatePhaseRolledBack
 }
 
-// stagedValuesLost reports whether the task record holds a settled update
-// whose staged values can't be read back and that no rollback restored.
-// The stored values may then not match what the deployment runs, because
-// the lost update's deploy may have finished, which is what its Attention
-// required entry says.
+// stagedValuesLost reports whether the stored values may not match what
+// the deployment runs, as lostValuesReason says.
 func stagedValuesLost(record map[string]interface{}) bool {
+	return lostValuesReason(record) != ""
+}
+
+// lostValuesReason returns the Attention required reason of a task record
+// that holds a settled update after which the stored values may not match
+// what the deployment runs, or "" when it holds none. That is an update
+// whose staged values can't be read back and that no rollback restored,
+// because the lost update's deploy may have finished. It is also an update
+// that repaired lost values and failed, whatever its rollback did, because
+// the rollback restores what the lost update may have deployed.
+func lostValuesReason(record map[string]interface{}) string {
 	action, _ := record["action"].(string)
 	state, _ := record["state"].(string)
 
 	if action != operationTypeUpdate || (state != recordedStateFailed && state != internalVault.TaskStateRollbackFailed) {
-		return false
+		return ""
 	}
 
-	_, err := stagedUpdate(record)
+	staged, err := stagedUpdate(record)
 
-	return err != nil && !rollbackRestored(record)
+	switch {
+	case err != nil && !rollbackRestored(record):
+		return updateAttentionStagedLost
+	case err == nil && staged.RepairsLostValues:
+		return updateAttentionRepairFailed
+	}
+
+	return ""
 }

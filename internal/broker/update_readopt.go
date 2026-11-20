@@ -130,11 +130,6 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 		logger.Error("Instance %s: re-adoption follows its update's task to its end and then settles the update as failed, because %s: %v", operation.instanceID, unresumable, errors.Join(stagedErr, err))
 	}
 
-	deployment := operation.recorded.DeploymentName
-	if deployment == "" {
-		deployment = operation.deploymentName
-	}
-
 	contextID, _ := record["context_id"].(string)
 
 	rollback, rollbackUnverified, err := b.readoptedRollback(readCtx, operation.instanceID, record, staged, stagedErr, logger)
@@ -145,7 +140,7 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 	return &updatePhase{
 		broker:     b,
 		instanceID: operation.instanceID,
-		target:     updateTarget{instance: instance, deployment: deployment},
+		target:     updateTarget{instance: instance, deployment: operation.deployment()},
 		request: updateRequest{
 			planID: staged.PlanID, parameters: staged.Parameters,
 			changedKeys: staged.ChangedKeys, fingerprint: staged.Fingerprint, actor: staged.Actor,
@@ -158,6 +153,7 @@ func (b *Broker) readoptedUpdatePhase(ctx context.Context, operation readoptOper
 		unresumable:        unresumable,
 		planMissing:        planMissing,
 		stagedLost:         stagedErr != nil,
+		repairsLostValues:  staged.RepairsLostValues,
 		rollbackUnverified: rollbackUnverified,
 	}, nil
 }
