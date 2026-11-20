@@ -19,12 +19,79 @@ import (
 // BOSH task outlives.
 const followBound = 20 * time.Millisecond
 
+// boundedDirector records each deploy and task wait whose context
+// carries a deadline. Only shutdown may end an update's deploy or its
+// follow, so a spec that shortens a bound only on the steps before the
+// deploy still catches a deadline put back on either call.
+type boundedDirector struct {
+	*testutil.ScriptedBOSHDirector
+
+	mu      sync.Mutex
+	bounded []string
+}
+
+// UpdateDeployment records a deadline on the deploy.
+func (d *boundedDirector) UpdateDeployment(ctx context.Context, name, manifest string) (*bosh.Task, error) {
+	d.note(ctx, "UpdateDeployment")
+
+	task, err := d.ScriptedBOSHDirector.UpdateDeployment(ctx, name, manifest)
+	if err != nil {
+		return nil, fmt.Errorf("deploy %s: %w", name, err)
+	}
+
+	return task, nil
+}
+
+// WaitForTask records a deadline on the wait.
+func (d *boundedDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
+	d.note(ctx, "WaitForTask")
+
+	task, err := d.ScriptedBOSHDirector.WaitForTask(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("wait for BOSH task %d: %w", taskID, err)
+	}
+
+	return task, nil
+}
+
+// note records call when ctx carries a deadline.
+func (d *boundedDirector) note(ctx context.Context, call string) {
+	if _, bounded := ctx.Deadline(); bounded {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+
+		d.bounded = append(d.bounded, call)
+	}
+}
+
+// requireUnbounded fails the spec when a deploy or a task wait carried a
+// deadline.
+func (d *boundedDirector) requireUnbounded(t *testing.T) {
+	t.Helper()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.bounded) > 0 {
+		t.Fatalf("the director calls %v carried a deadline, want only shutdown to end them", d.bounded)
+	}
+}
+
+// boundTasks points the fixture's broker at a director that records the
+// deadlines of its deploys and task waits.
+func (f *updateFixture) boundTasks() *boundedDirector {
+	bounded := &boundedDirector{ScriptedBOSHDirector: f.director}
+	f.broker.BOSH = bounded
+
+	return bounded
+}
+
 // heldTaskDirector holds the wait on one BOSH task until release is
 // closed, and ends the wait early when the caller's context ends, as the
 // director adapter does. Every other wait goes straight to the scripted
 // director.
 type heldTaskDirector struct {
-	*testutil.ScriptedBOSHDirector
+	*boundedDirector
 
 	taskID  int
 	release chan struct{}
@@ -35,7 +102,7 @@ type heldTaskDirector struct {
 // holdTask points the fixture's broker at a director that holds the wait
 // on taskID.
 func (f *updateFixture) holdTask(taskID int) *heldTaskDirector {
-	held := &heldTaskDirector{ScriptedBOSHDirector: f.director, taskID: taskID, release: make(chan struct{}), waiting: make(chan struct{})}
+	held := &heldTaskDirector{boundedDirector: &boundedDirector{ScriptedBOSHDirector: f.director}, taskID: taskID, release: make(chan struct{}), waiting: make(chan struct{})}
 	f.broker.BOSH = held
 
 	return held
@@ -44,6 +111,8 @@ func (f *updateFixture) holdTask(taskID int) *heldTaskDirector {
 // WaitForTask holds the wait on the held task.
 func (d *heldTaskDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
 	if taskID == d.taskID {
+		d.note(ctx, "WaitForTask")
+
 		d.once.Do(func() { close(d.waiting) })
 
 		select {
@@ -53,12 +122,7 @@ func (d *heldTaskDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.T
 		}
 	}
 
-	task, err := d.ScriptedBOSHDirector.WaitForTask(ctx, taskID)
-	if err != nil {
-		return nil, fmt.Errorf("wait for BOSH task %d: %w", taskID, err)
-	}
-
-	return task, nil
+	return d.boundedDirector.WaitForTask(ctx, taskID)
 }
 
 // requireHeldPastBound waits for the held task's wait to start and then
@@ -122,6 +186,7 @@ func TestUpdate_TaskOutlivesBound_HoldsClaimUntilSettled(t *testing.T) {
 	}
 
 	fixture.requireReleased(t, instanceID)
+	held.requireUnbounded(t)
 }
 
 // A rollback task that runs past the bound keeps the claim too, and the
@@ -150,6 +215,7 @@ func TestUpdate_RollbackOutlivesBound_HoldsClaimUntilSettled(t *testing.T) {
 	}
 
 	fixture.requireReleased(t, instanceID)
+	held.requireUnbounded(t)
 }
 
 // A re-adopted update whose task runs past the re-adoption bound keeps
@@ -248,6 +314,7 @@ func TestUpdate_UnreachableDirector_HoldsClaimUntilSettled(t *testing.T) {
 		return nil, fmt.Errorf("read BOSH task %d: %w", taskID, errDirectorUnreachable)
 	}
 
+	bounded := fixture.boundTasks()
 	instanceID := fixture.provisioned(ctx, t, openUpdatePlan, lastGoodParams())
 
 	response, async, err := fixture.broker.Update(ctx, instanceID, failingUpdateRequest(), true)
@@ -268,4 +335,5 @@ func TestUpdate_UnreachableDirector_HoldsClaimUntilSettled(t *testing.T) {
 	}
 
 	fixture.requireReleased(t, instanceID)
+	bounded.requireUnbounded(t)
 }
