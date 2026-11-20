@@ -13,9 +13,20 @@ import (
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
 
-// hungVMsLimit is how long a hung VM read waits when nothing ends it, so
-// a spec whose bound is missing fails rather than hangs.
-const hungVMsLimit = 5 * time.Second
+const (
+	// hungRefreshBound is the credential refresh bound the spec sets. The
+	// bound starts before the refresh reads the instance's index entry
+	// from Vault, so it has to outlast that read even on a loaded host
+	// running under coverage, or the refresh ends before it reaches the
+	// hung director and the spec has nothing to see. A bound as short as
+	// the follow specs' would fail that way.
+	hungRefreshBound = time.Second
+
+	// hungVMsLimit is how long a hung VM read waits when nothing ends it,
+	// so a spec whose bound is missing fails rather than hangs. It stays
+	// well beyond hungRefreshBound.
+	hungVMsLimit = 10 * time.Second
+)
 
 // hungVMsDirector hangs every read of a deployment's VMs until the
 // caller's context ends, and counts the reads that ended that way.
@@ -51,7 +62,7 @@ func TestUpdate_CredentialRefreshHangs_SettlesAtItsBound(t *testing.T) {
 
 	hung := &hungVMsDirector{ScriptedBOSHDirector: fixture.director}
 	fixture.broker.BOSH = hung
-	fixture.broker.SetUpdateCredentialsBound(followBound)
+	fixture.broker.SetUpdateCredentialsBound(hungRefreshBound)
 
 	instanceID := fixture.startFailingUpdate(ctx, t)
 
