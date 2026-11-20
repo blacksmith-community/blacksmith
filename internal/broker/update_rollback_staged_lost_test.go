@@ -72,7 +72,10 @@ func savedUnnamedManifest(ctx context.Context, t *testing.T, fixture *updateFixt
 }
 
 // rollbackSettleBound bounds the wait for a re-adopted rollback to settle.
-const rollbackSettleBound = 30 * time.Second
+// It is well above one re-adoption retry, which waits 30 seconds, so a
+// single slow read of Vault can't fail the spec, and the mutation it
+// guards retries forever, so any bound still catches it.
+const rollbackSettleBound = 2 * time.Minute
 
 // noSavedManifest saves no manifest for the rollback.
 func noSavedManifest(context.Context, *testing.T, *updateFixture, string) {}
@@ -107,9 +110,10 @@ func recordedRollbackOtherContext(ctx context.Context, t *testing.T, fixture *up
 // would have, rolled_back with the instance usable or rollback_failed
 // with it unusable, and it is never sent again. A saved manifest that is
 // missing or doesn't match, or a rollback under another context ID,
-// leaves the broker unable to vouch for the rollback, so it settles as rollback_failed whatever its task
-// did. Attention required lists the update unless the rollback restored
-// the deployment, which leaves it on the stored values.
+// leaves the broker unable to vouch for the rollback, so it settles as
+// rollback_failed whatever its task did. Attention required lists the
+// update unless the rollback restored the deployment, which leaves it on
+// the stored values.
 func TestReadopt_ResumesRollback_StagedValuesLost(t *testing.T) {
 	t.Parallel()
 
@@ -164,19 +168,19 @@ func TestReadopt_ResumesRollback_StagedValuesLost(t *testing.T) {
 			waitCtx, cancel := context.WithTimeout(ctx, rollbackSettleBound)
 			defer cancel()
 
-			requireRollbackSettled(waitCtx, t, fixture, instanceID, script, rollbackCase.outcome, rollbackCase.rollbackTask, rollbackCase.attention)
+			requireRollbackSettled(waitCtx, ctx, t, fixture, instanceID, script, rollbackCase.outcome, rollbackCase.rollbackTask, rollbackCase.attention)
 		})
 	}
 }
 
 // requireRollbackSettled fails t unless the re-adopted rollback of
-// instanceID settled as outcome, naming rollbackTask, sent no deploy, and
+// instanceID settled within waitCtx as outcome, naming rollbackTask, sent no deploy, and
 // left the Attention required entry that attention names, or none, both
 // at once and at the next start.
-func requireRollbackSettled(ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string, script *readoptRollbackScript, outcome string, rollbackTask int, attention string) {
+func requireRollbackSettled(waitCtx, ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string, script *readoptRollbackScript, outcome string, rollbackTask int, attention string) {
 	t.Helper()
 
-	answer := fixture.settled(ctx, t, instanceID)
+	answer := fixture.settled(waitCtx, t, instanceID)
 
 	if outcome == changeRollbackFail {
 		requireRollbackFailed(t, answer)
