@@ -358,11 +358,18 @@ func (p *updatePhase) settleRollback(ctx context.Context, task *bosh.Task, reaso
 // settleFailure records the end of an update whose deploy failed, under
 // the instance's settle lock, trying the write until it lands, and then
 // writes its change record and deletes the manifest saved for the
-// rollback. The stored plan, parameters, and
-// manifest stay at their last good values, and nothing is deleted from
-// the director.
+// rollback. The stored plan, parameters, and manifest stay at their last
+// good values, and nothing is deleted from the director. While the plan
+// the update stages is out of the catalog, the description also says
+// that an operator must restore it.
 func (p *updatePhase) settleFailure(ctx context.Context, state, description, outcome string, rollback internalVault.UpdateRollback) {
 	settleCtx := context.WithoutCancel(ctx)
+
+	// A repeat is refused while the plan is out of the catalog, so the
+	// answer says what has to happen first.
+	if p.planMissing {
+		description = fmt.Sprintf("%s. Plan %s is no longer in the catalog. %s", description, p.request.planID, updatePlanMissingNext)
+	}
 
 	unlock, err := p.broker.lockSettle(settleCtx, p.instanceID)
 	if err != nil {

@@ -70,22 +70,22 @@ func TestSettleOutcomeUnknownSettlePending_MarksUntilTheUpdateSettles(t *testing
 		t.Fatalf("settling a settled outcome answered %v, want ErrOutcomeUnknownSettled", err)
 	}
 
-	err = client.ClearSettlePending(ctx, instanceID, "context-other")
+	err = client.ClearSettlePending(ctx, instanceID, "context-other", "")
 	if !errors.Is(err, vault.ErrTaskRecordReplaced) {
 		t.Fatalf("clearing the mark under another context ID answered %v, want ErrTaskRecordReplaced", err)
 	}
 
-	err = client.ClearSettlePending(ctx, instanceID, updateContextID)
+	err = client.ClearSettlePending(ctx, instanceID, updateContextID, "never started, and the plan is gone")
 	if err != nil {
 		t.Fatalf("clearing the mark was refused: %v", err)
 	}
 
 	state, _, record = readRecord(ctx, t, client, instanceID)
-	if _, marked := record[vault.TaskRecordSettlePendingKey]; marked || state != stateFailed || record[vault.TaskRecordUpdateKey] == nil {
-		t.Fatalf("after the clear, the record is %s %v, want failed, unmarked, with the staged values", state, record)
+	if _, marked := record[vault.TaskRecordSettlePendingKey]; marked || state != stateFailed || record[vault.TaskRecordUpdateKey] == nil || record["description"] != "never started, and the plan is gone" {
+		t.Fatalf("after the clear, the record is %s %v, want failed, unmarked, with the staged values and the new description", state, record)
 	}
 
-	err = client.ClearSettlePending(ctx, instanceID, updateContextID)
+	err = client.ClearSettlePending(ctx, instanceID, updateContextID, "")
 	if !errors.Is(err, vault.ErrTaskRecordReplaced) {
 		t.Fatalf("clearing a mark already cleared answered %v, want ErrTaskRecordReplaced", err)
 	}

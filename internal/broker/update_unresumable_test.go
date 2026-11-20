@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/broker"
 	internalVault "blacksmith/internal/vault"
 
@@ -78,9 +79,7 @@ func TestReadopt_UnresumableUpdate_SettlesFailed(t *testing.T) {
 		next       string
 		repeatable bool
 	}{
-		{"its plan left the catalog", func(_ context.Context, _ *testing.T, fixture *updateFixture, _ string) {
-			delete(fixture.broker.Plans, recordedNameService+"/"+openUpdatePlan)
-		}, "no longer in the catalog", "An operator must restore the plan", false},
+		{planLeftCatalog, dropOpenPlan, "no longer in the catalog", "An operator must restore the plan", false},
 		{"its staged values don't decode", garbleStagedUpdate, "can't read", "Send the update again", true},
 	} {
 		t.Run(unresumable.name, func(t *testing.T) {
@@ -142,5 +141,129 @@ func TestReadopt_UnresumableUpdate_SettlesFailed(t *testing.T) {
 				t.Fatalf("the update sent again settled as %+v (%v), want succeeded", answer, err)
 			}
 		})
+	}
+}
+
+// planLeftCatalog names the case of an update whose plan has left the
+// catalog.
+const planLeftCatalog = "its plan left the catalog"
+
+// dropOpenPlan takes the plan the interrupted update stages out of the
+// fixture's catalog.
+func dropOpenPlan(_ context.Context, _ *testing.T, fixture *updateFixture, _ string) {
+	delete(fixture.broker.Plans, recordedNameService+"/"+openUpdatePlan)
+}
+
+// unresumableSidePath is one way an update re-adoption can't carry
+// through settles.
+type unresumableSidePath struct {
+	name string
+	// record writes what the update had recorded when the broker
+	// stopped, over its accepted record.
+	record func(ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string)
+	// script points the director at what it answers after the restart.
+	script func(fixture *updateFixture)
+}
+
+// unresumableSidePaths returns the ways an update re-adoption can't carry
+// through settles other than by its deploy task succeeding.
+func unresumableSidePaths() []unresumableSidePath {
+	neverStarted := func(fixture *updateFixture) {
+		(&lostAnswer{}).script(fixture, nil, 0)
+		fixture.broker.SetUnknownOutcomeClock(pastGraceClock())
+	}
+
+	return []unresumableSidePath{
+		{"the resolver finds its deploy never started", recordedLostAnswer, neverStarted},
+		{"a restart lands after the resolver's failure", func(ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string) {
+			t.Helper()
+
+			recordedLostAnswer(ctx, t, fixture, instanceID)
+			resolverFailed(ctx, t, fixture, instanceID, readoptUpdateContextID)
+		}, neverStarted},
+		{"the director pruned its task", recordedDeployTask, func(fixture *updateFixture) {
+			fixture.director.WaitForTaskFn = func(taskID int) (*bosh.Task, error) { return nil, readoptTaskNotFound(taskID) }
+		}},
+		{"its deploy failed", recordedDeployTask, func(fixture *updateFixture) {
+			(&deployScript{}).script(fixture, outcomeTaskError)
+		}},
+	}
+}
+
+// unresumableKind is a reason re-adoption can't carry an update through,
+// and what the settled update then says.
+type unresumableKind struct {
+	name       string
+	spoil      func(ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string)
+	reason     string
+	next       string
+	attention  string
+	repeatable bool
+}
+
+// requireSettled fails t unless the update of instanceID settled as an
+// update of this kind settles, on any path.
+func (k unresumableKind) requireSettled(ctx context.Context, t *testing.T, fixture *updateFixture, instanceID string) {
+	t.Helper()
+
+	answer := fixture.settled(ctx, t, instanceID)
+	if answer.State != osbapi.StateFailed || !strings.Contains(answer.Description, k.reason) || !strings.Contains(answer.Description, k.next) {
+		t.Fatalf("the update settled as %+v, want failed, saying %q and %q", answer, k.reason, k.next)
+	}
+
+	if answer.UpdateRepeatable == nil || *answer.UpdateRepeatable != k.repeatable || answer.InstanceUsable == nil || !*answer.InstanceUsable {
+		t.Fatalf("the update answered update_repeatable %s and instance_usable %s, want %v and true", boolField(answer.UpdateRepeatable), boolField(answer.InstanceUsable), k.repeatable)
+	}
+
+	requireUpdateAttention(t, fixture.broker, instanceID, k.attention, "once the update settled")
+
+	if root, _ := fixture.storedParameters(ctx, t, instanceID); !reflect.DeepEqual(root, lastGoodParams()) {
+		t.Fatalf("the stored parameters are %v, want the last good %v", root, lastGoodParams())
+	}
+
+	if records := fixture.updateRecords(ctx, t); len(records) != 1 || records[0].Outcome != outcomeStateFailed {
+		t.Fatalf("the change records are %+v, want one failed update", records)
+	}
+
+	fixture.requireNoSavedManifest(ctx, t, instanceID)
+	fixture.requireReleased(t, instanceID)
+}
+
+// An update re-adoption can't carry through settles the same way on every
+// path, whether the resolver finds that its deploy never started, a
+// restart lands after the resolver's failure, the director pruned its
+// task, or its deploy failed. The answer says why and what comes next, a
+// plan that left the catalog makes the update unrepeatable, and the
+// instance is listed in Attention required at once, not only at the next
+// start.
+func TestReadopt_UnresumableUpdate_EverySettlePathSaysWhy(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []unresumableKind{
+		{planLeftCatalog, dropOpenPlan, "no longer in the catalog", "An operator must restore the plan", "an operator restores the plan", false},
+		{"its staged values don't decode", garbleStagedUpdate, "can't read", "Send the update again", stagedLostAttention, true},
+	} {
+		for _, path := range unresumableSidePaths() {
+			t.Run(kind.name+", and "+path.name, func(t *testing.T) {
+				t.Parallel()
+
+				fixture := newUpdateFixture(t)
+				ctx := context.Background()
+				instanceID := fixture.provisioned(ctx, t, openUpdatePlan, lastGoodParams())
+
+				interruptedUpdate(ctx, t, fixture, instanceID)
+				path.record(ctx, t, fixture, instanceID)
+				savedRollbackManifest(ctx, t, fixture, instanceID)
+				kind.spoil(ctx, t, fixture, instanceID)
+				path.script(fixture)
+
+				err := fixture.broker.ReadoptInFlightOperations(ctx)
+				if err != nil {
+					t.Fatalf("re-adoption failed: %v", err)
+				}
+
+				kind.requireSettled(ctx, t, fixture, instanceID)
+			})
+		}
 	}
 }

@@ -628,12 +628,13 @@ func (vault *Vault) SettleOutcomeUnknownSettlePending(ctx context.Context, insta
 }
 
 // ClearSettlePending removes the settle mark from the record of the update
-// with contextID, and keeps every other field. It writes only when the
-// record holds that update, failed and marked, checked under the
-// instance's task record lock, and otherwise writes nothing and returns an
-// error that wraps ErrTaskRecordReplaced. A record that cannot be read
-// stops the write. No history entry is written.
-func (vault *Vault) ClearSettlePending(ctx context.Context, instanceID, contextID string) error {
+// with contextID, and keeps every other field, apart from the description,
+// which description replaces in the same write when it isn't empty. It
+// writes only when the record holds that update, failed and marked,
+// checked under the instance's task record lock, and otherwise writes
+// nothing and returns an error that wraps ErrTaskRecordReplaced. A record
+// that cannot be read stops the write. No history entry is written.
+func (vault *Vault) ClearSettlePending(ctx context.Context, instanceID, contextID, description string) error {
 	logger := logger.Get().Named("vault clear settle pending " + instanceID)
 
 	guard := func(current map[string]interface{}) error {
@@ -657,6 +658,10 @@ func (vault *Vault) ClearSettlePending(ctx context.Context, instanceID, contextI
 	return vault.writeTaskRecordGuarded(ctx, instanceID, actionUpdate, logger, guard, func(replaced map[string]interface{}) interface{} {
 		cleared := maps.Clone(replaced)
 		delete(cleared, TaskRecordSettlePendingKey)
+
+		if description != "" {
+			cleared["description"] = description
+		}
 
 		return cleared
 	})

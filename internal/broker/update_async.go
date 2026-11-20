@@ -236,11 +236,21 @@ func (p *updatePhase) awaitTask(ctx context.Context, taskID int) (*bosh.Task, bo
 		// the deployment can't be known, and the broker can't vouch for
 		// the deployment.
 		p.settleRollback(ctx, nil, fmt.Sprintf("BOSH task %d is no longer known to the director, so its result is unknown", taskID))
+		p.noteUnresumableUpdate()
 	case bosh.IsTaskNotFound(err):
 		// The director pruned the task, so whether the deploy succeeded
 		// can't be known. The stored values stay at their last good state,
-		// and a repeat of the update deploys and records them.
-		p.fail(ctx, fmt.Sprintf("BOSH deployment task %d is no longer known to the director, so the update's result is unknown. Send the update again", taskID), taskID)
+		// and a repeat of the update deploys and records them, once the
+		// plan is back when it has left the catalog.
+		unknown := fmt.Sprintf("BOSH deployment task %d is no longer known to the director, so the update's result is unknown", taskID)
+
+		description := unknown + ". Send the update again"
+		if p.unresumable != "" {
+			description = p.unresumableDescription(unknown)
+		}
+
+		p.fail(ctx, description, taskID)
+		p.noteUnresumableUpdate()
 	default:
 		p.logger.Warning("Instance %s: %s, and the record keeps naming task %d, so re-adoption follows it", p.instanceID, err, taskID)
 	}
@@ -604,19 +614,30 @@ func (p *updatePhase) settle(ctx context.Context, task *bosh.Task, deployed stri
 }
 
 // failUnresumable settles an update re-adoption can't carry through as
-// failed once its task ended, and says why and what comes next. The
-// instance's values stay at their last good state, and a repeat of the
-// update deploys and records them. When the plan has left the catalog,
-// every update is refused until an operator restores it, so the answer
-// says that instead.
+// failed once its task ended, and says why and what comes next.
 func (p *updatePhase) failUnresumable(ctx context.Context, task *bosh.Task) {
+	p.logger.Error("Instance %s: BOSH task %d ended in state %s, and %s, so the update settles as failed", p.instanceID, task.ID, task.State, p.unresumable)
+	p.fail(ctx, p.unresumableDescription(fmt.Sprintf("BOSH deployment task %d ended in state %s", task.ID, task.State)), task.ID)
+}
+
+// updatePlanMissingNext is what comes next for an update that settled
+// while the plan it stages is out of the catalog, because every update of
+// the instance is refused until an operator restores the plan.
+const updatePlanMissingNext = "An operator must restore the plan before the instance can be updated, and the update must then be sent again so its values are recorded"
+
+// unresumableDescription returns the description of an update re-adoption
+// can't carry through, which settles as failed after what happened. It
+// says why the update can't be carried through and what comes next. The
+// instance's values stay at their last good state, and a repeat of the
+// update deploys and records them, once the plan is back when it has left
+// the catalog.
+func (p *updatePhase) unresumableDescription(happened string) string {
 	next := "Send the update again"
 	if p.planMissing {
-		next = "An operator must restore the plan before the instance can be updated, and the update must then be sent again so its values are recorded"
+		next = updatePlanMissingNext
 	}
 
-	p.logger.Error("Instance %s: BOSH task %d ended in state %s, and %s, so the update settles as failed", p.instanceID, task.ID, task.State, p.unresumable)
-	p.fail(ctx, fmt.Sprintf("BOSH deployment task %d ended in state %s, and %s. %s", task.ID, task.State, p.unresumable, next), task.ID)
+	return fmt.Sprintf("%s, and %s. %s", happened, p.unresumable, next)
 }
 
 // commit records the update whose deploy succeeded, under the instance's

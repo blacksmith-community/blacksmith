@@ -118,9 +118,7 @@ func TestReadopt_UnresumableUpdate_ListedForAttention(t *testing.T) {
 		restored string
 		accept   func(ctx context.Context, t *testing.T, next *broker.Broker, instanceID string)
 	}{
-		{"its plan left the catalog", func(_ context.Context, _ *testing.T, fixture *updateFixture, _ string) {
-			delete(fixture.broker.Plans, recordedNameService+"/"+openUpdatePlan)
-		}, "an operator restores the plan", "", acceptUpdate},
+		{planLeftCatalog, dropOpenPlan, "an operator restores the plan", "", acceptUpdate},
 		{"its staged values don't decode, and an update follows", garbleStagedUpdate, stagedLostAttention, stagedLostAttention, acceptUpdate},
 		{"its staged values don't decode, and a deprovision follows", garbleStagedUpdate, stagedLostAttention, stagedLostAttention, acceptDeprovision},
 	} {

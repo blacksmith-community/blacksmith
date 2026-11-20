@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -95,17 +96,29 @@ func (p *updatePhase) resolveLostAnswer(ctx context.Context) (*bosh.Task, bool) 
 // rollback's deploy, the update's failed deploy is still in place, so the
 // rollback failed, and the write that settles it takes the settle mark
 // off. See internalVault.TaskRecordSettlePendingKey.
+//
+// An update re-adoption can't carry through is listed in Attention
+// required, as its settle by a task does, and the write that takes the
+// mark off replaces the resolver's description with one that says why
+// the update can't be carried through and what comes next.
 func (p *updatePhase) neverStarted(ctx context.Context) {
+	defer p.noteUnresumableUpdate()
+
 	if p.rollback != nil {
 		p.settleRollback(ctx, nil, "")
 
 		return
 	}
 
+	description := ""
+	if p.unresumable != "" {
+		description = p.unresumableDescription(fmt.Sprintf("The director lists no task for the update's deploy with context ID %s, so the update was not deployed", p.contextID))
+	}
+
 	// The mark comes off before the change record is written, as every
 	// settle write comes before its change record. A broker that shuts
 	// down before the mark comes off leaves both to the next start.
-	if !p.clearSettlePending(ctx) {
+	if !p.clearSettlePending(ctx, description) {
 		return
 	}
 
@@ -114,16 +127,18 @@ func (p *updatePhase) neverStarted(ctx context.Context) {
 }
 
 // clearSettlePending takes the settle mark off the update's record, trying
-// the write until it lands. A record that no longer holds the marked
-// failure of the update owes nothing more of its record, so it counts as
-// cleared. It reports false only when the broker shuts down before the
-// write lands, and the mark then stays for the next start.
-func (p *updatePhase) clearSettlePending(ctx context.Context) bool {
+// the write until it lands, and replaces the record's description with
+// description in the same write when it isn't empty. A record that no
+// longer holds the marked failure of the update owes nothing more of its
+// record, so it counts as cleared. It reports false only when the broker
+// shuts down before the write lands, and the mark then stays for the next
+// start.
+func (p *updatePhase) clearSettlePending(ctx context.Context, description string) bool {
 	wait := p.broker.updateRetryWait()
 
 	for {
 		recordCtx, cancel := recordContext(ctx)
-		err := p.broker.Vault.ClearSettlePending(recordCtx, p.instanceID, p.contextID)
+		err := p.broker.Vault.ClearSettlePending(recordCtx, p.instanceID, p.contextID, description)
 
 		cancel()
 
